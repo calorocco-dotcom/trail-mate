@@ -146,6 +146,8 @@ struct NodeUpdate
  */
 struct PeerDirectoryItem
 {
+    bool has_snr = false;
+    bool has_rssi = false;
     uint32_t node_id;
     char short_name[10];
     char long_name[32];

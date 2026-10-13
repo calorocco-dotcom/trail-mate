@@ -185,6 +185,8 @@ static bool handle_filter_activate(void* /*ctx*/, lv_obj_t* focused)
 static void handle_column_changed(void* /*ctx*/,
                                   ::ui::components::two_pane_nav::FocusColumn column)
 {
+    lv_group_set_editing(s_controller.group(), contacts::ui::uses_node_card() &&
+                                                   column == ::ui::components::two_pane_nav::FocusColumn::List);
     if (column == ::ui::components::two_pane_nav::FocusColumn::List)
     {
         contacts::ui::g_contacts_state.focused_filter_mode_valid = false;

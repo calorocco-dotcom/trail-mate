@@ -7,6 +7,7 @@
 #include "sys/clock.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -144,6 +145,8 @@ void copy_peer_item(PeerDirectoryItem& out, const MeshPeerRecord& record)
                       static_cast<unsigned>(out.node_id & 0xFFFFU));
     }
 
+    out.has_snr = record.observations.has_snr;
+    out.has_rssi = record.observations.has_rssi;
     out.snr = record.observations.has_snr ? record.observations.snr : 0.0F;
     out.rssi = record.observations.has_rssi ? record.observations.rssi : 0.0F;
     out.is_contact = meshPeerIsContact(record);
@@ -181,6 +184,7 @@ void copy_peer_item(PeerDirectoryItem& out, const MeshPeerRecord& record)
     {
         out.reticulum_identity = record.identity.reticulum;
         out.has_public_key = record.reticulum.has_public_keys;
+        out.key_manually_verified = record.flags.trusted;
     }
 
     const std::string protocol_name =
@@ -575,6 +579,96 @@ std::vector<PeerDirectoryItem> ContactService::getAllPeers() const
 {
     buildCache();
     return cached_nodes_;
+}
+
+MeshPeerDirectoryStatus ContactService::browsePeers(
+    MeshPeerDirectoryView view, const char* query,
+    std::vector<PeerBrowseEntry>& output) const
+{
+    class BrowseVisitor final : public IMeshPeerDirectoryVisitor
+    {
+      public:
+        BrowseVisitor(std::vector<PeerBrowseEntry>& output, const char* query, MeshPeerDirectoryView view)
+            : output_(output), query_(query ? query : ""), view_(view) {}
+        bool visit(const MeshPeerRecord& record) override
+        {
+            const auto* facts = node_facts(record);
+            if (meshPeerIsReticulumProtocol(record.identity.protocol) && view_ != MeshPeerDirectoryView::All)
+            {
+                const bool contact = meshPeerIsContact(record) || record.source == MeshPeerSource::Manual ||
+                                     record.source == MeshPeerSource::Import;
+                if (view_ == MeshPeerDirectoryView::Ignored ? !record.flags.ignored : record.flags.ignored || (view_ == MeshPeerDirectoryView::Contacts ? !contact : contact)) return true;
+            }
+            const uint32_t now = sys::epoch_seconds_now();
+            if (view_ == MeshPeerDirectoryView::Nearby && record.identity.protocol != MeshProtocol::Reticulum &&
+                now > record.last_seen_s && now - record.last_seen_s >= 6U * 86400U) return true;
+            char identity_text[65]{};
+            if (record.identity.kind == MeshPeerIdentityKind::NodeId)
+                std::snprintf(identity_text, sizeof(identity_text), "!%08lx", static_cast<unsigned long>(record.identity.node_id));
+            else
+            {
+                const uint8_t* bytes = record.identity.kind == MeshPeerIdentityKind::PublicKey ? record.identity.public_key : record.identity.reticulum.destination_hash;
+                const size_t count = record.identity.kind == MeshPeerIdentityKind::PublicKey ? std::min<size_t>(record.identity.public_key_len, 32) : kReticulumPeerHashSize;
+                for (size_t i = 0; i < count; ++i) std::snprintf(identity_text + i * 2, 3, "%02x", bytes[i]);
+            }
+            if (!matches(record.user_alias) && !matches(record.display_name) &&
+                !matches(identity_text) && !(facts && (matches(facts->long_name) || matches(facts->short_name)))) return true;
+            PeerBrowseEntry entry{};
+            if (PeerBrowseEntry::fromRecord(record, entry)) output_.push_back(entry);
+            return true;
+        }
+
+      private:
+        bool matches(const char* text) const
+        {
+            if (!query_[0]) return true;
+            for (const char* start = text; *start; ++start)
+            {
+                size_t i = 0;
+                while (query_[i] && start[i] &&
+                       std::tolower(static_cast<unsigned char>(query_[i])) ==
+                           std::tolower(static_cast<unsigned char>(start[i]))) ++i;
+                if (!query_[i]) return true;
+            }
+            return false;
+        }
+        std::vector<PeerBrowseEntry>& output_;
+        const char* query_;
+        MeshPeerDirectoryView view_;
+    };
+    output.clear();
+    BrowseVisitor visitor(output, query, view);
+    const auto status = directory_.visit(active_protocol_, meshPeerIsReticulumProtocol(active_protocol_) ? MeshPeerDirectoryView::All : view, visitor);
+    if (!status.succeeded())
+    {
+        output.clear();
+        return status;
+    }
+    std::sort(output.begin(), output.end(), [](const PeerBrowseEntry& lhs, const PeerBrowseEntry& rhs)
+              {
+                  if (lhs.last_seen != rhs.last_seen) return lhs.last_seen > rhs.last_seen;
+                  if (lhs.kind != rhs.kind) return lhs.kind < rhs.kind;
+                  if (lhs.node_id != rhs.node_id) return lhs.node_id < rhs.node_id;
+                  return lhs.identity_bytes < rhs.identity_bytes; });
+    return status;
+}
+
+MeshPeerDirectoryStatus ContactService::readPeer(
+    const PeerBrowseEntry& entry, PeerDirectoryItem& output) const
+{
+    if (normalize_protocol(entry.protocol) != active_protocol_)
+        return MeshPeerDirectoryStatus::fail(MeshPeerDirectoryStatusCode::InvalidArgument);
+    const auto identity = entry.identity();
+    const auto status = directory_.find(identity, lookup_scratch_);
+    if (status.succeeded())
+    {
+        copy_peer_item(output, lookup_scratch_);
+        if (meshPeerIsReticulumProtocol(entry.protocol))
+            output.is_contact = output.is_contact || lookup_scratch_.source == MeshPeerSource::Manual ||
+                                lookup_scratch_.source == MeshPeerSource::Import;
+    }
+    else output = {};
+    return status;
 }
 
 bool ContactService::addContact(uint32_t node_id, const char* nickname)

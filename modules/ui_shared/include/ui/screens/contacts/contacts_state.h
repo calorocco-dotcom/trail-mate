@@ -6,7 +6,9 @@
 #pragma once
 
 #include "chat/domain/contact_types.h"
+#include "chat/domain/peer_browse_entry.h"
 #include "lvgl.h"
+#include "platform/ui/map_search_runtime.h"
 #include "ui/components/air_status_footer.h"
 #include "ui/components/floating_search_box.h"
 #include "ui/widgets/top_bar.h"
@@ -92,11 +94,26 @@ struct ContactsPageState
     bool focused_filter_mode_valid = false;
 
     // Data (using forward declaration, full type in .cpp)
-    std::vector<chat::contacts::PeerDirectoryItem> contacts_list;
-    std::vector<chat::contacts::PeerDirectoryItem> nearby_list;
     std::vector<chat::contacts::PeerDirectoryItem> reticulum_group_list;
-    std::vector<chat::contacts::PeerDirectoryItem> ignored_list;
     std::vector<chat::contacts::PeerDirectoryItem> display_list;
+    std::vector<chat::contacts::PeerBrowseEntry> card_entries;
+    chat::contacts::PeerDirectoryItem card_peer{};
+    size_t card_index = 0;
+    bool card_peer_valid = false;
+    bool card_context_valid = false;
+    ContactsMode card_mode = ContactsMode::Contacts;
+    char card_query[32]{};
+    lv_obj_t* node_card = nullptr;
+    lv_obj_t* card_name = nullptr;
+    lv_obj_t* card_identity = nullptr;
+    lv_obj_t* card_region = nullptr;
+    lv_obj_t* card_distance = nullptr;
+    lv_obj_t* card_status = nullptr;
+    lv_obj_t* card_counter = nullptr;
+    platform::ui::map_search::RegionResult card_region_result{};
+    uint32_t card_region_request = 0;
+    int32_t card_region_latitude = 0, card_region_longitude = 0;
+    bool card_region_coordinate_valid = false;
     char search_query[32] = {};
 
     // Timers
@@ -147,6 +164,14 @@ struct ContactsPageState
 };
 
 extern ContactsPageState g_contacts_state;
+
+inline bool uses_node_card()
+{
+    const auto mode = g_contacts_state.current_mode;
+    return mode == ContactsMode::Contacts || mode == ContactsMode::Nearby || mode == ContactsMode::Ignored;
+}
+void refresh_node_card_data();
+void hydrate_node_card();
 
 } // namespace ui
 } // namespace contacts

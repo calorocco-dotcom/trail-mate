@@ -828,3 +828,13 @@ No saved waypoints	没有已保存的航点
 Saved waypoint	已保存航点
 Waypoint unavailable	航点不可用
 Reticulum	Reticulum 网络
+No nodes	暂无节点
+Region unknown	行政区未知
+Position unknown	暂无位置信息
+Distance unknown	距离未知
+My position unknown	本机未定位
+Location loading...	正在查询行政区…
+Distance %.0f m	距我 %.0f m
+Distance %.1f km	距我 %.1f km
+Old position	旧位置
+Contacts unavailable	联系人暂不可用

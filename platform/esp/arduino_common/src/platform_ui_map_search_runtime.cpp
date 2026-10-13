@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "platform/esp/arduino_common/map_tiles/sd_tmap_storage.h"
 #include "platform/ui/map_search_runtime.h"
+#include "tmap/administrative_path.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -24,7 +25,9 @@ struct State
     tmap::Workspace workspace{};
     tmap::Reader reader{workspace};
     tmap::SearchCursor cursor{};
-    Result working[kMaxResults]{}, published[kMaxResults]{};
+    Result* working = nullptr;
+    Result* published = nullptr;
+    uint8_t capacity = 0;
     Result candidate{};
     char pending_query[kQueryBytes]{}, query[kQueryBytes]{}, normalized[kQueryBytes]{};
     char path[192]{};
@@ -35,9 +38,13 @@ struct State
     uint8_t count = 0;
     uint16_t packages = 0;
     bool limited = false, incomplete = false;
+    uint32_t active_generation = 0;
+    uint32_t region_media = 0;
+    tmap::Status region_io = tmap::Status::Ok;
 };
 State* s_state = nullptr;
 SemaphoreHandle_t s_mutex = nullptr;
+constexpr const char* kRegionQuery = "__trail_mate_region__";
 
 void copy_name(char* output, size_t capacity, const char* source)
 {
@@ -73,9 +80,27 @@ bool accept(void* context, const tmap::Poi& poi, tmap::SearchMode match)
             candidate.maximum_zoom = zoom;
         }
     if (mask & 1U) candidate.minimum_zoom = 0;
-    copy_name(candidate.name, sizeof(candidate.name), state.reader.searchMatchedName());
-    copy_name(candidate.administrative_path, sizeof(candidate.administrative_path), state.reader.searchAdministrativePath());
-    candidate.administrative_flags = state.reader.searchAdministrativeFlags();
+    if (std::strcmp(state.query, kRegionQuery) == 0)
+    {
+        uint8_t levels = 0;
+        candidate.administrative_path[0] = 0;
+        const auto status = state.reader.administrativeLocation(poi.row, candidate.administrative_path,
+                                                                sizeof(candidate.administrative_path), levels,
+                                                                candidate.administrative_flags);
+        if (status != tmap::Status::Ok)
+        {
+            state.region_io = status;
+            return false;
+        }
+        if (!candidate.administrative_path[0] || (candidate.administrative_flags & 2)) return true;
+        copy_name(candidate.name, sizeof(candidate.name), poi.name);
+    }
+    else
+    {
+        copy_name(candidate.name, sizeof(candidate.name), state.reader.searchMatchedName());
+        copy_name(candidate.administrative_path, sizeof(candidate.administrative_path), state.reader.searchAdministrativePath());
+        candidate.administrative_flags = state.reader.searchAdministrativeFlags();
+    }
     constexpr double radians = 3.14159265358979323846 / 180;
     const double latitude = poi.latitude / 1e7;
     const double longitude = poi.longitude / 1e7;
@@ -83,6 +108,7 @@ bool accept(void* context, const tmap::Poi& poi, tmap::SearchMode match)
     const double b = std::sin((longitude - state.longitude) * radians / 2);
     const double h = a * a + std::cos(latitude * radians) * std::cos(state.latitude * radians) * b * b;
     candidate.distance_m = static_cast<float>(12742000 * std::asin(std::sqrt(std::clamp(h, 0.0, 1.0))));
+    if (std::strcmp(state.query, kRegionQuery) == 0 && candidate.distance_m > 30000) return true;
     size_t slot = state.count;
     for (size_t i = 0; i < state.count; ++i)
         if (state.working[i].id == poi.id)
@@ -93,7 +119,7 @@ bool accept(void* context, const tmap::Poi& poi, tmap::SearchMode match)
                 state.working[i] = candidate;
             return true;
         }
-    if (slot == kMaxResults)
+    if (slot == state.capacity)
     {
         state.limited = true;
         slot = 0;
@@ -105,6 +131,19 @@ bool accept(void* context, const tmap::Poi& poi, tmap::SearchMode match)
     state.working[slot] = candidate;
     return true;
 }
+bool accept_region(void* context, const tmap::Poi& poi)
+{
+    auto& state = *static_cast<State*>(context);
+    if (state.generation.load() != state.active_generation) return false;
+    // queryBounds uses no continuation. Keep each package scan finite and
+    // cancellation responsive without allocating a POI/candidate on the stack.
+    if (++state.cursor.position > 256)
+    {
+        state.limited = true;
+        return false;
+    }
+    return accept(context, poi, tmap::SearchMode::Exact);
+}
 void publish(State& state, uint32_t generation, Status status)
 {
     // A terminal snapshot must reach the UI before the task exits.
@@ -112,7 +151,7 @@ void publish(State& state, uint32_t generation, Status status)
     if (xSemaphoreTake(s_mutex, wait) != pdTRUE) return;
     if (state.generation.load() == generation && !state.cancelled)
     {
-        std::memcpy(state.published, state.working, state.count * sizeof(Result));
+        if (state.count) std::memcpy(state.published, state.working, state.count * sizeof(Result));
         // Fixed 24-entry selection sort: no result-sized automatic temporaries.
         for (size_t i = 0; i < state.count; ++i)
         {
@@ -139,27 +178,18 @@ void worker(void* context)
 {
     auto& state = *static_cast<State*>(context);
     using ReadCache = esp::map_tiles::SdTmapStorage::ReadCache;
-    void* memory = state.storage.allocate(sizeof(ReadCache), alignof(ReadCache));
-    if (!memory)
-    {
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
-        state.snapshot.status = Status::Error;
-        state.snapshot.incomplete = true;
-        ++state.snapshot.revision;
-        state.running = false;
-        xSemaphoreGive(s_mutex);
-        vTaskDelete(nullptr);
-        return;
-    }
-    auto* cache = new (memory) ReadCache{};
-    state.storage.setReadCache(cache);
+    ReadCache* cache = nullptr;
     // Called while holding the state mutex, before another query can start
     // a replacement worker using this same storage object.
     auto release_cache = [&]()
     {
         state.storage.setReadCache(nullptr);
-        cache->~ReadCache();
-        state.storage.release(cache);
+        if (cache)
+        {
+            cache->~ReadCache();
+            state.storage.release(cache);
+            cache = nullptr;
+        }
     };
     for (;;)
     {
@@ -172,7 +202,54 @@ void worker(void* context)
             break;
         }
         const uint32_t generation = state.generation.load();
+        state.active_generation = generation;
         std::strcpy(state.query, state.pending_query);
+        const bool region_query = std::strcmp(state.query, kRegionQuery) == 0;
+        const uint8_t capacity = region_query ? 4 : kMaxResults;
+        bool ready = true;
+        if (state.capacity != capacity)
+        {
+            auto* working = static_cast<Result*>(state.storage.allocate(capacity * sizeof(Result), alignof(Result)));
+            auto* published = static_cast<Result*>(state.storage.allocate(capacity * sizeof(Result), alignof(Result)));
+            ready = working && published;
+            if (ready)
+            {
+                for (uint8_t i = 0; i < capacity; ++i)
+                {
+                    new (working + i) Result{};
+                    new (published + i) Result{};
+                }
+                state.storage.release(state.working);
+                state.storage.release(state.published);
+                state.working = working;
+                state.published = published;
+                state.capacity = capacity;
+            }
+            else
+            {
+                state.storage.release(working);
+                state.storage.release(published);
+            }
+        }
+        if (region_query) release_cache();
+        else if (!cache)
+        {
+            void* memory = state.storage.allocate(sizeof(ReadCache), alignof(ReadCache));
+            if (memory) cache = new (memory) ReadCache{};
+            else ready = false;
+            state.storage.setReadCache(cache);
+        }
+        if (!ready)
+        {
+            release_cache();
+            state.snapshot.count = 0;
+            state.snapshot.status = Status::Error;
+            state.snapshot.incomplete = true;
+            ++state.snapshot.revision;
+            state.running = false;
+            xSemaphoreGive(s_mutex);
+            break;
+        }
         state.latitude = state.pending_lat;
         state.longitude = state.pending_lon;
         xSemaphoreGive(s_mutex);
@@ -183,13 +260,15 @@ void worker(void* context)
         state.reader.close();
         state.storage.closePackage();
         state.storage.resetEnumeration();
-        cache->hits = cache->sd_bytes = 0;
+        if (cache) cache->hits = cache->sd_bytes = 0;
         const uint32_t media = state.storage.session();
+        state.region_media = media;
         uint32_t busy_since = 0, last_publish = 0;
         const uint32_t started = state.storage.nowMs();
         uint32_t last_diagnostic = started, busy_retries = 0;
         std::printf("[TMAP][SEARCH] begin generation=%lu media=%lu query=%s cache_psram_bytes=%u\n",
-                    static_cast<unsigned long>(generation), static_cast<unsigned long>(media), state.query, static_cast<unsigned>(sizeof(ReadCache)));
+                    static_cast<unsigned long>(generation), static_cast<unsigned long>(media), state.query,
+                    static_cast<unsigned>(cache ? sizeof(ReadCache) : 0));
         uint16_t files = 0;
         bool active = false, finished = false;
         Status status = Status::Searching;
@@ -234,7 +313,12 @@ void worker(void* context)
                     }
                     else
                     {
-                        step = state.reader.beginSearch(state.query, std::strlen(state.query), tmap::SearchMode::Substring, state.cursor);
+                        if (std::strcmp(state.query, kRegionQuery) == 0)
+                        {
+                            state.cursor.position = 0;
+                            step = tmap::Status::Ok;
+                        }
+                        else step = state.reader.beginSearch(state.query, std::strlen(state.query), tmap::SearchMode::Substring, state.cursor);
                         if (step == tmap::Status::Ok)
                         {
                             active = true;
@@ -245,14 +329,31 @@ void worker(void* context)
             }
             else
             {
-                step = state.reader.searchStep(state.cursor, 4, accept, &state);
+                if (std::strcmp(state.query, kRegionQuery) == 0)
+                {
+                    // 30 km latitude band. At the date line use a broad
+                    // longitude interval; exact distance rejects distant POIs.
+                    const double lon_delta = std::min(180.0, 0.27 / std::max(0.01, std::cos(state.latitude * 3.14159265358979323846 / 180)));
+                    tmap::Bounds bounds{};
+                    bounds.south = static_cast<int32_t>(std::max(-90.0, state.latitude - 0.27) * 1e7);
+                    bounds.north = static_cast<int32_t>(std::min(90.0, state.latitude + 0.27) * 1e7);
+                    const bool wraps = state.longitude - lon_delta < -180 || state.longitude + lon_delta >= 180;
+                    bounds.west = static_cast<int32_t>((wraps ? -180.0 : state.longitude - lon_delta) * 1e7);
+                    bounds.east = static_cast<int32_t>((wraps ? 179.9999999 : state.longitude + lon_delta) * 1e7);
+                    state.region_io = tmap::Status::Ok;
+                    state.cursor.position = 0;
+                    step = state.reader.queryBounds(bounds, accept_region, &state);
+                    if (step == tmap::Status::Cancelled && state.region_io != tmap::Status::Ok) step = state.region_io;
+                    else if (step == tmap::Status::Cancelled && state.limited) step = tmap::Status::Ok;
+                }
+                else step = state.reader.searchStep(state.cursor, 4, accept, &state);
                 if (step == tmap::Status::Ok)
                 {
                     std::printf("[TMAP][SEARCH] package_done generation=%lu path=%s candidates=%llu/%llu retained=%u reads=%llu cache_hits=%llu sd_bytes=%llu\n",
                                 static_cast<unsigned long>(generation), state.path,
                                 static_cast<unsigned long long>(state.cursor.position), static_cast<unsigned long long>(state.cursor.posting.count),
                                 state.count, static_cast<unsigned long long>(state.reader.pageReads()),
-                                static_cast<unsigned long long>(cache->hits), static_cast<unsigned long long>(cache->sd_bytes));
+                                static_cast<unsigned long long>(cache ? cache->hits : 0), static_cast<unsigned long long>(cache ? cache->sd_bytes : 0));
                     active = false;
                     state.path[0] = 0;
                     state.reader.close();
@@ -303,7 +404,7 @@ void worker(void* context)
                             state.cursor.initialized, state.cursor.query_offset,
                             static_cast<unsigned long long>(state.cursor.position), static_cast<unsigned long long>(state.cursor.posting.count),
                             state.count, static_cast<unsigned long long>(state.reader.pageReads()), static_cast<unsigned long>(busy_retries),
-                            static_cast<unsigned long long>(cache->hits), static_cast<unsigned long long>(cache->sd_bytes),
+                            static_cast<unsigned long long>(cache ? cache->hits : 0), static_cast<unsigned long long>(cache ? cache->sd_bytes : 0),
                             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
                 last_diagnostic = now;
             }
@@ -371,6 +472,40 @@ bool submit(const char* query, double origin_lat, double origin_lon)
     xSemaphoreGive(s_mutex);
     return ok;
 }
+uint32_t submitRegion(double latitude, double longitude)
+{
+    if (!std::isfinite(latitude) || !std::isfinite(longitude) || std::abs(latitude) > 90 || std::abs(longitude) > 180) return 0;
+    if (!submit(kRegionQuery, latitude, longitude)) return 0;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return 0;
+    const uint32_t token = s_state->generation.load();
+    xSemaphoreGive(s_mutex);
+    return token;
+}
+
+bool pollRegion(uint32_t request, RegionResult& output)
+{
+    if (!request || !s_state || !s_mutex || xSemaphoreTake(s_mutex, 0) != pdTRUE) return false;
+    const bool current = s_state->generation.load() == request && std::strcmp(s_state->pending_query, kRegionQuery) == 0 &&
+                         (s_state->snapshot.status != Status::Ready || s_state->region_media == s_state->storage.session());
+    if (current)
+    {
+        output.status = s_state->snapshot.status;
+        output.path[0] = 0;
+        if (output.status == Status::Ready && s_state->snapshot.count)
+        {
+            copy_name(output.path, sizeof(output.path), s_state->published[0].administrative_path);
+            // Keep only complete common hierarchy segments. Nearby POIs from
+            // different districts must never imply one arbitrary district.
+            for (size_t i = 1; i < s_state->snapshot.count && output.path[0]; ++i)
+            {
+                tmap::commonAdministrativePath(output.path, s_state->published[i].administrative_path);
+            }
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return current;
+}
+
 bool poll(Snapshot& snapshot, Result* results, size_t capacity)
 {
     if (!s_state || !results || capacity < kMaxResults || xSemaphoreTake(s_mutex, 0) != pdTRUE) return false;
@@ -378,7 +513,7 @@ bool poll(Snapshot& snapshot, Result* results, size_t capacity)
     if (changed)
     {
         snapshot = s_state->snapshot;
-        std::memcpy(results, s_state->published, snapshot.count * sizeof(Result));
+        if (snapshot.count) std::memcpy(results, s_state->published, snapshot.count * sizeof(Result));
     }
     xSemaphoreGive(s_mutex);
     return changed;

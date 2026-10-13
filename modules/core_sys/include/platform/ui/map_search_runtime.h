@@ -38,10 +38,18 @@ struct Snapshot
     Status status = Status::Idle;
     bool limited = false, incomplete = false;
 };
+struct RegionResult
+{
+    char path[513]{};
+    Status status = Status::Idle;
+    bool approximate = true;
+};
 #if defined(ARDUINO_ARCH_ESP32)
 bool submit(const char* query, double origin_lat, double origin_lon);
 bool poll(Snapshot& snapshot, Result* results, size_t capacity);
 void cancel();
+uint32_t submitRegion(double latitude, double longitude);
+bool pollRegion(uint32_t request, RegionResult& output);
 #else
 inline bool submit(const char*, double, double)
 {
@@ -49,5 +57,7 @@ inline bool submit(const char*, double, double)
 }
 inline bool poll(Snapshot&, Result*, size_t) { return false; }
 inline void cancel() {}
+inline uint32_t submitRegion(double, double) { return 0; }
+inline bool pollRegion(uint32_t, RegionResult&) { return false; }
 #endif
 } // namespace platform::ui::map_search

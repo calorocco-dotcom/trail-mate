@@ -6,7 +6,8 @@
   ],
   "build": {
     "includeDir": "include",
-    "srcDir": "src"
+    "srcDir": "src",
+    "flags": ["-I../../../modules/core_hostlink/include"]
   },
   "dependencies": [
     { "name": "core_waypoint" },
