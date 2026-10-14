@@ -168,6 +168,13 @@ browser, and use the connected device as the publication author.
 The selected Austria boundary is verified; this query returned no shared trails.
 This capture uses no USB author and does not claim a completed publication test.*
 
+![Shared-trail first-level administrative search](docs/images/release-1.0.0/web-track-administrative-search.png)
+
+*The same built Web page selects Austria and then Vorarlberg through the public
+directory, verifies the supplied boundary and queries that administrative area.
+The global catalog stops after two levels. This capture uses no USB author;
+the new Device and Tracks pages still await public website deployment.*
+
 ![Trail elevation and timed-record maintenance](docs/images/release-1.0.0/web-track-elevation.png)
 
 *Actual browser workspace with sample KML data, showing elevation inspection and
