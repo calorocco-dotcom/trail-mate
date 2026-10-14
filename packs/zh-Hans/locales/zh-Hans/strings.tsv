@@ -828,6 +828,16 @@ No saved waypoints	没有已保存的航点
 Saved waypoint	已保存航点
 Waypoint unavailable	航点不可用
 Reticulum	Reticulum 网络
+Image memory unavailable	图片内存不足
+Image cache needs checking. Download again.	图片缓存需要核对，请重新下载。
+Off route %.0fm	偏离线路 %.0fm
+Route position unavailable	线路位置不可用
+Route storage unavailable	线路存储不可用
+Route: waiting for GPS	线路：等待定位
+Route position ambiguous	线路位置有多解
+Route end (estimated)	估计到达线路终点
+Route %u%% | %s left	线路 %u%% | 剩余 %s
+Matching route...	正在匹配线路…
 No nodes	暂无节点
 Region unknown	行政区未知
 Position unknown	暂无位置信息

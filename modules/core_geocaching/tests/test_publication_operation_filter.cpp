@@ -1,0 +1,80 @@
+#include "geocaching/storage/publication_recovery.h"
+#include <cassert>
+
+int main()
+{
+    using namespace geocaching;
+    using namespace geocaching::storage;
+    PublicationRecoveryFilter filter;
+    std::array<uint8_t, 48> key{};
+    std::array<uint8_t, 16> operation{};
+    operation.fill(7);
+    std::memcpy(key.data() + 32, operation.data(), 16);
+    assert(filter.matchesRequest({key.data(), key.size()}));
+    filter.has_operation = true;
+    filter.operation = operation;
+    assert(filter.matchesRequest({key.data(), key.size()}));
+    auto other_key = key;
+    other_key[32] ^= 1;
+    assert(!filter.matchesRequest({other_key.data(), other_key.size()}));
+    auto other = filter;
+    other.operation[0] ^= 1;
+    assert(!filter.same(other));
+    other = filter;
+    other.has_operation = false;
+    assert(!filter.same(other));
+    other = filter;
+    assert(filter.same(other));
+
+    OutgoingView outgoing;
+    outgoing.task_id = {operation.data(), operation.size()};
+    outgoing.state = 1;
+    outgoing.continue_intent = true;
+    TaskView task;
+    task.kind = 1;
+    task.continue_intent = true;
+    task.requests[0] = {key.data(), key.size()};
+    task.request_count = 1;
+    std::array<uint8_t, 32> cache{}, hash{};
+    task.cache_id = {cache.data(), cache.size()};
+    task.revision_hash = {hash.data(), hash.size()};
+    PublicationRecoveryView selected;
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Ready);
+    assert(selected.task == operation);
+    assert(publicationRecoveryCandidate(filter, {other_key.data(), other_key.size()}, outgoing, task, selected) == PublicationRecoveryResult::None);
+    auto foreign_task = operation;
+    foreign_task[0] ^= 1;
+    outgoing.task_id = {foreign_task.data(), foreign_task.size()};
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Invalid);
+    outgoing.task_id = {operation.data(), operation.size()};
+    outgoing.state = 4;
+    outgoing.continue_intent = false;
+    task.state = 3;
+    task.continue_intent = false;
+    assert(publicationRecoveryRequestEligible(filter, outgoing));
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Ready);
+    assert(selected.confirmed);
+    filter.has_operation = false;
+    assert(!publicationRecoveryRequestEligible(filter, outgoing));
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::None);
+    outgoing.state = 5;
+    filter.has_operation = true;
+    assert(!publicationRecoveryRequestEligible(filter, outgoing));
+    filter.include_terminal = true;
+    task.state = 5;
+    assert(publicationRecoveryRequestEligible(filter, outgoing));
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Ready);
+    assert(selected.outgoing_state == 5 && selected.task_state == 5 && !selected.continue_intent && !selected.confirmed);
+    other = filter;
+    other.include_terminal = false;
+    assert(!filter.same(other));
+    filter.has_operation = false;
+    assert(!publicationRecoveryRequestEligible(filter, outgoing));
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Invalid);
+    filter.has_operation = true;
+    outgoing.state = 1;
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Ready);
+    assert(!selected.continue_intent && !selected.confirmed);
+    task.state = 6;
+    assert(publicationRecoveryCandidate(filter, {key.data(), key.size()}, outgoing, task, selected) == PublicationRecoveryResult::Invalid);
+}

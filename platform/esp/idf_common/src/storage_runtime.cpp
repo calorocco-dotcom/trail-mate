@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "platform/esp/arduino_common/chat/infra/store/sd_store.h"
+#include "platform/esp/arduino_common/geocaching/browse_runtime.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/esp/common/memory_budget.h"
@@ -35,6 +36,7 @@ using OperationGeneration =
 using Result = platform::esp::common::storage::StorageOperationResult;
 using ResultKind =
     platform::esp::common::storage::StorageOperationResultKind;
+namespace geo = platform::esp::arduino_common::geocaching::browse_runtime;
 
 class PsramBlobSink final : public chat::IMeshPeerDirectoryBlobSink
 {
@@ -183,6 +185,19 @@ class SdMaintenanceAdapter final : public Adapter
         }
         if (operation == Operation::Persist)
         {
+            // A retry continues its selected owner. Reuse the existing
+            // persistence generation field while the peer payload is empty.
+            if (geocaching_steps_ && peer_payload_generation_ == generation)
+                return Result::inProgressResult(operation, generation);
+            const bool peer_pending = peer_directory_ && peer_directory_->persistencePending();
+            if (geo::workPending() && (geocaching_turn_ || !peer_pending))
+            {
+                peer_payload_generation_ = generation;
+                geocaching_steps_ = 8;
+                geocaching_turn_ = false;
+                return Result::inProgressResult(operation, generation);
+            }
+            geocaching_turn_ = true;
             return beginPeerPersistence(generation);
         }
         return execute(operation, generation);
@@ -199,6 +214,15 @@ class SdMaintenanceAdapter final : public Adapter
         }
         if (operation == Operation::Persist)
         {
+            if (geocaching_steps_ && peer_payload_generation_ == generation)
+            {
+                if (geo::workPending()) geo::step();
+                if (--geocaching_steps_ && geo::workPending())
+                    return Result::inProgressResult(operation, generation);
+                geocaching_steps_ = 0;
+                peer_payload_generation_ = 0;
+                return Result::completedResult(operation, generation);
+            }
             return stepPeerPersistence(generation);
         }
         if (!store_)
@@ -219,6 +243,7 @@ class SdMaintenanceAdapter final : public Adapter
         }
         if (operation == Operation::Persist)
         {
+            geocaching_steps_ = 0;
             peer_payload_.release();
             peer_payload_generation_ = 0U;
             peer_payload_revision_ = 0U;
@@ -501,6 +526,9 @@ class SdMaintenanceAdapter final : public Adapter
     OperationGeneration peer_hydration_generation_ = 0U;
     bool peer_hydration_store_in_progress_ = false;
     bool peer_hydration_pending_ = false;
+    // Occupy the existing tail alignment padding (target object remains 44 B).
+    uint8_t geocaching_steps_ = 0;
+    bool geocaching_turn_ = false;
 
     void releasePeerHydrationPayload()
     {
@@ -622,7 +650,7 @@ void tick_deferred_storage()
 
     platform::esp::common::storage::StorageMaintenanceDemand demand{};
     demand.persistence_pending =
-        s_peer_directory && s_peer_directory->persistencePending();
+        (s_peer_directory && s_peer_directory->persistencePending()) || geo::workPending();
     demand.compaction_pending =
         s_store && s_store->compactionPending();
     (void)s_owner.submitTick(ownerNow(nullptr),

@@ -2,6 +2,7 @@
 // Hardware seams only. The test links the production browse runtime, stores,
 // clients and dispatcher without conditional compilation in those sources.
 #include "chat/infra/meshcore/crypto/ed25519/ed_25519.h"
+#include "chat/ports/device_author.h"
 #include "chat/ports/i_geocaching_transport.h"
 #include "esp_random.h"
 #include "geocaching/protocol/sign_record.h"
@@ -20,6 +21,9 @@ namespace runtime_test
 {
 inline uint64_t clock_ms = 0;
 inline bool memory_available = true, card_ready = true, external_owner = false;
+inline bool mutex_available = true;
+inline unsigned mutex_creates = 0;
+inline unsigned busy_author_reads = 0;
 inline size_t internal_free = SIZE_MAX;
 inline bool fail_read = false, in_ui = false;
 inline unsigned busy_reads = 0;
@@ -68,6 +72,8 @@ using SemaphoreHandle_t = bool*;
 constexpr int pdTRUE = 1;
 inline SemaphoreHandle_t xSemaphoreCreateMutex()
 {
+    ++runtime_test::mutex_creates;
+    if (!runtime_test::mutex_available) return nullptr;
     static bool taken = false;
     return &taken;
 }
@@ -78,6 +84,7 @@ inline int xSemaphoreTake(SemaphoreHandle_t semaphore, unsigned)
     return pdTRUE;
 }
 inline void xSemaphoreGive(SemaphoreHandle_t semaphore) { *semaphore = false; }
+inline void vSemaphoreDelete(SemaphoreHandle_t) {}
 inline uint32_t millis() { return static_cast<uint32_t>(runtime_test::clock_ms); }
 inline int64_t esp_timer_get_time() { return static_cast<int64_t>(runtime_test::clock_ms * 1000); }
 struct RuntimeTestSerial
@@ -250,7 +257,20 @@ class MeshAdapterRouter
     bool getGeocachingAuthorKey(uint8_t out[64])
     {
         identity.combinedPublicKey(out);
-        return ready;
+        return identity.isReady(); // Local author identity is independent of RF/network readiness.
+    }
+    uint32_t author_generation = 7;
+    DeviceAuthorResult readDeviceAuthorKey(uint8_t out[64], uint32_t& generation)
+    {
+        generation = 0;
+        if (runtime_test::busy_author_reads)
+        {
+            --runtime_test::busy_author_reads;
+            return DeviceAuthorResult::Unavailable;
+        }
+        identity.combinedPublicKey(out);
+        generation = author_generation;
+        return DeviceAuthorResult::Ok;
     }
     bool signGeocachingRecord(lxmf::ByteSpan record, uint8_t* scratch, size_t capacity, uint8_t* out, size_t output_capacity, size_t& written)
     {

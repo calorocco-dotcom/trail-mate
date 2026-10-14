@@ -1,8 +1,9 @@
 #include "platform/esp/arduino_common/geocaching/browse_runtime.h"
-#include "app/app_context.h"
+#include "app/app_facade_access.h"
 #include "geocaching/protocol/record_encoder.h"
 #include "geocaching/storage/download_recovery.h"
 #include "geocaching/storage/draft_publication.h"
+#include "geocaching/storage/publication_history_job.h"
 #include "geocaching/storage/record_shape.h"
 #include "platform/esp/arduino_common/chat/infra/lxmf/lxmf_adapter.h"
 #include "platform/esp/arduino_common/chat/infra/reticulum/reticulum_adapter.h"
@@ -22,12 +23,13 @@
 #include "platform/esp/arduino_common/geocaching/sd_indexed_stop_task.h"
 #include "platform/esp/arduino_common/geocaching/sd_publish_port.h"
 #include "platform/esp/arduino_common/geocaching/stored_reply_receipt.h"
+#include "platform/esp/arduino_common/geocaching/web_confirmation_job.h"
 #include "platform/esp/common/geocaching_crypto.h"
 #include "platform/esp/common/memory_budget.h"
 #include "platform/esp/common/meshcore_runtime_compat.h"
+#include "platform/esp/common/reticulum_runtime_compat.h"
 #include "platform/memory/psram_ptr.h"
 #include "ui/screens/geocaching/geocaching_page_shell.h"
-#include <Arduino.h>
 #include <atomic>
 #include <ctime>
 #include <esp_heap_caps.h>
@@ -124,6 +126,9 @@ struct Session
         uint64_t started = 0;
         uint32_t wait_ms = gc::QueryClient::kReplyTimeoutMs;
         bool submitted = false;
+        bool web_operation = false;
+        bool stop_requested = false;            // Existing tail padding; size assertion below forbids growth.
+        std::array<uint8_t, 16> operation_id{}; // Only the existing on-demand PSRAM job grows.
         ~Publication()
         {
             heap_caps_free(bytes);
@@ -131,6 +136,8 @@ struct Session
             heap_caps_free(draft_bytes);
         }
     };
+    static_assert(sizeof(Publication) == ((offsetof(Publication, submitted) + 1 + alignof(Publication) - 1) / alignof(Publication)) * alignof(Publication) + 16,
+                  "Web operation linkage must cost exactly 16 bytes in the on-demand job");
     ::platform::memory::PsramPtr<Publication> publication;
     chat::MeshOperationFailure last_dispatch_failure = chat::MeshOperationFailure::None;
     // Recovery discovers work left by a previous session. New work in this
@@ -146,10 +153,12 @@ struct Session
         bool started = false, done = false, saved = false, editor_fields = true;
         bool erase = false;
         bool erase_download = false;
+        bool web_file = false, web_job = false;
         std::array<uint8_t, 32> cache{}, hash{};
         ::platform::memory::PsramPtr<SdIndexedRemoveSaved> removal;
         ~DraftSave() { heap_caps_free(bytes); }
     };
+    static_assert(sizeof(DraftSave) == (sizeof(void*) == 4 ? 120 : 128), "Web staging grew the existing save job");
     ::platform::memory::PsramPtr<DraftSave> draft_save;
     struct DraftRead
     {
@@ -157,8 +166,11 @@ struct Session
         uint8_t* bytes = nullptr;
         size_t size = 0;
         ::ui::geocaching::DraftReadStatus status = ::ui::geocaching::DraftReadStatus::Pending;
+        uint8_t users = 0; // 1 UI, 2 browser; occupies existing tail padding.
+        DraftReadResult result = DraftReadResult::Pending;
         ~DraftRead() { heap_caps_free(bytes); }
     };
+    static_assert(sizeof(DraftRead) == (sizeof(void*) == 4 ? 28 : 40), "Shared draft reading grew its memory budget");
     ::platform::memory::PsramPtr<DraftRead> draft_read;
     bool draft_io_reset = false;
     struct DraftCatalog
@@ -211,6 +223,88 @@ struct Session
     uint64_t current_index_upgrade_deferred_revision = 0;
     bool checkpoint_recovery_required = false;
     ::platform::memory::PsramPtr<IndexedPublicationStore> store;
+    struct WebSignature
+    {
+        std::array<uint8_t, 16> draft{};
+        uint64_t draft_generation = 0;
+        DeviceAuthorIssuePort port;
+        gc::AuthorIssue issue;
+        std::array<uint8_t, 16> operation{}, owner{}, transfer{};
+        std::array<uint8_t, 64> author{};
+        std::array<uint8_t, 32> hash{};
+        uint32_t generation = 0, media = 0, total = 0, offset = 0;
+        uint64_t started = 0;
+        uint8_t* record = nullptr;
+        uint8_t* work = nullptr;
+        size_t capacity = 0;
+        storage::SdRuntimeFile file;
+        Digest digest;
+        bool issuing = false, failed = false;
+        WebSignature(chat::MeshAdapterRouter& router, PublicationStore& store, gc::protocol::RecordCrypto& crypto,
+                     const gc::storage::StoredTime& issued, const uint8_t* draft_id = nullptr, uint64_t draft_version = 0)
+            : draft_generation(draft_version), port(router, store, crypto, issued,
+                                                    draft_id ? gc::ByteView{draft.data(), draft.size()} : gc::ByteView{}, draft_version, draft_id != nullptr),
+              issue(port)
+        {
+            if (draft_id) std::memcpy(draft.data(), draft_id, draft.size());
+        }
+        void fail()
+        {
+            issue.cancel();
+            file.close();
+            failed = true;
+            heap_caps_free(record);
+            record = nullptr;
+            heap_caps_free(work);
+            work = nullptr;
+        }
+        ~WebSignature()
+        {
+            issue.cancel();
+            file.close();
+            heap_caps_free(record);
+            heap_caps_free(work);
+        }
+    };
+    ::platform::memory::PsramPtr<WebSignature> web_signature;
+    struct WebConfirmation
+    {
+        WebConfirmationJob<PublicationStore> job;
+        std::array<uint8_t, 16> transfer{}, owner{};
+        std::array<uint8_t, 32> hash{}, proof_hash{};
+        std::array<uint8_t, 64> author{};
+        uint32_t generation = 0, media = 0, total = 0, offset = 0;
+        uint64_t started = 0;
+        uint8_t *source = nullptr, *work = nullptr, *proof = nullptr;
+        size_t capacity = 0, proof_size = 0;
+        storage::SdRuntimeFile file;
+        Digest digest;
+        bool begun = false, failed = false, released = false;
+        WebConfirmation(PublicationStore& store, gc::protocol::RecordCrypto& crypto) : job(store, crypto) {}
+        void releasePayload()
+        {
+            file.close();
+            heap_caps_free(source);
+            source = nullptr;
+            heap_caps_free(work);
+            work = nullptr;
+            heap_caps_free(proof);
+            proof = nullptr;
+            released = true;
+        }
+        void fail()
+        {
+            job.cancel();
+            failed = true;
+            releasePayload();
+        }
+        ~WebConfirmation()
+        {
+            job.cancel();
+            releasePayload();
+        }
+    };
+    ::platform::memory::PsramPtr<WebConfirmation> web_confirmation;
     ::platform::memory::PsramPtr<IndexedDispatchStore> dispatch_store;
     ::platform::memory::PsramPtr<LiveQueryPort> port;
     ::platform::memory::PsramPtr<CacheDetail> detail, pending_detail;
@@ -293,6 +387,8 @@ struct Session
     }
     ~Session()
     {
+        web_signature.reset(); // Its reservation port borrows store.
+        web_confirmation.reset();
         workspace_owner.release(detail.get());
         detail.reset();
         workspace_owner.release(checkpoint.get());
@@ -317,13 +413,15 @@ struct Session
 };
 chat::MeshAdapterRouter* router = nullptr;
 LoraBoard* board = nullptr;
-SemaphoreHandle_t mutex = nullptr;
+std::atomic<SemaphoreHandle_t> mutex{nullptr};
+static_assert(sizeof(mutex) == sizeof(SemaphoreHandle_t), "Lazy Geocaching lock must not grow static state");
 ::platform::memory::PsramPtr<Session> session;
 std::array<uint8_t, 16> boot{};
-std::atomic<bool> wanted{false}, active{false}, restart{false};
+std::atomic<uint8_t> wanted{0}; // 1 UI, 2 browser, same size as the former bool.
+std::atomic<bool> active{false}, restart{false};
 std::atomic<bool> network_requested{false};
 std::atomic<bool> local_storage_requested{false};
-std::atomic<bool> cancel_draft_read{false};
+std::atomic<uint8_t> cancel_draft_read{0};
 std::atomic<bool> cancel_detail{false};
 std::atomic<uint32_t> next_step{0};
 std::atomic<uint32_t> replies_seen{0}, replies_busy{0}, replies_queued{0};
@@ -391,6 +489,7 @@ bool downloadActive()
 }
 bool publicationActive()
 {
+    if (session && (session->web_signature || session->web_confirmation)) return true;
     if (!session || !session->publication) return false;
     const auto& job = *session->publication;
     if (job.draft_stage != Session::Publication::DraftStage::None) return true;
@@ -457,12 +556,34 @@ bool advanceDraftCatalog(Session& s)
 }
 struct Guard
 {
-    bool locked = mutex && xSemaphoreTake(mutex, 0) == pdTRUE;
+    SemaphoreHandle_t handle = mutex.load(std::memory_order_acquire);
+    bool locked = handle && xSemaphoreTake(handle, 0) == pdTRUE;
     ~Guard()
     {
-        if (locked) xSemaphoreGive(mutex);
+        if (locked) xSemaphoreGive(handle);
     }
 };
+bool ensureMutex()
+{
+    if (mutex.load(std::memory_order_acquire)) return true;
+    const auto created = xSemaphoreCreateMutex();
+    if (!created) return false;
+    SemaphoreHandle_t expected = nullptr;
+    if (!mutex.compare_exchange_strong(expected, created, std::memory_order_acq_rel))
+        vSemaphoreDelete(created);
+    return true;
+}
+void releaseDraftReaders(Session& s, uint8_t mask)
+{
+    if (!s.draft_read) return;
+    s.draft_read->users &= static_cast<uint8_t>(~mask);
+    if (!s.draft_read->users)
+    {
+        const bool pending = s.draft_read->status == ::ui::geocaching::DraftReadStatus::Pending;
+        s.draft_read.reset();
+        if (pending) s.draft_io_reset = true;
+    }
+}
 gc::storage::StoredTime now(void*)
 {
     gc::storage::StoredTime time;
@@ -878,7 +999,7 @@ void advanceBrowse(Session& s)
             auto backend = std::unique_ptr<chat::reticulum::ReticulumAdapter>(new (std::nothrow)
                                                                                   chat::reticulum::ReticulumAdapter(*board, nullptr, chat::reticulum::ReticulumUsage::BackgroundIpService));
             if (!backend) return;
-            backend->applyConfig(app::AppContext::getInstance().readConfig().reticulumConfig());
+            backend->applyConfig(app::appFacade().readConfig().reticulumConfig());
             auto* created = backend.get();
             if (!router->installServiceBackend(chat::MeshProtocol::Reticulum, std::move(backend))) return;
             s.created_backend = created;
@@ -1064,12 +1185,14 @@ enum class PublicationRestore : uint8_t
     None,
     Pending,
     Restored,
-    Invalid
+    Invalid,
+    Forbidden
 };
 PublicationRestore restorePublication(Session& s, const gc::GeocacheId* cache = nullptr,
-                                      const gc::RevisionHash* hash = nullptr, const gc::Destination* remote = nullptr)
+                                      const gc::RevisionHash* hash = nullptr, const gc::Destination* remote = nullptr,
+                                      const std::array<uint8_t, 16>* expected_task = nullptr, const uint8_t* stop_author = nullptr)
 {
-    const bool background = !cache && !hash && !remote;
+    const bool background = !cache && !hash && !remote && !expected_task;
     if (background && s.publication_recovery_complete) return PublicationRestore::None;
     gc::storage::PublicationRecoveryFilter filter;
     filter.local = s.local;
@@ -1079,6 +1202,9 @@ PublicationRestore restorePublication(Session& s, const gc::GeocacheId* cache = 
     if (cache) filter.cache = *cache;
     if (hash) filter.hash = *hash;
     if (remote) filter.remote = *remote;
+    filter.has_operation = expected_task != nullptr;
+    filter.include_terminal = stop_author != nullptr;
+    if (expected_task) filter.operation = *expected_task;
     gc::storage::PublicationRecoveryView selected;
     const auto result = s.store->readPublicationRecovery(filter, selected);
     s.publication_restore_pending = result == DraftReadResult::Pending;
@@ -1105,6 +1231,7 @@ PublicationRestore restorePublication(Session& s, const gc::GeocacheId* cache = 
         return PublicationRestore::Invalid;
     gc::RequestId request;
     std::memcpy(request.bytes.data(), selected.key.data() + 32, 16);
+    if (expected_task && (selected.task != *expected_task || request.bytes != *expected_task)) return PublicationRestore::Invalid;
     auto job = ::platform::memory::PsramPtr<Session::Publication>(::platform::memory::createPsram<Session::Publication>());
     if (!job)
     {
@@ -1121,19 +1248,30 @@ PublicationRestore restorePublication(Session& s, const gc::GeocacheId* cache = 
         return PublicationRestore::Pending;
     }
     if (!job->port->attachRestoredRequest(job->remote, request)) return PublicationRestore::Invalid;
-    const bool reuse = s.publication && s.publication->bytes;
-    const size_t capacity = reuse ? s.publication->size + 26 : selected.request.size + 26;
-    auto* scratch = reuse ? s.publication->bytes + s.publication->size
-                          : static_cast<uint8_t*>(mem::allocatePreferred("geocaching.publish.restore", capacity, false));
+    // The read lease already owns this disjoint verification arena. Resume
+    // needs record verification space, not a second complete request buffer.
+    auto* scratch = s.verification;
     if (!scratch)
     {
         next_step.store(millis() + 1000);
         return PublicationRestore::Pending;
     }
-    const bool restored = job->attempt->resume(job->remote, request, selected.request, scratch, capacity,
+    const bool restored = job->attempt->resume(job->remote, request, selected.request, scratch, kVerificationCapacity,
                                                selected.cache, selected.hash, selected.response);
-    if (!reuse) heap_caps_free(scratch);
     if (!restored) return PublicationRestore::Invalid;
+    // resume verified this exact immutable request. Borrow its author only
+    // while the existing read lease owns the response frame.
+    gc::protocol::PublishRequestView published;
+    if (!gc::protocol::decodePublishRequest(selected.request, request, published)) return PublicationRestore::Invalid;
+    gc::protocol::CmpReader signed_reader(published.signed_cache);
+    size_t fields = 0;
+    gc::ByteView encoded, signature;
+    gc::RecordView original;
+    if (!signed_reader.array(fields, 2) || fields != 2 || !signed_reader.binary(encoded, gc::kMaxRecordBytes) ||
+        !signed_reader.binary(signature, 64) || signature.size != 64 || !signed_reader.finished() ||
+        !gc::protocol::decodeGeocacheRecord(encoded, original)) return PublicationRestore::Invalid;
+    if (stop_author && std::memcmp(original.author_public_key.data, stop_author, 64)) return PublicationRestore::Forbidden;
+    std::memcpy(job->author.data(), original.author_public_key.data, job->author.size());
     job->started = now(nullptr).monotonic_ms;
     job->wait_ms = 2 * gc::QueryClient::kReplyTimeoutMs + 5000;
     s.publication = std::move(job);
@@ -1518,7 +1656,7 @@ void advanceDraftPublication(Session& s)
 }
 
 bool publicationDraftReady(const std::array<uint8_t, 16>& id, uint64_t generation, std::array<uint8_t, 64>& author,
-                           uint32_t* from = nullptr, uint32_t* to = nullptr)
+                           uint32_t* from = nullptr, uint32_t* to = nullptr, const gc::Destination* selected = nullptr)
 {
     if (!session) return false;
     network_requested.store(true);
@@ -1540,11 +1678,25 @@ bool publicationDraftReady(const std::array<uint8_t, 16>& id, uint64_t generatio
     }
     if (!draft) return false;
     gc::Destination remote;
+    bool has_remote = false;
+    if (selected && session->client)
+    {
+        for (size_t i = 0; i < session->client->directoryCount(); ++i)
+        {
+            const auto* entry = session->client->directory(i);
+            if (entry && entry->delivery.bytes == selected->bytes && entry->capabilities_verified)
+            {
+                has_remote = true;
+                break;
+            }
+        }
+    }
+    else if (!selected && session->port) has_remote = session->port->pageSource(remote);
     const auto utc = std::time(nullptr);
     const bool ready = session && session->phase == Phase::Ready && session->port && session->store &&
                        !session->needsRecovery() && !session->store->commitPending() &&
                        !downloadActive() && !publicationActive() && !draftSaveActive() && utc >= 946684800 &&
-                       static_cast<uint64_t>(utc) <= 253402300799ULL && session->port->pageSource(remote) &&
+                       static_cast<uint64_t>(utc) <= 253402300799ULL && has_remote &&
                        draft->has_coordinates &&
                        gc::protocol::validRecordText(draft->name.data(), false, true) && router->getGeocachingAuthorKey(author.data()) &&
                        (!draft->has_author || draft->author == author);
@@ -1568,12 +1720,14 @@ class Facade final : public ::ui::geocaching::Source
     }
     void activate(bool open) override
     {
+        if (open && !ensureMutex()) return;
         if (open && !wanted.load())
         {
             network_requested.store(false);
             local_storage_requested.store(false);
         }
-        wanted.store(open);
+        if (open) wanted.fetch_or(1);
+        else wanted.fetch_and(static_cast<uint8_t>(~1));
         if (!open) cancel_detail.store(true);
         next_step.store(0);
     }
@@ -1586,7 +1740,7 @@ class Facade final : public ::ui::geocaching::Source
         if (!guard.locked)
         {
             out.busy = true;
-            std::snprintf(out.status.data(), out.status.size(), "Updating...");
+            std::snprintf(out.status.data(), out.status.size(), "%s", mutex.load() ? "Updating..." : "Geocaching lock memory unavailable");
             return;
         }
         if (session && section != ::ui::geocaching::Section::Discover)
@@ -1855,8 +2009,8 @@ class Facade final : public ::ui::geocaching::Source
         if (job->state == CacheDetail::State::Ready)
         {
             view.status = ::ui::geocaching::DetailStatus::Ready;
-            view.description = job->description.data();
-            view.hint = job->hint.data();
+            view.description = job->verified_record.record.description;
+            view.hint = job->verified_record.record.hint;
             std::array<uint8_t, 64> author{};
             view.can_archive = job->verified_record.record.state != gc::CacheState::Archived &&
                                router->getGeocachingAuthorKey(author.data()) &&
@@ -1955,31 +2109,30 @@ class Facade final : public ::ui::geocaching::Source
         using Status = ::ui::geocaching::DraftReadStatus;
         if (!guard.locked) return Status::Pending;
         if (!sink || !session || !session->store || session->needsRecovery()) return Status::Failed;
-        if (cancel_draft_read.exchange(false))
-        {
-            session->draft_read.reset();
-            session->draft_io_reset = true;
-        }
+        releaseDraftReaders(*session, cancel_draft_read.exchange(0));
         if (!session->draft_read || session->draft_read->id != id)
         {
+            if (session->draft_read && (session->draft_read->users & 2)) return Status::Pending;
             session->draft_io_reset = true;
             session->draft_read.reset(::platform::memory::createPsram<Session::DraftRead>());
             if (!session->draft_read) return Status::Failed;
             session->draft_read->id = id;
+            session->draft_read->users = 1;
             next_step.store(0);
             return Status::Pending;
         }
+        session->draft_read->users |= 1;
         if (session->draft_read->status == Status::Pending) return Status::Pending;
         if (session->draft_read->status == Status::Failed)
         {
-            session->draft_read.reset();
+            releaseDraftReaders(*session, 1);
             return Status::Failed;
         }
         gc::storage::DraftView draft;
         const auto& result = *session->draft_read;
         if (!gc::storage::decodeDraft({id.data(), id.size()}, {result.bytes, result.size}, draft))
         {
-            session->draft_read.reset();
+            releaseDraftReaders(*session, 1);
             return Status::Failed;
         }
         ::ui::geocaching::DraftInput out;
@@ -1996,7 +2149,7 @@ class Facade final : public ::ui::geocaching::Source
         out.terrain_x2 = draft.terrain_x2;
         out.container_size = draft.container_size;
         sink(out, context);
-        session->draft_read.reset();
+        releaseDraftReaders(*session, 1);
         return Status::Ready;
     }
     void cancelDraftRead(const std::array<uint8_t, 16>& id) override
@@ -2006,11 +2159,10 @@ class Facade final : public ::ui::geocaching::Source
         {
             if (session && session->draft_read && session->draft_read->id == id)
             {
-                session->draft_read.reset();
-                session->draft_io_reset = true;
+                releaseDraftReaders(*session, 1);
             }
         }
-        else cancel_draft_read.store(true);
+        else cancel_draft_read.fetch_or(1);
         next_step.store(0);
     }
     bool saveDraft(::ui::geocaching::DraftInput& input) override
@@ -2293,32 +2445,831 @@ void configure(chat::MeshAdapterRouter& value, LoraBoard& radio)
 {
     router = &value;
     board = &radio;
-    if (!mutex) mutex = xSemaphoreCreateMutex();
     esp_fill_random(boot.data(), boot.size());
     ::geocaching::ui::shell::bind(&facade);
 }
-bool queueDraftSave(const uint8_t id[16], const uint8_t* bytes, size_t size, uint64_t expected)
+bool publicationContext(uint8_t boot_id[16], uint64_t& monotonic_ms)
+{
+    if (!boot_id || !router || !board) return false;
+    std::memcpy(boot_id, boot.data(), boot.size());
+    monotonic_ms = static_cast<uint64_t>(esp_timer_get_time()) / 1000;
+    return true;
+}
+bool withIdentityMaintenance(bool (*action)(void*), void* context)
+{
+    if (!action || !ensureMutex()) return false;
+    Guard guard;
+    if (!guard.locked || pending_reply.load(std::memory_order_acquire) || pending_announcement.load(std::memory_order_acquire)) return false;
+    if (session)
+    {
+        const auto& s = *session;
+        if ((s.phase != Phase::Ready && s.phase != Phase::Failed) || s.needsRecovery() || s.recovery || s.checkpoint ||
+            s.workspace_owner.holder() || s.response || s.publication_restore_pending || s.download_restore_pending ||
+            downloadActive() || publicationActive() || draftSaveActive() ||
+            (s.store && s.store->commitPending()) || (s.dispatch_store && s.dispatch_store->busy()) ||
+            (s.receipts && s.receipts->pending()) || (s.saved && s.saved->pending()) ||
+            (s.draft_catalog && s.draft_catalog->reading) ||
+            (s.draft_read && s.draft_read->status == ::ui::geocaching::DraftReadStatus::Pending)) return false;
+        if (s.client)
+        {
+            const auto phase = s.client->phase();
+            if (phase != gc::QueryClientPhase::Idle && phase != gc::QueryClientPhase::PageReady && phase != gc::QueryClientPhase::Failed) return false;
+        }
+    }
+    if (action(context))
+    {
+        wanted.store(0);
+        network_requested.store(false);
+        local_storage_requested.store(false);
+        active.store(false);
+        session.reset();
+        ++epoch;
+    }
+    return true;
+}
+
+bool webLease(bool enabled, bool require_storage)
+{
+    if (enabled)
+    {
+        if (!router || !board || !ensureMutex()) return false;
+        const auto previous = wanted.fetch_or(2);
+        if (require_storage) local_storage_requested.store(true);
+        if (previous & 2) return true;
+    }
+    else
+    {
+        if (!(wanted.fetch_and(static_cast<uint8_t>(~2)) & 2)) return true;
+        cancel_draft_read.fetch_or(2);
+    }
+    next_step.store(0);
+    return true;
+}
+
+WebReadResult readWebDraftCatalog(uint32_t offset, bool has_expected, uint64_t expected,
+                                  uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!output || capacity < 384) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed) return WebReadResult::Unavailable;
+    if (!s.store || s.needsRecovery()) return WebReadResult::Pending;
+    if (has_expected && expected != s.store->catalogGeneration()) return WebReadResult::Conflict;
+    s.draft_catalog_wanted = true;
+    s.map_metadata_only = false;
+    if (!s.draft_catalog)
+    {
+        next_step.store(0);
+        return WebReadResult::Pending;
+    }
+    auto& catalog = *s.draft_catalog;
+    const size_t page_offset = (static_cast<size_t>(offset) / 4) * 4;
+    if (catalog.requested_offset != page_offset)
+    {
+        catalog.requested_offset = page_offset;
+        catalog.failed = catalog.ready = false;
+        if (catalog.reading) s.draft_io_reset = true;
+        ++catalog.generation;
+        next_step.store(0);
+        return WebReadResult::Pending;
+    }
+    if (catalog.failed && catalog.sequence == s.store->catalogGeneration()) return WebReadResult::Unavailable;
+    if (!draftCatalogReady(s)) return WebReadResult::Pending;
+    gc::protocol::CmpWriter writer(output, capacity);
+    if (!writer.array(4) || !writer.unsignedInteger(catalog.sequence) || !writer.unsignedInteger(offset) ||
+        !writer.unsignedInteger(catalog.total)) return WebReadResult::Invalid;
+    const size_t index = static_cast<size_t>(offset) - page_offset;
+    if (index >= catalog.page.count)
+    {
+        if (!writer.nil()) return WebReadResult::Invalid;
+    }
+    else
+    {
+        const auto& row = catalog.page.rows[index];
+        const auto& publication = row.publication;
+        const uint8_t flags = (publication.pending ? 1 : 0) | (publication.stopped ? 2 : 0) |
+                              (publication.local_changes ? 4 : 0) | (publication.base_retained ? 8 : 0);
+        if (!writer.array(9) || !writer.binary({row.id.data(), 16}) || !writer.unsignedInteger(row.generation) ||
+            !(row.has_author ? writer.binary({row.author.data(), 64}) : writer.nil()) || !writer.text(row.name.data()) ||
+            !writer.unsignedInteger(row.state) ||
+            !(row.has_coordinates ? writer.signedInteger(row.latitude_e7) : writer.nil()) ||
+            !(row.has_coordinates ? writer.signedInteger(row.longitude_e7) : writer.nil()) ||
+            !(row.has_base ? writer.binary({row.base_hash.data(), 32}) : writer.nil()) ||
+            !writer.array(3) || !writer.unsignedInteger(publication.latest_revision) ||
+            !writer.unsignedInteger(publication.confirmed_revision) || !writer.unsignedInteger(flags)) return WebReadResult::Invalid;
+    }
+    written = writer.size();
+    return WebReadResult::Ready;
+}
+WebReadResult readWebLatestRevision(const uint8_t id[32], const uint8_t directory[16], uint8_t* output, size_t capacity)
+{
+    if (!id || !directory || !output || capacity < 36) return WebReadResult::Invalid;
+    if (!webLease(true, false)) return WebReadResult::Unavailable;
+    if (!network_requested.exchange(true)) next_step.store(0);
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (!s.client || !s.port) return WebReadResult::Pending;
+    const gc::DirectoryEntry* target = nullptr;
+    for (size_t i = 0; i < s.client->directoryCount(); ++i)
+    {
+        const auto* entry = s.client->directory(i);
+        if (entry && !std::memcmp(entry->delivery.bytes.data(), directory, 16))
+        {
+            target = entry;
+            break;
+        }
+    }
+    if (!target) return s.client->directoryCount() ? WebReadResult::NotFound : WebReadResult::Pending;
+    if (!target->capabilities_verified) return WebReadResult::Pending;
+    if (s.pending_detail || cancel_detail.load() || publicationActive() || downloadActive()) return WebReadResult::Pending;
+    if (!s.detail)
+    {
+        auto job = ::platform::memory::PsramPtr<CacheDetail>(::platform::memory::createPsram<CacheDetail>());
+        if (!job) return WebReadResult::Unavailable;
+        std::memcpy(job->id.bytes.data(), id, 32);
+        job->remote = target->delivery;
+        job->state = CacheDetail::State::LatestNetwork;
+        job->started = now(nullptr).monotonic_ms;
+        if (!randomId(nullptr, job->request.bytes.data()) ||
+            !gc::protocol::encodeGetRequest(job->request, job->id, nullptr, nullptr, 8192,
+                                            job->request_bytes.data(), job->request_bytes.size(), job->request_size) ||
+            job->request_size > CacheDetail::kLatestEpochOffset) return WebReadResult::Unavailable;
+        std::memcpy(job->request_bytes.data() + CacheDetail::kLatestEpochOffset, target->epoch.data(), 16);
+        s.detail = std::move(job);
+        next_step.store(0);
+        return WebReadResult::Pending;
+    }
+    auto& job = *s.detail;
+    if (std::memcmp(job.id.bytes.data(), id, 32) || std::memcmp(job.remote.bytes.data(), directory, 16)) return WebReadResult::Conflict;
+    const bool latest_job = job.state == CacheDetail::State::LatestNetwork || job.state == CacheDetail::State::LatestReady ||
+                            job.state == CacheDetail::State::LatestFailed || job.state == CacheDetail::State::LatestNotFound;
+    if (latest_job && std::memcmp(job.request_bytes.data() + CacheDetail::kLatestEpochOffset, target->epoch.data(), 16))
+    {
+        s.detail.reset();
+        return WebReadResult::Conflict;
+    }
+    if (job.state == CacheDetail::State::LatestNetwork) return WebReadResult::Pending;
+    if (job.state == CacheDetail::State::LatestNotFound)
+    {
+        std::memset(output, 0, 36);
+        s.detail.reset();
+        return WebReadResult::Absent;
+    }
+    if (job.state == CacheDetail::State::LatestFailed)
+    {
+        s.detail.reset();
+        return WebReadResult::Unavailable;
+    }
+    if (job.state != CacheDetail::State::LatestReady) return WebReadResult::Conflict;
+    const auto revision = job.verified_record.record.revision;
+    for (unsigned i = 0; i < 4; ++i) output[i] = static_cast<uint8_t>(revision >> (8 * i));
+    std::memcpy(output + 4, job.verified_record.hash.bytes.data(), 32);
+    s.detail.reset();
+    return WebReadResult::Ready;
+}
+WebReadResult readWebDirectories(uint32_t offset, uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!output || capacity < 320 || offset > gc::QueryClient::kDirectoryCapacity) return WebReadResult::Invalid;
+    if (!webLease(true, false)) return WebReadResult::Unavailable;
+    if (!network_requested.exchange(true)) next_step.store(0);
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    if (session->phase == Phase::Failed || session->workspace_unavailable) return WebReadResult::Unavailable;
+    if (!session->client) return WebReadResult::Pending;
+    const auto& client = *session->client;
+    const auto* entry = client.directory(offset);
+    gc::protocol::CmpWriter writer(output, capacity);
+    if (!writer.array(3) || !writer.unsignedInteger(offset) || !writer.unsignedInteger(client.directoryCount())) return WebReadResult::Invalid;
+    if (!entry)
+    {
+        if (!writer.nil()) return WebReadResult::Invalid;
+    }
+    else
+    {
+        const auto current = now(nullptr).monotonic_ms;
+        const auto age = current >= entry->last_seen ? current - entry->last_seen : 0;
+        const uint8_t flags = (entry->capabilities_verified ? 1 : 0) | (entry->in_flight ? 2 : 0);
+        if (!writer.array(9) || !writer.binary({entry->delivery.bytes.data(), 16}) || !writer.binary({entry->discovery.bytes.data(), 16}) ||
+            !writer.binary({entry->public_key.data(), 64}) || !writer.binary({entry->epoch.data(), 16}) || !writer.unsignedInteger(entry->sequence) ||
+            !writer.text(entry->name.data()) || !writer.unsignedInteger(flags) || !writer.unsignedInteger(entry->max_query_items) ||
+            !writer.unsignedInteger(age)) return WebReadResult::Invalid;
+    }
+    written = writer.size();
+    return WebReadResult::Ready;
+}
+
+static WebReadResult prepareWebDraftRead(Session& s, const uint8_t id[16])
+{
+    releaseDraftReaders(s, cancel_draft_read.exchange(0));
+    if (!s.draft_read || std::memcmp(s.draft_read->id.data(), id, 16))
+    {
+        if (s.draft_read && (s.draft_read->users & 1)) return WebReadResult::Pending;
+        s.draft_io_reset = true;
+        s.draft_read.reset(::platform::memory::createPsram<Session::DraftRead>());
+        if (!s.draft_read) return WebReadResult::Unavailable;
+        std::memcpy(s.draft_read->id.data(), id, 16);
+        s.draft_read->users = 2;
+        next_step.store(0);
+        return WebReadResult::Pending;
+    }
+    auto& job = *s.draft_read;
+    job.users |= 2;
+    if (job.status == ::ui::geocaching::DraftReadStatus::Pending) return WebReadResult::Pending;
+    if (job.status != ::ui::geocaching::DraftReadStatus::Ready)
+    {
+        const auto result = job.result == DraftReadResult::NotFound ? WebReadResult::NotFound : WebReadResult::Unavailable;
+        releaseDraftReaders(s, 2);
+        return result;
+    }
+    return WebReadResult::Ready;
+}
+WebReadResult readWebPublicationBinding(const uint8_t id[16], uint64_t generation, const uint8_t directory[16],
+                                        const uint8_t expected_author[64], uint8_t* output, size_t capacity)
+{
+    if (!id || !generation || !directory || !expected_author || !output || capacity < 56) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    if (!network_requested.exchange(true)) next_step.store(0);
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed || s.workspace_unavailable) return WebReadResult::Unavailable;
+    if (!s.store || s.needsRecovery() || !s.client) return WebReadResult::Pending;
+    const gc::DirectoryEntry* target = nullptr;
+    for (size_t i = 0; i < s.client->directoryCount(); ++i)
+    {
+        const auto* entry = s.client->directory(i);
+        if (entry && !std::memcmp(entry->delivery.bytes.data(), directory, 16))
+        {
+            target = entry;
+            break;
+        }
+    }
+    if (!target) return WebReadResult::NotFound;
+    if (!target->capabilities_verified) return WebReadResult::Pending;
+    if (s.store->commitPending() || downloadActive() || publicationActive() || draftSaveActive()) return WebReadResult::Pending;
+    const auto ready = prepareWebDraftRead(s, id);
+    if (ready != WebReadResult::Ready) return ready;
+    const auto& job = *s.draft_read;
+    gc::storage::DraftView draft;
+    auto result = WebReadResult::Unavailable;
+    if (gc::storage::decodeDraft({id, 16}, {job.bytes, job.size}, draft))
+    {
+        if (draft.generation != generation) result = WebReadResult::Conflict;
+        else if (draft.author.size && std::memcmp(draft.author.data, expected_author, 64)) result = WebReadResult::Forbidden;
+        else if (!draft.has_coordinates || !gc::protocol::validRecordText(draft.name, false, true)) result = WebReadResult::Invalid;
+        else
+        {
+            s.draft_catalog_wanted = true;
+            s.map_metadata_only = false;
+            if (!draftCatalogReady(s))
+            {
+                s.draft_catalog_wanted = true;
+                next_step.store(0);
+                return WebReadResult::Pending;
+            }
+            bool in_window = false;
+            for (size_t i = 0; i < s.draft_catalog->page.count; ++i)
+                in_window |= !std::memcmp(s.draft_catalog->page.rows[i].id.data(), id, 16);
+            if (!in_window)
+            {
+                // The committed row already proved the ID exists. Seek it in
+                // the existing four-row window, including after session reset.
+                auto& catalog = *s.draft_catalog;
+                const auto next = catalog.page.offset + catalog.page.count;
+                catalog.requested_offset = next < catalog.page.total ? next : 0;
+                catalog.ready = catalog.failed = false;
+                releaseDraftReaders(s, 2);
+                next_step.store(0);
+                return WebReadResult::Pending;
+            }
+            std::array<uint8_t, 16> draft_id;
+            std::memcpy(draft_id.data(), id, draft_id.size());
+            std::array<uint8_t, 64> author;
+            uint32_t from = 0, to = 0;
+            if (!router->getGeocachingAuthorKey(author.data())) result = WebReadResult::Pending;
+            else if (std::memcmp(author.data(), expected_author, author.size())) result = WebReadResult::StaleIdentity;
+            else if (!publicationDraftReady(draft_id, generation, author, &from, &to, &target->delivery)) result = WebReadResult::Conflict;
+            else
+            {
+                Digest digest;
+                digest.update(job.bytes, job.size);
+                if (digest.finalize(output, 32))
+                {
+                    std::memcpy(output + 32, target->epoch.data(), target->epoch.size());
+                    if (capacity >= 88)
+                    {
+                        std::memset(output + 56, 0, 32);
+                        if (draft.base_hash.size) std::memcpy(output + 56, draft.base_hash.data, 32);
+                    }
+                    for (unsigned i = 0; i < 4; ++i)
+                    {
+                        output[48 + i] = static_cast<uint8_t>(from >> (8 * i));
+                        output[52 + i] = static_cast<uint8_t>(to >> (8 * i));
+                    }
+                    result = WebReadResult::Ready;
+                }
+            }
+        }
+    }
+    releaseDraftReaders(s, 2);
+    return result;
+}
+WebReadResult checkWebDraftEditOwner(const uint8_t id[16], uint64_t expected, const uint8_t author[64], const uint8_t* edit_hash)
+{
+    if (!id || !author || expected == UINT64_MAX) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed) return WebReadResult::Unavailable;
+    if (!s.store || s.needsRecovery()) return WebReadResult::Pending;
+    const auto ready = prepareWebDraftRead(s, id);
+    if (ready == WebReadResult::NotFound) return expected ? WebReadResult::Conflict : WebReadResult::Ready;
+    if (ready != WebReadResult::Ready) return ready;
+    gc::storage::DraftView draft;
+    const auto& job = *s.draft_read;
+    auto result = WebReadResult::Unavailable;
+    if (gc::storage::decodeDraft({id, 16}, {job.bytes, job.size}, draft))
+    {
+        if (draft.author.size && std::memcmp(draft.author.data, author, 64)) result = WebReadResult::Forbidden;
+        else if (draft.generation == expected) result = WebReadResult::Ready;
+        else if (edit_hash && draft.generation == expected + 1)
+        {
+            // Canonical fixed-width author/base values are the only bytes
+            // inserted by editDraft. Hash nil metadata plus the borrowed suffix,
+            // exactly matching the uploaded edit, without allocating a clone.
+            const size_t suffix = 1 + (draft.author.size ? 66 : 1) + (draft.base_hash.size ? 34 : 1);
+            constexpr uint8_t prefix[] = {0x94, 0xc0, 0xc0};
+            uint8_t hash[32];
+            Digest digest;
+            digest.update(prefix, sizeof(prefix));
+            digest.update(job.bytes + suffix, job.size - suffix);
+            result = !digest.finalize(hash, sizeof(hash)) ? WebReadResult::Unavailable
+                     : std::memcmp(hash, edit_hash, 32)   ? WebReadResult::Conflict
+                                                          : WebReadResult::AlreadySaved;
+        }
+        else result = WebReadResult::Conflict;
+    }
+    releaseDraftReaders(s, 2);
+    return result;
+}
+WebReadResult readWebDraftChunk(const uint8_t id[16], uint32_t offset, uint16_t count, uint64_t expected,
+                                uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!id || !output || !count || count > 320 || capacity < 384 || (offset && !expected)) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed) return WebReadResult::Unavailable;
+    if (!s.store || s.needsRecovery()) return WebReadResult::Pending;
+    const auto ready = prepareWebDraftRead(s, id);
+    if (ready != WebReadResult::Ready) return ready;
+    auto& job = *s.draft_read;
+    gc::storage::DraftView draft;
+    if (!gc::storage::decodeDraft({id, 16}, {job.bytes, job.size}, draft))
+    {
+        releaseDraftReaders(s, 2);
+        return WebReadResult::Unavailable;
+    }
+    if ((expected && draft.generation != expected) || offset > job.size)
+    {
+        releaseDraftReaders(s, 2);
+        return WebReadResult::Conflict;
+    }
+    const size_t length = std::min(static_cast<size_t>(count), job.size - static_cast<size_t>(offset));
+    gc::protocol::CmpWriter writer(output, capacity);
+    if (!writer.array(5) || !writer.binary({job.id.data(), 16}) || !writer.unsignedInteger(draft.generation) ||
+        !writer.unsignedInteger(job.size) || !writer.unsignedInteger(offset) || !writer.binary({job.bytes + offset, length}))
+        return WebReadResult::Invalid;
+    written = writer.size();
+    if (offset + length == job.size) releaseDraftReaders(s, 2);
+    return WebReadResult::Ready;
+}
+bool queueDraftSave(const uint8_t id[16], const uint8_t* bytes, size_t size, uint64_t expected, bool editor_fields)
 {
     Guard guard;
     gc::storage::DraftView draft;
     if (!guard.locked || !id || !session || !session->store || session->store->commitPending() || session->needsRecovery() ||
         downloadActive() || publicationActive() || draftSaveActive() || session->phase == Phase::ResumeDownloads ||
-        !gc::storage::decodeDraft({id, 16}, {bytes, size}, draft) || expected == UINT64_MAX || draft.generation != expected + 1) return false;
+        !gc::storage::decodeDraft({id, 16}, {bytes, size}, draft) || expected == UINT64_MAX || draft.generation != expected + 1 ||
+        (editor_fields && (draft.author.size || draft.base_hash.size))) return false;
     auto job = ::platform::memory::PsramPtr<Session::DraftSave>(::platform::memory::createPsram<Session::DraftSave>());
     if (!job) return false;
-    job->bytes = static_cast<uint8_t*>(mem::allocatePreferred("geocaching.draft", size, false));
+    // editDraft prepends retained author/base metadata in this same allocation.
+    // Two MessagePack binary values replace two nils: at most 100 extra bytes.
+    const size_t capacity = size + (editor_fields ? 100 : 0);
+    job->bytes = static_cast<uint8_t*>(mem::allocatePreferred("geocaching.draft", capacity, false));
     if (!job->bytes) return false;
     std::memcpy(job->id.data(), id, 16);
     std::memcpy(job->bytes, bytes, size);
     job->size = size;
-    job->capacity = size;
-    job->editor_fields = false;
+    job->capacity = capacity;
+    job->editor_fields = editor_fields;
     job->expected = expected;
     session->draft_save = std::move(job);
     next_step.store(0);
     ++epoch;
     return true;
 }
+WebReadResult queueWebDraftFile(const uint8_t id[16], uint32_t total, uint64_t expected,
+                                const uint8_t hash[32], const uint8_t author[64], uint32_t author_generation)
+{
+    if (!id || !hash || !author || !total || total > 4096 || expected == UINT64_MAX || !author_generation) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed) return WebReadResult::Unavailable;
+    if (s.draft_save && s.draft_save->web_job && s.draft_save->expected == expected &&
+        !std::memcmp(s.draft_save->id.data(), id, 16))
+    {
+        const auto& job = *s.draft_save;
+        if (job.capacity != static_cast<size_t>(total) + 100 || std::memcmp(job.hash.data(), hash, 32)) return WebReadResult::Conflict;
+        return !job.done ? WebReadResult::Pending : job.saved ? WebReadResult::AlreadySaved
+                                                              : static_cast<WebReadResult>(job.cache[0]);
+    }
+    if (s.phase != Phase::Ready || !s.store || s.needsRecovery() || s.store->commitPending() ||
+        s.draft_read || downloadActive() || publicationActive() || draftSaveActive()) return WebReadResult::Pending;
+    auto job = ::platform::memory::PsramPtr<Session::DraftSave>(::platform::memory::createPsram<Session::DraftSave>());
+    if (!job) return WebReadResult::Unavailable;
+    job->capacity = total + 100;
+    job->bytes = static_cast<uint8_t*>(mem::allocatePreferred("geocaching.draft", job->capacity, false));
+    if (!job->bytes) return WebReadResult::Unavailable;
+    std::memcpy(job->id.data(), id, 16);
+    std::memcpy(job->hash.data(), hash, 32);
+    // These checks fit in the existing identity-restoration headroom. They are
+    // consumed before editDraft can move the encoded suffix into that space.
+    std::memcpy(job->bytes + total, author, 64);
+    std::memcpy(job->bytes + total + 64, &author_generation, sizeof(author_generation));
+    job->expected = expected;
+    job->web_job = job->web_file = true;
+    s.draft_save = std::move(job);
+    next_step.store(0);
+    ++epoch;
+    return WebReadResult::Pending;
+}
+bool releaseWebDraftSave()
+{
+    if (!mutex.load(std::memory_order_acquire)) return true;
+    Guard guard;
+    if (!guard.locked) return false;
+    if (!session || !session->draft_save || !session->draft_save->web_job) return true;
+    const auto& job = *session->draft_save;
+    if (!job.done || job.started || job.saved) return false;
+    session->draft_save.reset();
+    ++epoch;
+    next_step.store(0);
+    return true;
+}
+static void failWebDraftSave(Session::DraftSave& job, WebReadResult result)
+{
+    job.done = true;
+    job.cache[0] = static_cast<uint8_t>(result);
+    heap_caps_free(job.bytes);
+    job.bytes = nullptr;
+    ++epoch;
+}
+static bool advanceWebDraftFile(Session& s)
+{
+    auto& job = *s.draft_save;
+    const size_t total = job.capacity - 100;
+    storage::SdRuntimeFile file;
+    const size_t count = std::min(size_t(320), total - job.size);
+    if (!file.open(kWebDraftCandidatePath, "r") || file.size() != total || !file.seek(job.size) ||
+        file.read(job.bytes + job.size, count) != static_cast<int>(count))
+    {
+        failWebDraftSave(job, WebReadResult::Unavailable);
+        return true;
+    }
+    job.size += count;
+    if (job.size != total) return true;
+    if (!s.crypto.sha256({job.bytes, total}, job.cache.data())) failWebDraftSave(job, WebReadResult::Unavailable);
+    else if (std::memcmp(job.cache.data(), job.hash.data(), 32)) failWebDraftSave(job, WebReadResult::HashMismatch);
+    else
+    {
+        gc::storage::DraftView draft;
+        if (!gc::storage::decodeDraft({job.id.data(), 16}, {job.bytes, total}, draft) ||
+            draft.author.size || draft.base_hash.size || draft.generation != job.expected + 1)
+            failWebDraftSave(job, WebReadResult::Invalid);
+        else
+        {
+            job.web_file = false;
+            job.cache[0] = static_cast<uint8_t>(WebReadResult::Unavailable);
+        }
+    }
+    return true;
+}
+WebReadResult requestWebPublicationStop(const uint8_t operation_id[16], const uint8_t expected_author[64])
+{
+    if (!operation_id || !expected_author) return WebReadResult::Invalid;
+    uint8_t bits = 0;
+    for (unsigned i = 0; i < 16; ++i) bits |= operation_id[i];
+    if (!bits) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed) return WebReadResult::Unavailable;
+    if (!s.store || s.needsRecovery() || s.phase != Phase::Ready) return WebReadResult::Pending;
+    const auto* current_key = s.publication && s.publication->attempt         ? s.publication->attempt->requestId().bytes.data()
+                              : s.publication && s.publication->web_operation ? s.publication->operation_id.data()
+                                                                              : nullptr;
+    const bool matches_current = current_key && !std::memcmp(current_key, operation_id, 16);
+    const bool failed_current = matches_current && s.publication->attempt && s.publication->attempt->phase() == gc::PublishAttemptPhase::Failed;
+    if (!matches_current || failed_current)
+    {
+        if (publicationActive() || downloadActive() || draftSaveActive() || s.store->commitPending()) return WebReadResult::Pending;
+        std::array<uint8_t, 64> actual;
+        if (!router->getGeocachingAuthorKey(actual.data())) return WebReadResult::Pending;
+        if (std::memcmp(actual.data(), expected_author, actual.size())) return WebReadResult::StaleIdentity;
+        if (s.local_read_only)
+        {
+            // A readable startup snapshot has not finished the journal audit.
+            // Finish it before restoring a writer bound to this root/store.
+            s.workspace_owner.release(s.detail.get());
+            if (s.detail && s.detail->state == CacheDetail::State::Ready) s.detail->saved_read.reset();
+            else s.detail.reset();
+            s.pending_detail.reset();
+            s.store->releaseDraftRead();
+            s.saved.reset();
+            if (s.draft_catalog) s.draft_catalog->reading = false;
+            s.draft_read.reset();
+            s.store.reset();
+            s.download_store.reset();
+            s.local_read_only = false;
+            startRecovery();
+            next_step.store(0);
+            return WebReadResult::Pending;
+        }
+        std::array<uint8_t, 16> task;
+        std::memcpy(task.data(), operation_id, task.size());
+        const auto restored = restorePublication(s, nullptr, nullptr, nullptr, &task, expected_author);
+        if (restored == PublicationRestore::Pending) return WebReadResult::Pending;
+        if (restored == PublicationRestore::None) return WebReadResult::NotFound;
+        if (restored == PublicationRestore::Forbidden) return WebReadResult::Forbidden;
+        if (restored != PublicationRestore::Restored) return WebReadResult::Unavailable;
+    }
+    auto& job = *session->publication;
+    const auto* key = job.attempt ? job.attempt->requestId().bytes.data() : job.web_operation ? job.operation_id.data()
+                                                                                              : nullptr;
+    if (!key || std::memcmp(key, operation_id, 16)) return WebReadResult::NotFound;
+    if (std::memcmp(job.author.data(), expected_author, job.author.size())) return WebReadResult::Forbidden;
+    std::array<uint8_t, 64> actual;
+    if (!router->getGeocachingAuthorKey(actual.data())) return WebReadResult::Pending;
+    if (std::memcmp(actual.data(), expected_author, actual.size())) return WebReadResult::StaleIdentity;
+    // A signed record still needs a durable attempt before a stopped receipt.
+    // Preserve the request across asynchronous historical lookup/admission so
+    // the maintenance owner cancels it before transport can dispatch it.
+    if (!job.attempt)
+    {
+        if (job.bytes && job.draft_stage == Session::Publication::DraftStage::None)
+        {
+            job.stop_requested = true;
+            next_step.store(0);
+        }
+        return WebReadResult::Pending;
+    }
+    const auto phase = job.attempt->phase();
+    if (phase == gc::PublishAttemptPhase::Confirmed || phase == gc::PublishAttemptPhase::Cancelled) return WebReadResult::Ready;
+    if (phase == gc::PublishAttemptPhase::Committing) return WebReadResult::Pending;
+    if (phase == gc::PublishAttemptPhase::Idle || phase == gc::PublishAttemptPhase::Failed) return WebReadResult::Unavailable;
+    if (!job.attempt->cancel()) return WebReadResult::Unavailable;
+    ++epoch;
+    next_step.store(0);
+    return job.attempt->phase() == gc::PublishAttemptPhase::Cancelled ? WebReadResult::Ready : WebReadResult::Pending;
+}
+WebReadResult readWebPublicationHistory(const uint8_t operation_id[16], const uint8_t expected_author[64],
+                                        uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!operation_id || !expected_author || !output || capacity < 192) return WebReadResult::Invalid;
+    uint8_t bits = 0;
+    for (unsigned i = 0; i < 16; ++i) bits |= operation_id[i];
+    if (!bits) return WebReadResult::Invalid;
+    if (!webLease(true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.phase == Phase::Failed) return WebReadResult::Unavailable;
+    if (!s.store || s.needsRecovery()) return WebReadResult::Pending;
+    std::array<uint8_t, 64> actual;
+    if (!router->getGeocachingAuthorKey(actual.data())) return WebReadResult::Pending;
+    if (std::memcmp(actual.data(), expected_author, actual.size())) return WebReadResult::StaleIdentity;
+    gc::storage::PublicationRecoveryFilter filter;
+    filter.local = s.local;
+    filter.has_operation = filter.include_terminal = true;
+    std::memcpy(filter.operation.data(), operation_id, 16);
+    gc::storage::PublicationRecoveryView selected;
+    auto read = DraftReadResult::Pending;
+    // Bounded slices on the existing command consumer. No new worker or queue.
+    for (unsigned i = 0; i < 8 && read == DraftReadResult::Pending; ++i)
+        read = s.store->readPublicationRecovery(filter, selected);
+    if (read == DraftReadResult::Pending || read == DraftReadResult::Busy) return WebReadResult::Pending;
+    if (read == DraftReadResult::NotFound) return WebReadResult::NotFound;
+    if (read != DraftReadResult::Ready) return WebReadResult::Unavailable;
+    struct ReadLease
+    {
+        PublicationStore& store;
+        ~ReadLease() { store.releaseDraftRead(); }
+    } lease{*s.store};
+    auto verified = ::platform::memory::PsramPtr<gc::protocol::VerifiedRecordView>(::platform::memory::createPsram<gc::protocol::VerifiedRecordView>());
+    if (!verified) return WebReadResult::Unavailable;
+    const auto result = gc::storage::encodePublicationHistoryJob(selected, {operation_id, 16}, {expected_author, 64},
+                                                                 s.crypto, s.verification, kVerificationCapacity, *verified,
+                                                                 output, capacity, written);
+    switch (result)
+    {
+    case gc::storage::PublicationHistoryJobResult::Ready:
+        return WebReadResult::Ready;
+    case gc::storage::PublicationHistoryJobResult::Forbidden:
+        return WebReadResult::Forbidden;
+    case gc::storage::PublicationHistoryJobResult::Invalid:
+        return WebReadResult::Invalid;
+    default:
+        return WebReadResult::Unavailable;
+    }
+}
+WebReadResult readWebPublicationJob(const uint8_t operation_id[16], const uint8_t expected_author[64],
+                                    uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!operation_id || !expected_author || !output || capacity < 192) return WebReadResult::Invalid;
+    if (!webLease(true, false)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session) return WebReadResult::Pending;
+    if (!session->publication) return WebReadResult::NotFound;
+    const auto& job = *session->publication;
+    const auto* attempt = job.attempt.get();
+    const auto* key = attempt ? attempt->requestId().bytes.data() : job.web_operation ? job.operation_id.data()
+                                                                                      : nullptr;
+    if (!key || std::memcmp(key, operation_id, 16)) return WebReadResult::NotFound;
+    if (std::memcmp(job.author.data(), expected_author, job.author.size())) return WebReadResult::Forbidden;
+    std::array<uint8_t, 64> actual_author;
+    if (!router->getGeocachingAuthorKey(actual_author.data())) return WebReadResult::Pending;
+    if (std::memcmp(actual_author.data(), expected_author, actual_author.size())) return WebReadResult::StaleIdentity;
+    uint8_t phase = 0;
+    int durable = 0, transported = 0; // -1 means not known from this projection.
+    if (attempt)
+    {
+        using Phase = gc::PublishAttemptPhase;
+        switch (attempt->phase())
+        {
+        case Phase::Idle:
+            phase = 0;
+            break;
+        case Phase::Submitting:
+            phase = 1;
+            break;
+        case Phase::Waiting:
+            phase = 2;
+            durable = 1;
+            transported = job.submitted ? 1 : -1;
+            break;
+        case Phase::Committing:
+            phase = 2;
+            durable = 1;
+            transported = 1;
+            break;
+        case Phase::Confirmed:
+            phase = 3;
+            durable = transported = 1;
+            break;
+        case Phase::Cancelled:
+            phase = 4;
+            durable = 1;
+            transported = job.submitted ? 1 : -1;
+            break;
+        case Phase::Failed:
+            phase = 5;
+            durable = transported = -1;
+            break;
+        case Phase::Cancelling:
+            phase = 6;
+            durable = -1;
+            transported = job.submitted ? 1 : -1;
+            break;
+        }
+    }
+    else if (job.stop_requested)
+    {
+        phase = 6;
+        durable = transported = -1;
+    }
+    const char* error = job.error;
+    if (!attempt && (job.error || (job.draft_stage == Session::Publication::DraftStage::None && !job.bytes)))
+    {
+        phase = 5;
+        durable = transported = -1;
+        if (!error) error = "Publication could not be admitted";
+    }
+    gc::protocol::CmpWriter writer(output, capacity);
+    if (!writer.array(8) || !writer.binary({operation_id, 16}) || !writer.unsignedInteger(phase) ||
+        !(attempt ? writer.binary({attempt->cacheId().bytes.data(), 32}) : writer.nil()) ||
+        !(attempt ? writer.binary({attempt->revisionHash().bytes.data(), 32}) : writer.nil()) ||
+        !writer.unsignedInteger(attempt ? attempt->revision() : job.expected_revision) ||
+        !(durable < 0 ? writer.nil() : writer.unsignedInteger(static_cast<uint8_t>(durable))) ||
+        !(transported < 0 ? writer.nil() : writer.unsignedInteger(static_cast<uint8_t>(transported))) ||
+        !(error ? writer.text(error) : writer.nil())) return WebReadResult::Invalid;
+    written = writer.size();
+    return WebReadResult::Ready;
+}
+
+bool webPublicationPlan(const uint8_t id[16], uint64_t generation, const uint8_t directory[16],
+                        uint8_t author[64], uint32_t& from, uint32_t& to)
+{
+    Guard guard;
+    if (!guard.locked || !id || !directory || !author) return false;
+    std::array<uint8_t, 16> draft_id;
+    gc::Destination remote;
+    std::array<uint8_t, 64> key;
+    std::memcpy(draft_id.data(), id, draft_id.size());
+    std::memcpy(remote.bytes.data(), directory, remote.bytes.size());
+    uint32_t previous = 0, next = 0;
+    if (!publicationDraftReady(draft_id, generation, key, &previous, &next, &remote)) return false;
+    std::memcpy(author, key.data(), key.size());
+    from = previous;
+    to = next;
+    return true;
+}
+
+bool queueWebDraftPublication(const uint8_t id[16], uint64_t generation, const uint8_t directory[16],
+                              const uint8_t expected_author[64], uint32_t expected_revision, const uint8_t* expected_binding,
+                              const uint8_t* operation_id)
+{
+    Guard guard;
+    if (!guard.locked || !id || !directory || !expected_author) return false;
+    if (operation_id)
+    {
+        uint8_t bits = 0;
+        for (unsigned i = 0; i < 16; ++i) bits |= operation_id[i];
+        if (!bits) return false;
+    }
+    std::array<uint8_t, 16> draft_id;
+    gc::Destination remote;
+    std::array<uint8_t, 64> author;
+    std::memcpy(draft_id.data(), id, draft_id.size());
+    std::memcpy(remote.bytes.data(), directory, remote.bytes.size());
+    uint32_t previous = 0, revision = 0;
+    if (!publicationDraftReady(draft_id, generation, author, &previous, &revision, &remote) ||
+        std::memcmp(author.data(), expected_author, author.size()) || revision != expected_revision) return false;
+    if (expected_binding)
+    {
+        const gc::DirectoryEntry* target = nullptr;
+        for (size_t i = 0; i < session->client->directoryCount(); ++i)
+        {
+            const auto* entry = session->client->directory(i);
+            if (entry && entry->delivery.bytes == remote.bytes)
+            {
+                target = entry;
+                break;
+            }
+        }
+        if (!target || std::memcmp(target->epoch.data(), expected_binding + 32, target->epoch.size())) return false;
+        for (unsigned i = 0; i < 4; ++i)
+            if (expected_binding[48 + i] != static_cast<uint8_t>(previous >> (8 * i)) ||
+                expected_binding[52 + i] != static_cast<uint8_t>(revision >> (8 * i))) return false;
+        if (prepareWebDraftRead(*session, id) != WebReadResult::Ready) return false;
+        const auto& read = *session->draft_read;
+        gc::storage::DraftView draft;
+        uint8_t hash[32];
+        Digest digest;
+        digest.update(read.bytes, read.size);
+        const bool matches = gc::storage::decodeDraft({id, 16}, {read.bytes, read.size}, draft) &&
+                             draft.generation == generation && digest.finalize(hash, sizeof(hash)) &&
+                             !std::memcmp(hash, expected_binding, sizeof(hash));
+        releaseDraftReaders(*session, 2);
+        if (!matches) return false;
+    }
+    auto job = ::platform::memory::PsramPtr<Session::Publication>(::platform::memory::createPsram<Session::Publication>());
+    if (!job) return false;
+    job->remote = remote;
+    job->draft_id = draft_id;
+    job->draft_generation = generation;
+    job->author = author;
+    job->expected_revision = revision;
+    if (operation_id)
+    {
+        job->web_operation = true;
+        std::memcpy(job->operation_id.data(), operation_id, 16);
+    }
+    job->issued = now(nullptr);
+    job->issued.has_utc = true;
+    job->issued.utc_seconds = static_cast<uint64_t>(std::time(nullptr));
+    job->draft_stage = Session::Publication::DraftStage::Bind;
+    session->draft_save.reset();
+    session->publication = std::move(job);
+    next_step.store(0);
+    ++epoch;
+    return true;
+}
+
 bool queuePublication(const uint8_t* bytes, size_t size)
 {
     Guard guard;
@@ -2339,6 +3290,308 @@ bool queuePublication(const uint8_t* bytes, size_t size)
     next_step.store(0);
     ++epoch;
     return true;
+}
+WebReadResult queueWebSignature(const uint8_t operation[16], const uint8_t owner[16], const uint8_t transfer[16],
+                                const uint8_t hash[32], uint32_t total, const uint8_t author[64], uint32_t generation,
+                                const uint8_t* draft, uint64_t draft_generation)
+{
+    if (!operation || !owner || !transfer || !hash || !author || !generation || !total || total > 4096) return WebReadResult::Invalid;
+    if (bool(draft) != bool(draft_generation)) return WebReadResult::Invalid;
+    if (!webLease(true, true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session || !router) return WebReadResult::Pending;
+    auto& s = *session;
+    if (s.web_signature)
+    {
+        const auto& job = *s.web_signature;
+        if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
+        return !std::memcmp(job.operation.data(), operation, 16) && !std::memcmp(job.transfer.data(), transfer, 16) &&
+                       !std::memcmp(job.hash.data(), hash, 32) && !std::memcmp(job.author.data(), author, 64) &&
+                       job.generation == generation && job.total == total && job.draft_generation == draft_generation &&
+                       (!draft || !std::memcmp(job.draft.data(), draft, 16))
+                   ? WebReadResult::Ready
+                   : WebReadResult::Conflict;
+    }
+    if (s.phase != Phase::Ready || !s.store || s.needsRecovery() || s.store->commitPending() ||
+        s.workspace_owner.holder() || downloadActive() || publicationActive() || draftSaveActive()) return WebReadResult::Pending;
+    auto job = ::platform::memory::PsramPtr<Session::WebSignature>(::platform::memory::createPsram<Session::WebSignature>(*router, *s.store, s.crypto, now(nullptr), draft, draft_generation));
+    if (!job) return WebReadResult::Unavailable;
+    job->record = static_cast<uint8_t*>(heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    job->capacity = total + 70;
+    job->work = static_cast<uint8_t*>(heap_caps_malloc(job->capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!job->record || !job->work) return WebReadResult::Unavailable;
+    std::memcpy(job->operation.data(), operation, 16);
+    std::memcpy(job->owner.data(), owner, 16);
+    std::memcpy(job->transfer.data(), transfer, 16);
+    std::memcpy(job->hash.data(), hash, 32);
+    std::memcpy(job->author.data(), author, 64);
+    job->generation = generation;
+    job->total = total;
+    job->media = storage::sd_media_session();
+    job->started = now(nullptr).monotonic_ms;
+    s.web_signature = std::move(job);
+    next_step.store(0);
+    return WebReadResult::Ready;
+}
+
+bool validWebSignature(Session::WebSignature& job)
+{
+    if (job.failed || !router || job.media != storage::sd_media_session() || !storage::sd_card_ready() || storage::sd_external_block_owner_active() ||
+        now(nullptr).monotonic_ms - job.started >= 120000) return false;
+    std::array<uint8_t, 64> author{};
+    uint32_t generation = 0;
+    return router->readDeviceAuthorKey(author.data(), generation) == chat::DeviceAuthorResult::Ok &&
+           generation == job.generation && !std::memcmp(author.data(), job.author.data(), 64);
+}
+void advanceWebSignature(Session& s)
+{
+    if (!(wanted.load() & 2))
+    {
+        s.web_signature.reset();
+        return;
+    }
+    auto& job = *s.web_signature;
+    if (!validWebSignature(job))
+    {
+        job.fail();
+        return;
+    }
+    if (job.offset < job.total)
+    {
+        if (!job.file.is_open() && (!job.file.open("/trailmate/cache.sign.upload", "r", job.media) || job.file.size() != job.total))
+        {
+            job.fail();
+            return;
+        }
+        const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
+        if (job.file.read(job.record + job.offset, count) != static_cast<int>(count))
+        {
+            job.fail();
+            return;
+        }
+        job.digest.update(job.record + job.offset, count);
+        job.offset += count;
+        return;
+    }
+    if (!job.issuing)
+    {
+        job.file.close();
+        if (!job.digest.finalize(job.work, 32) || std::memcmp(job.work, job.hash.data(), 32) ||
+            !job.issue.begin({job.record, job.total}, job.work, job.capacity))
+        {
+            job.fail();
+            return;
+        }
+        job.issuing = true;
+    }
+    job.issue.advance();
+    if (job.issue.phase() == gc::AuthorIssuePhase::Failed) job.fail();
+    else if (job.issue.phase() == gc::AuthorIssuePhase::Signed && job.record)
+    {
+        heap_caps_free(job.record);
+        job.record = nullptr;
+    }
+}
+WebReadResult readWebSignature(const uint8_t operation[16], const uint8_t owner[16], bool status_only,
+                               uint32_t offset, uint16_t maximum, uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    Guard guard;
+    if (!guard.locked) return WebReadResult::Pending;
+    if (!operation || !owner || !output || !session || !session->web_signature) return WebReadResult::NotFound;
+    auto& job = *session->web_signature;
+    if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
+    if (std::memcmp(job.operation.data(), operation, 16)) return WebReadResult::NotFound;
+    if (!validWebSignature(job)) job.fail();
+    const auto signed_record = job.issue.signedRecord();
+    const uint8_t phase = job.failed ? 2 : signed_record.size ? 1
+                                                              : 0;
+    gc::protocol::CmpWriter writer(output, capacity);
+    if (status_only)
+    {
+        if (!writer.array(5) || !writer.binary({job.operation.data(), 16}) || !writer.binary({job.hash.data(), 32}) ||
+            !writer.unsignedInteger(job.generation) || !writer.unsignedInteger(phase) || !writer.unsignedInteger(phase == 1 ? signed_record.size : 0)) return WebReadResult::Invalid;
+    }
+    else
+    {
+        if (phase != 1) return WebReadResult::Pending;
+        if (!maximum || maximum > 320 || offset >= signed_record.size) return WebReadResult::Invalid;
+        const size_t count = std::min(size_t(maximum), signed_record.size - offset);
+        if (!writer.array(5) || !writer.binary({job.operation.data(), 16}) || !writer.unsignedInteger(offset) || !writer.unsignedInteger(signed_record.size) ||
+            !writer.binary({job.hash.data(), 32}) || !writer.binary({signed_record.data + offset, count})) return WebReadResult::Invalid;
+    }
+    written = writer.size();
+    return WebReadResult::Ready;
+}
+WebReadResult releaseWebSignature(const uint8_t owner[16], const uint8_t* operation)
+{
+    Guard guard;
+    if (!guard.locked) return WebReadResult::Pending;
+    if (!owner || !session || !session->web_signature) return WebReadResult::NotFound;
+    const auto& job = *session->web_signature;
+    if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
+    if (operation && std::memcmp(job.operation.data(), operation, 16)) return WebReadResult::NotFound;
+    session->web_signature.reset();
+    return WebReadResult::Ready;
+}
+WebReadResult sharedSignatureUploadIdle()
+{
+    Guard guard;
+    if (!guard.locked || (session && (session->web_signature || session->web_confirmation))) return WebReadResult::Pending;
+    return WebReadResult::Ready;
+}
+bool withSignatureInputRecovery(bool (*action)(void*), void* context)
+{
+    if (!action || !ensureMutex()) return false;
+    Guard guard;
+    if (!guard.locked || (session && (session->web_signature || session->web_confirmation))) return false;
+    // Staging is separate from the Geocaching index. Serialize read-only input
+    // with maintenance steps without requiring RF/network discovery to be idle.
+    action(context);
+    return true;
+}
+WebReadResult validWebConfirmation(Session::WebConfirmation& job)
+{
+    if (!router || job.media != storage::sd_media_session() || !storage::sd_card_ready() ||
+        now(nullptr).monotonic_ms - job.started >= 120000) return WebReadResult::StaleIdentity;
+    if (storage::sd_external_block_owner_active()) return WebReadResult::Pending;
+    std::array<uint8_t, 64> author{};
+    uint32_t generation = 0;
+    const auto result = router->readDeviceAuthorKey(author.data(), generation);
+    // The router uses a nonblocking lock. Unavailable cannot prove that the
+    // account changed: retain the original task and retry within its deadline.
+    if (result == chat::DeviceAuthorResult::Unavailable) return WebReadResult::Pending;
+    if (result == chat::DeviceAuthorResult::StorageError) return WebReadResult::Unavailable;
+    return result == chat::DeviceAuthorResult::Ok && generation == job.generation &&
+                   !std::memcmp(author.data(), job.author.data(), 64)
+               ? WebReadResult::Ready
+               : WebReadResult::StaleIdentity;
+}
+WebReadResult queueWebConfirmation(const uint8_t transfer[16], const uint8_t owner[16], const uint8_t hash[32], uint32_t total,
+                                   const uint8_t author[64], uint32_t generation, const uint8_t* proof, size_t proof_size)
+{
+    if (!transfer || !owner || !hash || !author || !generation || !total || total > 4166 || !proof || !proof_size || proof_size > 384) return WebReadResult::Invalid;
+    gc::storage::PublicationConfirmationView decoded;
+    if (!gc::storage::decodePublicationConfirmation({proof, proof_size}, decoded)) return WebReadResult::Invalid;
+    if (!webLease(true, true)) return WebReadResult::Unavailable;
+    Guard guard;
+    if (!guard.locked || !session || !router) return WebReadResult::Pending;
+    auto& s = *session;
+    std::array<uint8_t, 32> proof_hash{};
+    if (!s.crypto.sha256({proof, proof_size}, proof_hash.data())) return WebReadResult::Unavailable;
+    if (s.web_confirmation)
+    {
+        const auto& job = *s.web_confirmation;
+        if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
+        return job.total == total && job.generation == generation && !std::memcmp(job.transfer.data(), transfer, 16) && !std::memcmp(job.hash.data(), hash, 32) &&
+                       !std::memcmp(job.author.data(), author, 64) && job.proof_hash == proof_hash
+                   ? WebReadResult::Ready
+                   : WebReadResult::Conflict;
+    }
+    if (s.phase != Phase::Ready || !s.store || s.needsRecovery() || s.store->commitPending() || s.workspace_owner.holder() || downloadActive() || publicationActive() || draftSaveActive()) return WebReadResult::Pending;
+    auto job = ::platform::memory::PsramPtr<Session::WebConfirmation>(::platform::memory::createPsram<Session::WebConfirmation>(*s.store, s.crypto));
+    if (!job) return WebReadResult::Unavailable;
+    job->source = static_cast<uint8_t*>(heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    job->capacity = std::max(size_t(320), size_t(total) + 128);
+    job->work = static_cast<uint8_t*>(heap_caps_malloc(job->capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    job->proof = static_cast<uint8_t*>(heap_caps_malloc(proof_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!job->source || !job->work || !job->proof) return WebReadResult::Unavailable;
+    std::memcpy(job->transfer.data(), transfer, 16);
+    std::memcpy(job->owner.data(), owner, 16);
+    std::memcpy(job->hash.data(), hash, 32);
+    std::memcpy(job->author.data(), author, 64);
+    std::memcpy(job->proof, proof, proof_size);
+    job->proof_hash = proof_hash;
+    job->proof_size = proof_size;
+    job->generation = generation;
+    job->total = total;
+    job->media = storage::sd_media_session();
+    job->started = now(nullptr).monotonic_ms;
+    s.web_confirmation = std::move(job);
+    next_step.store(0);
+    return WebReadResult::Ready;
+}
+void advanceWebConfirmation(Session& s)
+{
+    if (!(wanted.load() & 2))
+    {
+        s.web_confirmation.reset();
+        return;
+    }
+    auto& job = *s.web_confirmation;
+    const auto validity = validWebConfirmation(job);
+    if (validity == WebReadResult::Pending) return;
+    if (validity != WebReadResult::Ready)
+    {
+        job.fail();
+        return;
+    }
+    if (job.released) return;
+    if (job.offset < job.total)
+    {
+        if (!job.file.is_open() && (!job.file.open("/trailmate/cache.confirm.upload", "r", job.media) || job.file.size() != job.total))
+        {
+            job.fail();
+            return;
+        }
+        const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
+        if (job.file.read(job.source + job.offset, count) != static_cast<int>(count))
+        {
+            job.fail();
+            return;
+        }
+        job.digest.update(job.source + job.offset, count);
+        job.offset += count;
+        return;
+    }
+    if (!job.begun)
+    {
+        job.file.close();
+        if (!job.digest.finalize(job.work, 32) || std::memcmp(job.work, job.hash.data(), 32) ||
+            !job.job.begin(job.transfer, {job.source, job.total}, {job.proof, job.proof_size}, {job.author.data(), 64}, now(nullptr), job.work, job.capacity))
+        {
+            job.fail();
+            return;
+        }
+        job.begun = true;
+    }
+    job.job.advance();
+    if (job.job.phase() == WebConfirmationPhase::Failed || job.job.phase() == WebConfirmationPhase::Cancelled) job.fail();
+    else if (job.job.phase() == WebConfirmationPhase::Confirmed) job.releasePayload();
+}
+WebReadResult readWebConfirmation(const uint8_t transfer[16], const uint8_t owner[16], uint8_t* output, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!transfer || !owner || !output || capacity < 192) return WebReadResult::Invalid;
+    Guard guard;
+    if (!guard.locked || !session || !session->web_confirmation) return WebReadResult::Pending;
+    auto& job = *session->web_confirmation;
+    if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
+    if (std::memcmp(job.transfer.data(), transfer, 16)) return WebReadResult::NotFound;
+    const auto validity = validWebConfirmation(job);
+    if (validity != WebReadResult::Ready) return validity;
+    const uint8_t phase = job.failed ? 2 : job.job.phase() == WebConfirmationPhase::Confirmed ? 1
+                                                                                              : 0;
+    gc::protocol::CmpWriter writer(output, capacity);
+    if (!writer.array(8) || !writer.binary({job.transfer.data(), 16}) || !writer.binary({job.hash.data(), 32}) || !writer.unsignedInteger(job.generation) || !writer.unsignedInteger(phase)) return WebReadResult::Invalid;
+    if (phase == 1)
+    {
+        if (!writer.binary({job.job.cacheId().bytes.data(), 32}) || !writer.unsignedInteger(job.job.revision()) || !writer.binary({job.job.hash().bytes.data(), 32}) || !writer.unsignedInteger(1)) return WebReadResult::Invalid;
+    }
+    else if (!writer.nil() || !writer.nil() || !writer.nil() || !writer.unsignedInteger(0)) return WebReadResult::Invalid;
+    written = writer.size();
+    return WebReadResult::Ready;
+}
+WebReadResult releaseWebConfirmation(const uint8_t owner[16], const uint8_t* transfer)
+{
+    Guard guard;
+    if (!guard.locked) return WebReadResult::Pending;
+    if (!owner || !session || !session->web_confirmation) return WebReadResult::NotFound;
+    const auto& job = *session->web_confirmation;
+    if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
+    if (transfer && std::memcmp(job.transfer.data(), transfer, 16)) return WebReadResult::NotFound;
+    session->web_confirmation.reset();
+    return WebReadResult::Ready;
 }
 bool workPending()
 {
@@ -2387,6 +3640,9 @@ void step()
         else s.detail = std::move(s.pending_detail);
     }
     advanceBrowse(s);
+    if (!(wanted.load() & 2) && s.detail &&
+        (s.detail->state == CacheDetail::State::LatestNetwork || s.detail->state == CacheDetail::State::LatestReady ||
+         s.detail->state == CacheDetail::State::LatestFailed || s.detail->state == CacheDetail::State::LatestNotFound)) s.detail.reset();
     if (s.detail) s.detail->advanceNetwork(*router, s.local, s.crypto, now(nullptr).monotonic_ms);
     if (!s.storage_requested)
     {
@@ -2394,6 +3650,16 @@ void step()
         return;
     }
     WorkspaceSlice workspace_slice{s};
+    if (s.phase == Phase::Ready && s.web_confirmation)
+    {
+        advanceWebConfirmation(s);
+        return;
+    }
+    if (s.phase == Phase::Ready && s.web_signature)
+    {
+        advanceWebSignature(s);
+        return;
+    }
     if (s.phase == Phase::Ready && s.download_store && s.download_store->missingSavedProjection(s.legacy_projection_cache))
     {
         s.legacy_projection_pending = true;
@@ -2404,7 +3670,7 @@ void step()
             s.phase = Phase::ResumeDownloads;
         }
     }
-    if (s.phase == Phase::Ready && s.draft_catalog_wanted && !ensurePublicationStore(s))
+    if (s.phase == Phase::Ready && (s.draft_catalog_wanted || (wanted.load() & 2)) && !ensurePublicationStore(s))
     {
         next_step.store(millis() + 1000);
         return;
@@ -2464,11 +3730,7 @@ void step()
         return;
     }
     drainReply(s);
-    if (cancel_draft_read.exchange(false))
-    {
-        s.draft_read.reset();
-        s.draft_io_reset = true;
-    }
+    releaseDraftReaders(s, cancel_draft_read.exchange(0));
     if (s.draft_io_reset)
     {
         if (s.store) s.store->releaseDraftRead();
@@ -2572,6 +3834,7 @@ void step()
         if (result == DraftReadResult::Pending) return;
         if (result != DraftReadResult::Busy)
         {
+            job.result = result;
             const bool valid = result == DraftReadResult::Ready && gc::storage::decodeDraft({job.id.data(), job.id.size()}, bytes, draft);
             if (valid)
             {
@@ -2591,6 +3854,21 @@ void step()
     if (s.phase == Phase::Ready && draftSaveActive())
     {
         auto& job = *s.draft_save;
+        if (job.web_file && advanceWebDraftFile(s)) return;
+        if (job.web_job && !job.started)
+        {
+            uint8_t author[64];
+            uint32_t generation = 0, expected_generation = 0;
+            const auto result = router->readDeviceAuthorKey(author, generation);
+            if (result == chat::DeviceAuthorResult::Unavailable) return;
+            std::memcpy(&expected_generation, job.bytes + job.capacity - 100 + 64, sizeof(expected_generation));
+            if (result != chat::DeviceAuthorResult::Ok || generation != expected_generation ||
+                std::memcmp(author, job.bytes + job.capacity - 100, 64))
+            {
+                failWebDraftSave(job, result == chat::DeviceAuthorResult::StorageError ? WebReadResult::Unavailable : WebReadResult::StaleIdentity);
+                return;
+            }
+        }
         if (job.erase_download)
         {
             if (advanceOfflineRemoval(s)) return;
@@ -2871,8 +4149,21 @@ void step()
             if (gc::protocol::verifyGeocache({job.bytes, job.size}, s.crypto, scratch, job.size + 26, record) == gc::protocol::VerificationResult::Valid &&
                 router->getGeocachingAuthorKey(author.data()) && !std::memcmp(author.data(), record.record.author_public_key.data, 64))
             {
-                const auto restored = restorePublication(s, &record.id, &record.hash, &job.remote);
-                if (restored == PublicationRestore::Restored || restored == PublicationRestore::Pending) return;
+                job.author = author;
+                std::array<uint8_t, 16> task;
+                if (job.web_operation) task = job.operation_id;
+                const bool stop_requested = job.stop_requested;
+                const auto restored = restorePublication(s, &record.id, &record.hash, &job.remote, job.web_operation ? &task : nullptr);
+                if (restored == PublicationRestore::Restored)
+                {
+                    if (stop_requested)
+                    {
+                        s.publication->stop_requested = true;
+                        s.publication->attempt->cancel();
+                    }
+                    return;
+                }
+                if (restored == PublicationRestore::Pending) return;
                 if (restored == PublicationRestore::Invalid)
                 {
                     job.error = "Saved publication could not be recovered";
@@ -2881,13 +4172,17 @@ void step()
                     ++epoch;
                     return;
                 }
-                std::array<uint8_t, 16> task;
                 gc::RequestId request;
-                esp_fill_random(task.data(), task.size());
-                esp_fill_random(request.bytes.data(), request.bytes.size());
+                if (job.web_operation) request.bytes = task;
+                else
+                {
+                    esp_fill_random(task.data(), task.size());
+                    esp_fill_random(request.bytes.data(), request.bytes.size());
+                }
                 job.port.reset(::platform::memory::createPsram<SdPublishPort>(*s.store, s.crypto, s.local, record.id, record.hash, task, now(nullptr)));
                 if (job.port) job.attempt.reset(::platform::memory::createPsram<gc::PublishAttempt>(*job.port, s.crypto));
                 if (job.attempt && !job.attempt->begin(job.remote, request, {job.bytes, job.size}, scratch, job.size + 26)) job.attempt.reset();
+                if (job.attempt && stop_requested) job.attempt->cancel();
             }
             heap_caps_free(job.bytes);
             job.bytes = nullptr;

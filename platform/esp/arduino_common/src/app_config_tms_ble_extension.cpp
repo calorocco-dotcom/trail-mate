@@ -4,8 +4,8 @@
 #include "chat/ble/meshtastic_phone_config_bridge.h"
 #include "platform/esp/arduino_common/device_identity.h"
 
-#include <Arduino.h>
-#include <Preferences.h>
+#include "platform/esp/common/config_preferences.h"
+#include "platform/ui/settings_store.h"
 #include <pb_decode.h>
 #include <pb_encode.h>
 
@@ -200,7 +200,8 @@ void initialize_default_module(meshtastic_LocalModuleConfig* module)
 
 void reset_state()
 {
-    std::memset(s_state_storage, 0, sizeof(State));
+    s_state_storage->~State();
+    new (s_state_storage) State();
     s_state.mt_ble.enabled = true;
     s_state.mt_ble.mode = meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN;
     initialize_default_module(&s_state.module);
@@ -294,53 +295,65 @@ bool valid_state()
 bool load_preferences()
 {
     reset_state();
-    Preferences prefs;
-    if (prefs.begin(kMtBleNamespace, true))
+    namespace store = ::platform::ui::settings_store;
+    const auto boolean = [](const char* ns, const char* key, bool fallback, bool& out)
     {
-        s_state.mt_ble.enabled = prefs.getBool("enabled", true);
-        const uint8_t mode = prefs.getUChar(
-            "mode",
-            static_cast<uint8_t>(meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN));
-        if (ble::meshtastic_config_bridge::isValidBluetoothMode(mode))
+        const auto result = store::read_bool_into(ns, key, &out);
+        if (result == store::ScalarReadResult::Missing)
         {
-            s_state.mt_ble.mode = static_cast<meshtastic_Config_BluetoothConfig_PairingMode>(mode);
+            out = fallback;
+            return true;
         }
-        const uint32_t pin = prefs.getUInt("pin", 0U);
-        if (ble::meshtastic_config_bridge::isValidBlePin(pin))
+        return result == store::ScalarReadResult::Ok;
+    };
+    const auto byte = [](const char* ns, const char* key, uint8_t fallback, uint8_t& out)
+    {
+        const auto result = store::read_u8_into(ns, key, &out);
+        if (result == store::ScalarReadResult::Missing)
         {
-            s_state.mt_ble.fixed_pin = pin;
+            out = fallback;
+            return true;
         }
-        prefs.end();
-    }
-    ble::meshtastic_config_bridge::normalizeBluetoothConfig(&s_state.mt_ble);
+        return result == store::ScalarReadResult::Ok;
+    };
+    const auto integer = [](const char* ns, const char* key, uint32_t fallback, uint32_t& out)
+    {
+        const auto result = store::read_uint_into(ns, key, &out);
+        if (result == store::ScalarReadResult::Missing)
+        {
+            out = fallback;
+            return true;
+        }
+        return result == store::ScalarReadResult::Ok;
+    };
+    uint8_t mode = 0;
+    if (!boolean(kMtBleNamespace, "enabled", true, s_state.mt_ble.enabled) ||
+        !byte(kMtBleNamespace, "mode", static_cast<uint8_t>(meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN), mode) ||
+        !integer(kMtBleNamespace, "pin", 0U, s_state.mt_ble.fixed_pin) ||
+        !ble::meshtastic_config_bridge::isValidBluetoothMode(mode) ||
+        !ble::meshtastic_config_bridge::isValidBlePin(s_state.mt_ble.fixed_pin) ||
+        (mode == meshtastic_Config_BluetoothConfig_PairingMode_NO_PIN && s_state.mt_ble.fixed_pin != 0U)) return false;
+    s_state.mt_ble.mode = static_cast<meshtastic_Config_BluetoothConfig_PairingMode>(mode);
+    if (!integer(kMcBleNamespace, "pin", 0U, s_state.mc_pin) || !valid_mc_pin(s_state.mc_pin) ||
+        !boolean(kMcBleNamespace, "manual_add", false, s_state.mc_manual_add) ||
+        !byte(kMcBleNamespace, "telem_base", 0U, s_state.mc_telemetry_base) ||
+        !byte(kMcBleNamespace, "telem_loc", 0U, s_state.mc_telemetry_loc) ||
+        !byte(kMcBleNamespace, "telem_env", 0U, s_state.mc_telemetry_env) ||
+        !byte(kMcBleNamespace, "advert_loc", 0U, s_state.mc_advert_location) ||
+        s_state.mc_telemetry_base > 3U || s_state.mc_telemetry_loc > 3U || s_state.mc_telemetry_env > 3U) return false;
 
-    if (prefs.begin(kMcBleNamespace, true))
-    {
-        const uint32_t pin = prefs.getUInt("pin", 0U);
-        s_state.mc_pin = valid_mc_pin(pin) ? pin : 0U;
-        s_state.mc_manual_add = prefs.getBool("manual_add", false);
-        s_state.mc_telemetry_base = std::min<uint8_t>(prefs.getUChar("telem_base", 0U), 3U);
-        s_state.mc_telemetry_loc = std::min<uint8_t>(prefs.getUChar("telem_loc", 0U), 3U);
-        s_state.mc_telemetry_env = std::min<uint8_t>(prefs.getUChar("telem_env", 0U), 3U);
-        s_state.mc_advert_location = prefs.getUChar("advert_loc", 0U);
-        prefs.end();
-    }
-
-    if (prefs.begin(kMtModuleNamespace, true))
-    {
-        const std::size_t size = prefs.getBytes(kModuleBlobKey, &s_state.module, sizeof(s_state.module));
-        prefs.end();
-        if (size != sizeof(s_state.module) ||
-            s_state.module.version != ble::meshtastic_defaults::kModuleConfigVersion)
-        {
-            initialize_default_module(&s_state.module);
-        }
-        else
-        {
-            ble::meshtastic_config_bridge::normalizeModuleConfig(&s_state.module);
-        }
-    }
-    return true;
+    // Defaults were staged by reset_state. Preserve them only for an absent
+    // module; a failed/truncated/future-version read must not replace user data.
+    std::size_t size = 0;
+    const auto result = store::read_blob_into(kMtModuleNamespace, kModuleBlobKey,
+                                              &s_state.module, sizeof(s_state.module), &size);
+    if (result == store::BlobReadResult::Missing) return true;
+    if (result != store::BlobReadResult::Ok || size != sizeof(s_state.module) ||
+        (s_state.module.version != 0U && s_state.module.version != ble::meshtastic_defaults::kModuleConfigVersion)) return false;
+    // Version zero is the explicitly supported legacy form. The existing
+    // normalizer upgrades it without discarding unrelated module settings.
+    ble::meshtastic_config_bridge::normalizeModuleConfig(&s_state.module);
+    return s_state.module.version == ble::meshtastic_defaults::kModuleConfigVersion;
 }
 
 bool encode_module()
@@ -369,7 +382,7 @@ bool encode_module()
 
 bool write_preferences()
 {
-    Preferences prefs;
+    ::platform::esp::common::ConfigPreferences prefs;
     if (!prefs.begin(kMtBleNamespace, false))
     {
         return false;
@@ -378,6 +391,10 @@ bool write_preferences()
               prefs.putUChar("mode", static_cast<uint8_t>(s_state.mt_ble.mode)) &&
               prefs.putUInt("pin", s_state.mt_ble.fixed_pin);
     prefs.end();
+    if (!ok)
+    {
+        return false;
+    }
     if (!prefs.begin(kMcBleNamespace, false))
     {
         return false;
@@ -387,15 +404,18 @@ bool write_preferences()
          prefs.putUChar("telem_base", s_state.mc_telemetry_base) &&
          prefs.putUChar("telem_loc", s_state.mc_telemetry_loc) &&
          prefs.putUChar("telem_env", s_state.mc_telemetry_env) &&
-         prefs.putUChar("advert_loc", s_state.mc_advert_location) && ok;
+         prefs.putUChar("advert_loc", s_state.mc_advert_location);
     prefs.end();
+    if (!ok)
+    {
+        return false;
+    }
     if (!prefs.begin(kMtModuleNamespace, false))
     {
         return false;
     }
     ok = prefs.putBytes(kModuleBlobKey, &s_state.module, sizeof(s_state.module)) ==
-             sizeof(s_state.module) &&
-         ok;
+         sizeof(s_state.module);
     prefs.end();
     return ok;
 }

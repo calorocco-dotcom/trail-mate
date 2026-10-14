@@ -16,6 +16,10 @@ struct Frame
 };
 
 uint16_t crc16_ccitt(const uint8_t* data, size_t len);
+// Encodes directly into caller-owned storage; no allocation or payload copy
+// through a second frame. On invalid input, written is zero and out is untouched.
+bool encode_frame_into(uint8_t type, uint16_t seq, const uint8_t* payload, size_t len,
+                       uint8_t* out, size_t capacity, size_t& written);
 bool encode_frame(uint8_t type, uint16_t seq, const uint8_t* payload, size_t len,
                   std::vector<uint8_t>& out);
 

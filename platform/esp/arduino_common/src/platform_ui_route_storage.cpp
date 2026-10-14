@@ -1,9 +1,15 @@
 #include "platform/ui/route_storage.h"
 
+#include "platform/esp/arduino_common/route_image_source_runtime.h"
+#include "platform/esp/arduino_common/route_png_cache.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/http_client_runtime.h"
 #include "platform/ui/wifi_access_runtime.h"
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+#include "hostlink/route_storage_lease.h"
+#include "platform/esp/arduino_common/route_package_image_runtime.h"
+#endif
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -21,6 +27,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <utility>
 #include <vector>
@@ -103,6 +110,7 @@ struct RouteImageBatchContext
 
     RouteImageBatchKind kind = RouteImageBatchKind::Download;
     std::string asset_id{};
+    std::string package_route_path{};
     std::vector<RouteImageDownloadItem> download_items{};
     std::vector<RouteImageCacheItem> cache_items{};
 };
@@ -125,6 +133,16 @@ RouteImageDownloadResult download_route_image_with_progress(
     platform::ui::http_client::ProgressCallback progress,
     void* progress_context);
 
+bool route_image_source_matches_reference(const std::string& image, const std::string& source)
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    hostlink::route_storage_lease::Guard lease;
+    if (!lease.acquired()) return false;
+#endif
+    std::unique_ptr<platform::esp::route_images::RouteImageSourceWork> work(new (std::nothrow) platform::esp::route_images::RouteImageSourceWork);
+    return work && work->matchesExistingReference(image, source);
+}
+
 bool has_kml_extension(const std::string& name)
 {
     if (name.size() < 4)
@@ -139,7 +157,7 @@ bool has_kml_extension(const std::string& name)
 
 bool is_safe_asset_id(const std::string& asset_id)
 {
-    if (asset_id.empty() || asset_id.size() > 48)
+    if (asset_id.empty() || (asset_id.size() > 48 && !track_sharing::isInstalledPackageAssetId(asset_id)))
     {
         return false;
     }
@@ -286,6 +304,9 @@ class HeapCapsBuffer
             heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         if (!data_)
         {
+            // PSRAM-equipped devices never spill optional image work into the
+            // scarce internal heap when external admission fails.
+            if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM)) return false;
             const std::size_t internal_free =
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
             const std::size_t internal_largest =
@@ -471,7 +492,8 @@ void log_route_worker_stack(const char* stage)
 
 struct RouteJpegCacheContext
 {
-    ::platform::esp::arduino_common::storage::SdRuntimeFile input{};
+    ::platform::esp::arduino_common::storage::SdRuntimeFile input{
+        heap_caps_get_total_size(MALLOC_CAP_SPIRAM) ? ::platform::esp::arduino_common::storage::SdRuntimeMemoryPolicy::PsramOnly : ::platform::esp::arduino_common::storage::SdRuntimeMemoryPolicy::Default};
     uint8_t* pixels = nullptr;
     std::size_t pixel_bytes = 0;
     double crop_x = 0.0;
@@ -600,9 +622,16 @@ RouteJpegOutputResult jpeg_output_cb(RouteJpegDecoder* dec,
             {
                 continue;
             }
+            // LVGL's P4 tiny JPEG backend emits BGR; ESP ROM emits RGB.
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+            ctx->pixels[dst_offset + 0] = rgb[src_offset + 0];
+            ctx->pixels[dst_offset + 1] = rgb[src_offset + 1];
+            ctx->pixels[dst_offset + 2] = rgb[src_offset + 2];
+#else
             ctx->pixels[dst_offset + 0] = rgb[src_offset + 2];
             ctx->pixels[dst_offset + 1] = rgb[src_offset + 1];
             ctx->pixels[dst_offset + 2] = rgb[src_offset + 0];
+#endif
         }
     }
     return 1;
@@ -643,7 +672,8 @@ bool write_bmp_24(const std::string& path,
         return false;
     }
 
-    ::platform::esp::arduino_common::storage::SdRuntimeFile out;
+    ::platform::esp::arduino_common::storage::SdRuntimeFile out(
+        heap_caps_get_total_size(MALLOC_CAP_SPIRAM) ? ::platform::esp::arduino_common::storage::SdRuntimeMemoryPolicy::PsramOnly : ::platform::esp::arduino_common::storage::SdRuntimeMemoryPolicy::Default);
     if (!out.open(path.c_str(), "w"))
     {
         return false;
@@ -676,7 +706,8 @@ bool write_bmp_24(const std::string& path,
         return false;
     }
 
-    std::vector<uint8_t> row(row_bytes, 0);
+    HeapCapsBuffer row;
+    if (!row.allocate(row_bytes)) return false;
     const std::size_t src_row_bytes = static_cast<std::size_t>(width) * 3U;
     for (uint16_t row_index = 0; row_index < height; ++row_index)
     {
@@ -717,6 +748,13 @@ bool generate_route_image_bmp_cache(const std::string& source_path,
     RouteJpegCacheContext ctx{};
     ctx.target_w = width;
     ctx.target_h = height;
+    if (width > kRouteViewWidth || height > kRouteViewHeight || !ctx.input.open(source_path.c_str(), "r")) return false;
+    uint8_t magic[8]{};
+    const int magic_bytes = ctx.input.read(magic, sizeof(magic));
+    if (magic_bytes != sizeof(magic) || !ctx.input.seek(0)) return false;
+    constexpr uint8_t png_magic[] = {137, 80, 78, 71, 13, 10, 26, 10};
+    const bool png = std::memcmp(magic, png_magic, sizeof(magic)) == 0;
+    if (png && !heap_caps_get_total_size(MALLOC_CAP_SPIRAM)) return false;
     HeapCapsBuffer pixels;
     const std::size_t pixel_bytes = static_cast<std::size_t>(width) * height * 3U;
     if (!pixels.allocate(pixel_bytes))
@@ -726,59 +764,60 @@ bool generate_route_image_bmp_cache(const std::string& source_path,
     }
     ctx.pixels = pixels.data();
     ctx.pixel_bytes = pixels.size();
-    if (!ctx.input.open(source_path.c_str(), "r"))
+    bool decoded = false;
+    if (png)
     {
-        return false;
+        decoded = platform::esp::route_images::decodeRoutePng(ctx.input, pixels.data(), pixels.size(), width, height);
     }
+    else
+    {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+        constexpr uint8_t kDecodeScale = 0;
+#else
+        constexpr uint8_t kDecodeScale = 1;
+#endif
+        HeapCapsBuffer decoder_work;
+        if (!decoder_work.allocate(kRouteJpegDecoderWorkBytes))
+        {
+            ctx.input.close();
+            log_cache_memory_skip("decoder_work", kRouteJpegDecoderWorkBytes);
+            return false;
+        }
+        RouteJpegDecoder decoder{};
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+        JRESULT result = jd_prepare(&decoder,
+                                    jpeg_input_cb,
+                                    decoder_work.data(),
+                                    decoder_work.size(),
+                                    &ctx);
+#else
+        esp_rom_tjpgd_result_t result =
+            esp_rom_tjpgd_prepare(&decoder,
+                                  jpeg_input_cb,
+                                  decoder_work.data(),
+                                  static_cast<uint32_t>(decoder_work.size()),
+                                  &ctx);
+#endif
+        if (result != JDR_OK || decoder.width == 0 || decoder.height == 0)
+        {
+            ctx.input.close();
+            return false;
+        }
+        ctx.source_w = static_cast<uint16_t>(
+            std::max<uint32_t>(1U, decoder.width >> kDecodeScale));
+        ctx.source_h = static_cast<uint16_t>(
+            std::max<uint32_t>(1U, decoder.height >> kDecodeScale));
+        configure_cover_crop(ctx);
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-    constexpr uint8_t kDecodeScale = 0;
+        result = jd_decomp(&decoder, jpeg_output_cb, kDecodeScale);
 #else
-    constexpr uint8_t kDecodeScale = 1;
+        result = esp_rom_tjpgd_decomp(&decoder, jpeg_output_cb, kDecodeScale);
 #endif
-    HeapCapsBuffer decoder_work;
-    if (!decoder_work.allocate(kRouteJpegDecoderWorkBytes))
-    {
-        ctx.input.close();
-        log_cache_memory_skip("decoder_work", kRouteJpegDecoderWorkBytes);
-        return false;
+        decoded = result == JDR_OK;
     }
-    RouteJpegDecoder decoder{};
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-    JRESULT result = jd_prepare(&decoder,
-                                jpeg_input_cb,
-                                decoder_work.data(),
-                                decoder_work.size(),
-                                &ctx);
-#else
-    esp_rom_tjpgd_result_t result =
-        esp_rom_tjpgd_prepare(&decoder,
-                              jpeg_input_cb,
-                              decoder_work.data(),
-                              static_cast<uint32_t>(decoder_work.size()),
-                              &ctx);
-#endif
-    if (result != JDR_OK || decoder.width == 0 || decoder.height == 0)
-    {
-        ctx.input.close();
-        return false;
-    }
-    ctx.source_w = static_cast<uint16_t>(
-        std::max<uint32_t>(1U, decoder.width >> kDecodeScale));
-    ctx.source_h = static_cast<uint16_t>(
-        std::max<uint32_t>(1U, decoder.height >> kDecodeScale));
-    configure_cover_crop(ctx);
-
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-    result = jd_decomp(&decoder, jpeg_output_cb, kDecodeScale);
-#else
-    result = esp_rom_tjpgd_decomp(&decoder, jpeg_output_cb, kDecodeScale);
-#endif
     ctx.input.close();
-    if (result != JDR_OK)
-    {
-        return false;
-    }
+    if (!decoded) return false;
 
     const std::string temp_path = output_path + ".tmp";
     (void)::platform::esp::arduino_common::storage::sd_remove(temp_path.c_str());
@@ -808,6 +847,10 @@ bool route_image_cache_ready(const RouteImageCacheItem& item)
 
 bool ensure_route_image_cache(const RouteImageCacheItem& item)
 {
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    hostlink::route_storage_lease::Guard lease;
+    if (!lease.acquired()) return false;
+#endif
     if (route_image_cache_ready(item))
     {
         return true;
@@ -1043,6 +1086,7 @@ void route_image_worker_task(void* param)
 {
     auto* ctx = static_cast<RouteImageBatchContext*>(param);
     std::string asset_id;
+    std::string package_route_path;
     RouteImageBatchKind kind = RouteImageBatchKind::Download;
     std::vector<RouteImageDownloadItem> download_items;
     std::vector<RouteImageCacheItem> cache_items;
@@ -1050,6 +1094,7 @@ void route_image_worker_task(void* param)
     {
         kind = ctx->kind;
         asset_id = std::move(ctx->asset_id);
+        package_route_path = std::move(ctx->package_route_path);
         download_items = std::move(ctx->download_items);
         cache_items = std::move(ctx->cache_items);
         delete ctx;
@@ -1099,6 +1144,30 @@ void route_image_worker_task(void* param)
     }
     else if (cache_only)
     {
+        uint64_t package_sources = 0;
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+        if (!package_route_path.empty())
+        {
+            namespace images = platform::esp::route_images;
+            auto* work = images::createRoutePackageImageWork();
+            if (work)
+            {
+                auto checked = work->begin(package_route_path);
+                while (checked == track_sharing::ManifestFileResult::Pending)
+                {
+                    checked = work->step();
+                    taskYIELD();
+                }
+                if (work->ready())
+                    for (size_t i = 0; i < cache_items.size() && i < 64; ++i)
+                        if (cache_items[i].source_hash_valid && work->materialize(cache_items[i].source_hash, cache_items[i].source_path, []
+                                                                                  { taskYIELD(); })) package_sources |= uint64_t(1) << i;
+                // Release the package lease and proof/mapping work before the
+                // existing decoder acquires its own lease and pixel workspace.
+                images::destroyRoutePackageImageWork(work);
+            }
+        }
+#endif
         for (std::size_t index = 0; index < total; ++index)
         {
             const RouteImageCacheItem& item = cache_items[index];
@@ -1119,7 +1188,7 @@ void route_image_worker_task(void* param)
                                 detail);
 
             ++processed;
-            if (ensure_route_image_cache(item))
+            if ((package_route_path.empty() || (index < 64 && (package_sources & (uint64_t(1) << index)))) && ensure_route_image_cache(item))
             {
                 ++saved;
                 std::snprintf(detail,
@@ -1212,7 +1281,7 @@ void route_image_worker_task(void* param)
                               "Image %u missing URL",
                               static_cast<unsigned>(index + 1));
             }
-            else if (route_asset_file_exists(item.output_path))
+            else if (route_image_source_matches_reference(item.output_path, item.url))
             {
                 original_available = true;
                 consecutive_connection_failures = 0;
@@ -1464,6 +1533,10 @@ bool list_routes(std::vector<std::string>& out_routes, std::size_t max_count)
 
 bool remove_route(const std::string& path)
 {
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    hostlink::route_storage_lease::Guard lease;
+    if (!lease.acquired()) return false;
+#endif
     if (!platform::ui::device::sd_ready() || path.empty())
     {
         return false;
@@ -1555,6 +1628,22 @@ bool route_asset_file_exists(const std::string& path)
            !::platform::esp::arduino_common::storage::sd_is_directory(path.c_str());
 }
 
+bool route_image_source_matches(const std::string& path, const uint8_t expected_source_hash[32])
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    hostlink::route_storage_lease::Guard lease;
+    if (!lease.acquired()) return false;
+#endif
+    std::unique_ptr<platform::esp::route_images::RouteImageSourceWork> work(new (std::nothrow) platform::esp::route_images::RouteImageSourceWork);
+    return work && work->matchesExisting(path, expected_source_hash);
+}
+
+bool route_image_reference_hash(std::string_view reference, uint8_t output[32])
+{
+    std::unique_ptr<platform::esp::route_images::ImageReferenceHashWork> work(new (std::nothrow) platform::esp::route_images::ImageReferenceHashWork);
+    return work && work->hash(reference, output);
+}
+
 namespace
 {
 
@@ -1566,6 +1655,14 @@ RouteImageDownloadResult download_route_image_with_progress(
     void* progress_context)
 {
     RouteImageDownloadResult result{};
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    hostlink::route_storage_lease::Guard lease;
+    if (!lease.acquired())
+    {
+        result.error = "Route storage busy";
+        return result;
+    }
+#endif
     if (url.empty() || output_path.empty())
     {
         result.error = "Missing URL";
@@ -1587,13 +1684,20 @@ RouteImageDownloadResult download_route_image_with_progress(
         return result;
     }
 
-    const std::string temp_path = output_path + ".tmp";
-    (void)::platform::esp::arduino_common::storage::sd_remove(temp_path.c_str());
-
-    ::platform::esp::arduino_common::storage::SdRuntimeFile out;
-    if (!out.open(temp_path.c_str(), "w"))
+    if (!max_bytes || max_bytes > track_sharing::kImageSourceByteLimit)
     {
-        result.error = "Open image file failed";
+        result.error = "Invalid image size limit";
+        return result;
+    }
+    std::unique_ptr<platform::esp::route_images::RouteImageSourceWork> work(new (std::nothrow) platform::esp::route_images::RouteImageSourceWork);
+    if (!work)
+    {
+        result.error = "Low image verification memory";
+        return result;
+    }
+    if (!work->begin(url, output_path))
+    {
+        result.error = "Invalid image path or unavailable storage";
         return result;
     }
 
@@ -1616,33 +1720,30 @@ RouteImageDownloadResult download_route_image_with_progress(
         request,
         [](const std::uint8_t* data, std::size_t len, void* context)
         {
-            auto* file = static_cast<::platform::esp::arduino_common::storage::SdRuntimeFile*>(context);
-            return file && file->write(data, len) == len;
+            auto* work = static_cast<platform::esp::route_images::RouteImageSourceWork*>(context);
+            return work && work->feed(data, len);
         },
-        &out,
+        work.get(),
         result.error,
         &stats);
     result.http_status = stats.http_status;
     result.bytes = stats.bytes;
 
-    (void)out.flush();
-    out.close();
-
-    if (!ok)
+    if (!ok) return result;
+    if (stats.bytes != work->bytes() || !work->seal())
     {
-        (void)::platform::esp::arduino_common::storage::sd_remove(temp_path.c_str());
+        result.error = "Image write or hash failed";
         return result;
     }
-
-    if (::platform::esp::arduino_common::storage::sd_exists(output_path.c_str()))
+    while (work->verifying())
     {
-        (void)::platform::esp::arduino_common::storage::sd_remove(output_path.c_str());
+        work->verifyStep();
+        taskYIELD();
     }
-    if (!::platform::esp::arduino_common::storage::sd_rename(temp_path.c_str(), output_path.c_str()))
+    if (!work->commit())
     {
-        (void)::platform::esp::arduino_common::storage::sd_remove(temp_path.c_str());
         result.ok = false;
-        result.error = "Finalize image failed";
+        result.error = "Image verification or source binding failed";
         return result;
     }
 
@@ -1786,11 +1887,13 @@ bool start_route_image_download(const std::string& asset_id,
 }
 
 bool start_route_image_cache_build(const std::string& asset_id,
-                                   const std::vector<RouteImageCacheItem>& items,
+                                   std::vector<RouteImageCacheItem> items,
                                    std::string& out_error,
-                                   RouteImageTaskPresentation presentation)
+                                   RouteImageTaskPresentation presentation,
+                                   const std::string& package_route_path)
 {
     out_error.clear();
+    const auto total = items.size();
     if (!ensure_batch_mutex())
     {
         out_error = "Create image cache mutex failed";
@@ -1801,7 +1904,7 @@ bool start_route_image_cache_build(const std::string& asset_id,
         out_error = "Invalid route asset id";
         return false;
     }
-    if (items.empty())
+    if (items.empty() || items.size() > 64)
     {
         out_error = "No route image cache work";
         return false;
@@ -1815,7 +1918,8 @@ bool start_route_image_cache_build(const std::string& asset_id,
     }
     ctx->kind = RouteImageBatchKind::Cache;
     ctx->asset_id = asset_id;
-    ctx->cache_items = items;
+    ctx->package_route_path = package_route_path;
+    ctx->cache_items = std::move(items);
 
     {
         BatchStateLock lock(s_image_batch.mutex);
@@ -1839,7 +1943,7 @@ bool start_route_image_cache_build(const std::string& asset_id,
         set_batch_status_locked(RouteImageDownloadPhase::Caching,
                                 true,
                                 asset_id,
-                                items.size(),
+                                total,
                                 0,
                                 0,
                                 0,

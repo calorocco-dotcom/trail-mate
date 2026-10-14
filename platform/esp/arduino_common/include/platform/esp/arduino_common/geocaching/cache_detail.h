@@ -12,16 +12,22 @@
 
 namespace platform::esp::arduino_common::geocaching
 {
-// One open detail, allocated off the ESP stack. Text is copied only after
-// author verification against the selected cache ID and revision hash.
+// One open detail, allocated off the ESP stack. Verified text borrows the
+// retained immutable response and is consumed synchronously under the source lock.
 struct CacheDetail
 {
+    // Latest GET uses less than 112 bytes; its unsent tail binds directory epoch.
+    static constexpr size_t kLatestEpochOffset = 112;
     enum class State
     {
         Network,
         Saved,
         Ready,
-        Failed
+        Failed,
+        LatestNetwork,
+        LatestReady,
+        LatestFailed,
+        LatestNotFound
     };
     ::geocaching::GeocacheId id;
     ::geocaching::RevisionHash hash;
@@ -29,8 +35,6 @@ struct CacheDetail
     ::geocaching::RequestId request;
     std::array<uint8_t, 128> request_bytes{};
     size_t request_size = 0;
-    std::array<char, 2049> description{};
-    std::array<char, 513> hint{};
     std::array<uint8_t, 32> receipt{};
     bool has_receipt = false;
     uint8_t* response = nullptr;
@@ -66,16 +70,13 @@ struct CacheDetail
         auto* scratch = static_cast<uint8_t*>(::platform::esp::common::memory::allocatePreferred("geocaching.detail.verify", capacity, false));
         if (!scratch) return false;
         ::geocaching::protocol::VerifiedRecordView verified;
-        const bool valid = ::geocaching::protocol::verifyGeocache(bytes, crypto, scratch, capacity, verified, &id, &hash) ==
+        const bool latest = state == State::LatestNetwork;
+        const bool valid = ::geocaching::protocol::verifyGeocache(bytes, crypto, scratch, capacity, verified, &id, latest ? nullptr : &hash) ==
                            ::geocaching::protocol::VerificationResult::Valid;
         if (valid)
         {
             verified_record = verified;
-            description.fill(0);
-            hint.fill(0);
-            std::memcpy(description.data(), verified.record.description.data(), verified.record.description.size());
-            std::memcpy(hint.data(), verified.record.hint.data(), verified.record.hint.size());
-            state = State::Ready;
+            state = latest ? State::LatestReady : State::Ready;
         }
         heap_caps_free(scratch);
         return valid;
@@ -84,12 +85,12 @@ struct CacheDetail
                  ::geocaching::ByteView bytes, ::geocaching::protocol::RecordCrypto& crypto, uint8_t** owned)
     {
         if (!matches(source, incoming)) return false;
-        if (state == State::Ready && has_receipt)
+        if ((state == State::Ready || state == State::LatestReady || state == State::LatestNotFound) && has_receipt)
         {
             std::array<uint8_t, 32> digest{};
             return crypto.sha256(bytes, digest.data()) && digest == receipt;
         }
-        if (state != State::Network || response) return false;
+        if ((state != State::Network && state != State::LatestNetwork) || response) return false;
         response = owned ? *owned : static_cast<uint8_t*>(::platform::esp::common::memory::allocatePreferred("geocaching.detail.rx", bytes.size, false));
         if (!response) return false;
         if (owned) *owned = nullptr;
@@ -100,23 +101,32 @@ struct CacheDetail
     void advanceNetwork(chat::MeshAdapterRouter& router, const ::geocaching::Destination& local,
                         ::geocaching::protocol::RecordCrypto& crypto, uint64_t now)
     {
-        if (state != State::Network) return;
+        if (state != State::Network && state != State::LatestNetwork) return;
+        const bool latest = state == State::LatestNetwork;
         if (response)
         {
+            if (latest && ::geocaching::protocol::decodeGetNotFound({response, response_size}, request, 8192) &&
+                crypto.sha256({response, response_size}, receipt.data()))
+            {
+                has_receipt = true;
+                state = State::LatestNotFound;
+                return;
+            }
             ::geocaching::protocol::GetResponseView parsed;
             if (::geocaching::protocol::decodeGetResponse({response, response_size}, request, 8192, parsed) && !parsed.has_conflict &&
+                (!latest || parsed.is_current) &&
                 verify(parsed.signed_cache, crypto))
                 has_receipt = crypto.sha256({response, response_size}, receipt.data());
             // Keep only the open, verified response so Save can transfer it to
             // the durable installation without another network request.
-            if (state == State::Ready) return;
+            if (state == State::Ready || state == State::LatestReady) return;
             heap_caps_free(response);
             response = nullptr;
             response_size = 0;
         }
         if (now - started >= 120000)
         {
-            state = State::Failed;
+            state = latest ? State::LatestFailed : State::Failed;
             error = "Directory did not return verified details. Go back and reopen to retry.";
             return;
         }
@@ -126,5 +136,5 @@ struct CacheDetail
         next_send = now + (sent.ok ? 15000 : 1000);
     }
 };
-static_assert(sizeof(CacheDetail) < 4096, "Only the open detail owns full text");
+static_assert(sizeof(CacheDetail) < 1536, "Detail metadata must borrow text from its retained response");
 } // namespace platform::esp::arduino_common::geocaching

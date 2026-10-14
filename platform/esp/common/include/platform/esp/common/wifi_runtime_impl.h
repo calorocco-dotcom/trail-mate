@@ -3,6 +3,7 @@
 #include "app/app_facade_access.h"
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/esp/common/memory_budget.h"
+#include "platform/esp/common/wifi_profile_snapshot.h"
 #include "platform/ui/settings_store.h"
 #include "platform/ui/wifi_access_runtime.h"
 #include "platform/ui/wifi_runtime.h"
@@ -603,10 +604,6 @@ void upsert_profile_front(const Config& profile)
 
 bool persist_profiles()
 {
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            kWifiProfileCountKey,
-                                            static_cast<int>(s_runtime.profile_count));
-    bool ok = true;
     for (std::size_t i = 0; i < kWifiProfileCapacity; ++i)
     {
         char ssid_key[24] = {};
@@ -614,18 +611,21 @@ bool persist_profiles()
         profile_key(ssid_key, sizeof(ssid_key), "ssid", i);
         profile_key(password_key, sizeof(password_key), "password", i);
         const Config& profile = s_runtime.profiles[i];
-        ok = ::platform::ui::settings_store::put_string(
-                 kSettingsNs,
-                 ssid_key,
-                 i < s_runtime.profile_count ? profile.ssid : "") &&
-             ok;
-        ok = ::platform::ui::settings_store::put_string(
-                 kSettingsNs,
-                 password_key,
-                 i < s_runtime.profile_count ? profile.password : "") &&
-             ok;
+        if (!::platform::ui::settings_store::put_string(
+                kSettingsNs,
+                ssid_key,
+                i < s_runtime.profile_count ? profile.ssid : "") ||
+            !::platform::ui::settings_store::put_string(
+                kSettingsNs,
+                password_key,
+                i < s_runtime.profile_count ? profile.password : "")) return false;
     }
-    return ok;
+    // Publish the count only after all slots were committed. The SD working
+    // document remains the recovery authority if a multi-key write is partial.
+    ::platform::ui::settings_store::put_int(kSettingsNs, kWifiProfileCountKey,
+                                            static_cast<int>(s_runtime.profile_count));
+    return ::platform::ui::settings_store::get_int(kSettingsNs, kWifiProfileCountKey, -1) ==
+           static_cast<int>(s_runtime.profile_count);
 }
 
 bool read_profile_from_store(std::size_t index, Config& profile)
@@ -662,12 +662,12 @@ bool read_profile_from_store(std::size_t index, Config& profile)
         if (::platform::ui::settings_store::get_string(kSettingsNs, legacy_password_key, value))
         {
             copy_bounded(profile.password, sizeof(profile.password), value.c_str());
-            (void)::platform::ui::settings_store::put_string(
+            const bool migrated = ::platform::ui::settings_store::put_string(
                 kSettingsNs,
                 password_key,
                 profile.password);
             const char* legacy_keys[] = {legacy_password_key};
-            ::platform::ui::settings_store::remove_keys(kSettingsNs, legacy_keys, 1);
+            if (migrated) ::platform::ui::settings_store::remove_keys(kSettingsNs, legacy_keys, 1);
         }
     }
 
@@ -1485,9 +1485,17 @@ bool save_config(const Config& config)
     const bool password_ok =
         ::platform::ui::settings_store::put_string(kSettingsNs, kWifiPasswordKey, config.password);
     ::platform::ui::settings_store::put_bool(kSettingsNs, kWifiEnabledKey, config.enabled);
+    const bool enabled_ok = ::platform::ui::settings_store::get_bool(
+                                kSettingsNs, kWifiEnabledKey, !config.enabled) == config.enabled;
+    if (!profiles_ok || !ssid_ok || !password_ok || !enabled_ok)
+    {
+        s_runtime.profiles_cached = false;
+        s_runtime.config_cached = false;
+        return false;
+    }
     cache_config(config);
     refresh_runtime_status_message();
-    return profiles_ok && ssid_ok && password_ok;
+    return true;
 }
 
 bool find_saved_config(const char* ssid, Config& out)
@@ -1540,6 +1548,12 @@ bool visit_saved_profiles(bool* enabled,
     return true;
 }
 
+bool read_saved_profiles_into(bool* enabled, std::size_t* count,
+                              Config* profiles, std::size_t capacity)
+{
+    return ::platform::esp::common::read_persisted_wifi_profiles(enabled, count, profiles, capacity);
+}
+
 bool replace_saved_profiles(bool enabled, const Config* profiles, std::size_t count)
 {
     ::platform::ui::settings_store::ScopedChangeBatch changes;
@@ -1549,7 +1563,9 @@ bool replace_saved_profiles(bool enabled, const Config* profiles, std::size_t co
     }
     for (std::size_t index = 0U; index < count; ++index)
     {
-        if (!has_saved_credentials(profiles[index]))
+        if (!std::memchr(profiles[index].ssid, '\0', sizeof(profiles[index].ssid)) ||
+            !std::memchr(profiles[index].password, '\0', sizeof(profiles[index].password)) ||
+            !has_saved_credentials(profiles[index]))
         {
             return false;
         }
@@ -1585,9 +1601,17 @@ bool replace_saved_profiles(bool enabled, const Config* profiles, std::size_t co
     const bool password_ok =
         ::platform::ui::settings_store::put_string(kSettingsNs, kWifiPasswordKey, primary.password);
     ::platform::ui::settings_store::put_bool(kSettingsNs, kWifiEnabledKey, enabled);
+    const bool enabled_ok = ::platform::ui::settings_store::get_bool(
+                                kSettingsNs, kWifiEnabledKey, !enabled) == enabled;
+    if (!profiles_ok || !ssid_ok || !password_ok || !enabled_ok)
+    {
+        s_runtime.profiles_cached = false;
+        s_runtime.config_cached = false;
+        return false;
+    }
     cache_config(primary);
     refresh_runtime_status_message();
-    return profiles_ok && ssid_ok && password_ok;
+    return true;
 }
 
 bool apply_enabled(bool enabled)

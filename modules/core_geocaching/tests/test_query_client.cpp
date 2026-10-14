@@ -35,6 +35,7 @@ int main(int argc, char** argv)
     assert(argc == 3);
     Port port;
     auto client = std::make_unique<geocaching::QueryClient>(port);
+    assert(client->directoryCount() == 0 && client->directory(0) == nullptr);
     geocaching::Destination discovery, delivery;
     std::array<std::uint8_t, 64> key{};
     std::vector<std::uint8_t> app{0x95, 1, 0xc4, 16};
@@ -43,6 +44,8 @@ int main(int argc, char** argv)
     app.insert(app.end(), 16, 0);
     app.insert(app.end(), {0, 0xa1, 'x'});
     assert(client->observe(discovery, delivery, {key.data(), 64}, {app.data(), app.size()}, 0));
+    assert(client->directoryCount() == 1 && client->directory(0) && std::string(client->directory(0)->name.data()) == "x");
+    assert(client->directory(1) == nullptr && client->directory(geocaching::QueryClient::kDirectoryCapacity) == nullptr);
     assert(client->query({300000000, 1200000000, 310000000, 1210000000}));
     geocaching::Destination pending_destination;
     geocaching::RequestId pending_id;

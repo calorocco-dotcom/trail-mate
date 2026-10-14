@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Preferences.h>
+#include "platform/esp/common/config_preferences.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +12,9 @@
 #endif
 #if __has_include("esp_efuse.h")
 #include "esp_efuse.h"
+#endif
+#if __has_include("esp_mac.h")
+#include "esp_mac.h"
 #endif
 
 namespace platform::esp::arduino_common::device_identity
@@ -46,7 +49,7 @@ inline chat::NodeId getSelfNodeId()
         node_id = 1;
     }
 
-    Preferences prefs;
+    ::platform::esp::common::ConfigPreferences prefs;
     if (prefs.begin("chat", false))
     {
         if (prefs.getUInt("node_id", 0) != node_id)

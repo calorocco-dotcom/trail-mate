@@ -18,6 +18,10 @@
 #include "platform/ui/screen_240x320_runtime_feature_port.h"
 #endif
 #include "platform/ui/screen_runtime.h"
+#if defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+#include "platform/esp/arduino_common/hostlink/hostlink_service.h"
+#include "usb/usb_cdc_transport.h"
+#endif
 
 namespace trailmate::apps::esp32_lvgl::arduino_app_runtime_access
 {
@@ -127,6 +131,30 @@ void tick()
         return;
     }
     platform::esp::arduino_common::storage::tick_deferred_storage();
+#if defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    ::hostlink::tick_publication_tasks();
+    // Enumerate CDC without allocating HostLink queues/task until a host opens
+    // it. Run command processing before saver gates, just like the IDF loop.
+    if (usb_cdc::start())
+    {
+        static uint32_t last_start_attempt = 0;
+        if (usb_cdc::is_connected())
+        {
+            const uint32_t current = millis();
+            if (!::hostlink::is_active() && current - last_start_attempt >= 1000U)
+            {
+                last_start_attempt = current;
+                ::hostlink::start();
+            }
+            ::hostlink::process_pending_commands();
+        }
+        else if (::hostlink::is_active())
+        {
+            ::hostlink::process_pending_commands();
+            ::hostlink::stop();
+        }
+    }
+#endif
 #if defined(ARDUINO_T_DECK_PRO) && defined(TRAIL_MATE_TDECK_PRO_A7682E)
     // Receive call/SMS URCs even while the EPD saver owns the foreground UI.
     ::platform::ui::a7682e::tick();

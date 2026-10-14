@@ -14,11 +14,13 @@ enum class PendingCommandType : uint8_t
 {
     TxMsg = 1,
     TxAppData = 2,
+    Management = 3,
 };
 
 struct PendingCommand
 {
     PendingCommandType type = PendingCommandType::TxMsg;
+    uint16_t sequence = 0; // Fits the padding before to; management replies retain frame correlation.
     uint32_t to = 0;
     uint32_t portnum = 0;
     uint8_t channel = 0;

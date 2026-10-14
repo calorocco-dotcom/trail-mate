@@ -132,6 +132,7 @@ _trailmate_set_linux_paths()
 # ---------------------------------------------------------------------------
 
 set(TRAIL_MATE_LINUX_COMMON_SOURCES
+    "${TRAIL_MATE_REPO_ROOT}/third_party/yxml/yxml.c"
     # app facade
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/app/linux_app_services.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/app/linux_app_facade.cpp"
@@ -563,6 +564,9 @@ set(TRAIL_MATE_LINUX_COMMON_INCLUDES
     "${TRAIL_MATE_CORE_CHAT_NANOPB_ROOT}"
     "${TRAIL_MATE_CORE_GPS_INCLUDE_ROOT}"
     "${TRAIL_MATE_CORE_HOSTLINK_INCLUDE_ROOT}"
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_track_sharing/include"
+    "${TRAIL_MATE_REPO_ROOT}/third_party/yxml"
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_geocaching/include"
     "${TRAIL_MATE_CORE_SYS_INCLUDE_ROOT}"
     "${TRAIL_MATE_CORE_DEVICE_INCLUDE_ROOT}"
     "${TRAIL_MATE_CORE_MESH_INCLUDE_ROOT}"

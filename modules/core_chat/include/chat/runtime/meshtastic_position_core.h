@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "meshtastic/mesh.pb.h"
+
 namespace chat::runtime
 {
 
@@ -44,6 +46,12 @@ class MeshtasticPositionCore final
     static bool buildPositionPayload(const MeshtasticPositionInput& input,
                                      uint8_t* out_buf,
                                      size_t* out_len);
+
+    // Mutates caller-owned Data scratch before encoding/encryption. No heap or
+    // resident storage. A false result must never be transmitted or mirrored.
+    static bool applyChannelPrecision(meshtastic_Data& data,
+                                      bool has_module_settings,
+                                      uint32_t precision_bits);
 };
 
 } // namespace chat::runtime

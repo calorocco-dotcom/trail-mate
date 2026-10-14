@@ -828,3 +828,13 @@ No saved waypoints	Geen opgeslagen routepunten
 Saved waypoint	Opgeslagen routepunt
 Waypoint unavailable	Routepunt niet beschikbaar
 Reticulum	Reticulum
+Image memory unavailable	Onvoldoende geheugen voor afbeeldingen
+Image cache needs checking. Download again.	De afbeeldingscache moet worden gecontroleerd. Download opnieuw.
+Off route %.0fm	Buiten route %.0fm
+Route position unavailable	Routepositie niet beschikbaar
+Route storage unavailable	Routeopslag niet beschikbaar
+Route: waiting for GPS	Route: wachten op GPS
+Route position ambiguous	Routepositie is dubbelzinnig
+Route end (estimated)	Route-einde (geschat)
+Route %u%% | %s left	Route %u%% | nog %s
+Matching route...	Route vergelijken…

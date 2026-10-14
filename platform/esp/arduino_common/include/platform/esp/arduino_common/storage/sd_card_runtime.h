@@ -108,8 +108,10 @@ bool sd_set_external_block_owner_active(bool active);
 bool sd_exists(const char* path);
 bool sd_is_directory(const char* path);
 bool sd_mkdir(const char* path);
+bool sd_mkdir(const char* path, uint32_t expected_session);
 bool sd_rmdir(const char* path);
 bool sd_remove(const char* path);
+bool sd_remove(const char* path, uint32_t expected_session);
 bool sd_rename(const char* old_path, const char* new_path);
 bool sd_rename(const char* old_path, const char* new_path, uint32_t expected_session);
 
@@ -145,10 +147,18 @@ SdFileReadResult sd_read_file(const char* path,
                               uint8_t* buffer,
                               std::size_t capacity);
 
+enum class SdRuntimeMemoryPolicy : uint8_t
+{
+    Default,
+    PsramOnly,
+};
+
 class SdRuntimeFile
 {
   public:
     SdRuntimeFile();
+    explicit SdRuntimeFile(SdRuntimeMemoryPolicy policy);
+    bool has_backing_storage() const { return impl_ != nullptr; }
     ~SdRuntimeFile();
 
     SdRuntimeFile(const SdRuntimeFile&) = delete;
@@ -196,6 +206,8 @@ class SdRuntimeDir
 {
   public:
     SdRuntimeDir();
+    explicit SdRuntimeDir(SdRuntimeMemoryPolicy policy);
+    bool has_backing_storage() const { return impl_ != nullptr; }
     ~SdRuntimeDir();
 
     SdRuntimeDir(const SdRuntimeDir&) = delete;
@@ -208,6 +220,11 @@ class SdRuntimeDir
     bool is_open() const;
     bool read_next(char* name, std::size_t name_size, bool* is_dir);
     SdDirReadStatus read_next_status(char* name, std::size_t name_size, bool* is_dir);
+    // SdFat metadata cursor path; positions are native directory-entry offsets.
+    SdDirReadStatus read_next_info(char* name, std::size_t name_size, bool* is_dir,
+                                   uint64_t* file_size, uint64_t* next_position);
+    bool seek_read_position(uint64_t position);
+    SdFileReadStatus seek_read_status(uint64_t position);
 
   private:
     class Impl;

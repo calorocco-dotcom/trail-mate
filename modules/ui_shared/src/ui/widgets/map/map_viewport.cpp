@@ -12,6 +12,7 @@
 #include "platform/ui/device_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
 #include "ui/localization.h"
+#include "ui/support/overlay_path_segments.h"
 #include "ui/widgets/map/map_tiles.h"
 #include "ui_map_runtime/map_geo_coordinates.h"
 #include "ui_presentation/map/map_marker_cache.h"
@@ -691,9 +692,35 @@ void refresh_markers(RuntimeImpl& impl)
     lv_obj_invalidate(impl.widgets.overlay_layer);
 }
 
+void draw_overlay_paths(lv_event_t* event, const RuntimeImpl& impl)
+{
+    if (!impl.overlay.header.valid) return;
+    auto* layer = lv_event_get_layer(event);
+    auto* object = static_cast<lv_obj_t*>(lv_event_get_current_target(event));
+    if (!layer || !object) return;
+    lv_area_t origin;
+    lv_obj_get_coords(object, &origin);
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.width = 2;
+    line.opa = LV_OPA_COVER;
+    ::ui::support::visitOverlayPathSegments(
+        impl.overlay,
+        [&](const ::ui::map::MapGeoPoint& point, lv_point_t& output)
+        { return project_geo_point(impl, {point.valid, point.lat, point.lon}, output); },
+        [&](const lv_point_t& a, const lv_point_t& b, ::ui::map::MapOverlayStyle style)
+        {
+            line.p1 = {static_cast<lv_value_precise_t>(a.x + origin.x1), static_cast<lv_value_precise_t>(a.y + origin.y1)};
+            line.p2 = {static_cast<lv_value_precise_t>(b.x + origin.x1), static_cast<lv_value_precise_t>(b.y + origin.y1)};
+            line.color = overlay_color(style);
+            lv_draw_line(layer, &line);
+        });
+}
+
 void draw_markers(lv_event_t* event)
 {
     const auto& impl = *static_cast<RuntimeImpl*>(lv_event_get_user_data(event));
+    draw_overlay_paths(event, impl);
     if (!impl.markers || !impl.markers->cache.valid || !impl.marker_binding) return;
     const auto status = impl.marker_binding->source->markerStatus();
     if (!status.ready || status.revision != impl.markers->cache.seen.revision) return;
@@ -742,6 +769,8 @@ void render_overlay(RuntimeImpl& impl)
     impl.marker_drag_dx = 0;
     impl.marker_drag_dy = 0;
     refresh_markers(impl);
+    // Paths have no child objects to invalidate their old or new pixels.
+    lv_obj_invalidate(impl.widgets.overlay_layer);
     if (!impl.overlay.header.valid)
     {
         return;
@@ -750,6 +779,7 @@ void render_overlay(RuntimeImpl& impl)
     for (std::size_t i = 0; i < impl.overlay.item_count; ++i)
     {
         const auto& item = impl.overlay.items[i];
+        if (item.path_flags & 1) continue; // existing draw callback renders paths
         if (!item.visible || !item.point.valid)
         {
             continue;
@@ -1020,6 +1050,7 @@ Widgets create(Runtime& runtime, lv_obj_t* parent, uint32_t loader_interval_ms)
     impl->poi_overlay.create(impl->widgets.root);
 #endif
     impl->widgets.overlay_layer = lv_obj_create(impl->widgets.root);
+    lv_obj_add_event_cb(impl->widgets.overlay_layer, draw_markers, LV_EVENT_DRAW_MAIN, impl);
     lv_obj_set_size(impl->widgets.overlay_layer, LV_PCT(100), LV_PCT(100));
     lv_obj_set_pos(impl->widgets.overlay_layer, 0, 0);
     make_plain(impl->widgets.overlay_layer);
@@ -1222,9 +1253,9 @@ void set_marker_binding(Runtime& runtime, const ui::map::MapMarkerBinding* bindi
     lv_obj_remove_event_cb(impl->widgets.overlay_layer, draw_markers);
     impl->marker_binding = binding;
     impl->marker_retry_at = 0;
+    lv_obj_add_event_cb(impl->widgets.overlay_layer, draw_markers, LV_EVENT_DRAW_MAIN, impl);
     if (binding)
     {
-        lv_obj_add_event_cb(impl->widgets.overlay_layer, draw_markers, LV_EVENT_DRAW_MAIN, impl);
         refresh_markers(*impl);
     }
     lv_obj_invalidate(impl->widgets.overlay_layer);

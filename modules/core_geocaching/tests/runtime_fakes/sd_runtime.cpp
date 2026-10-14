@@ -91,6 +91,10 @@ SdRuntimeFile::~SdRuntimeFile()
     close();
     delete impl_;
 }
+bool SdRuntimeFile::open(const char* path, const char* mode, uint32_t expected_session)
+{
+    return expected_session == sd_media_session() && sd_card_ready() && !sd_external_block_owner_active() && open(path, mode);
+}
 bool SdRuntimeFile::open(const char* path, const char* mode)
 {
     close();

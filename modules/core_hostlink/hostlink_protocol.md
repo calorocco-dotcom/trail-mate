@@ -78,6 +78,66 @@ Bitmask (uint32):
 - bit7: `CapTeamState`
 - bit8: `CapAprsGateway`
 - bit9: `CapTxAppData` (downlink `CMD_TX_APP_DATA`)
+- bit10: `CapManagement` (versioned management envelopes)
+- bit11: `CapChannelPositionPrecision` (firmware consumes per-channel position precision before its own Meshtastic sends/replies and MQTT mirroring)
+- bit12: `CapSharedSignatureRecovery` (opt-in management operation 38 recovery of sealed unsigned Geocaching input)
+- bit13: `CapSharedConfirmationRecovery` (opt-in operation 38 `[6,null]`, plus terminal staging after durable Geocaching confirmation)
+
+Bit11 describes firmware behavior, regardless of the currently selected RF
+protocol. It does not enable an App bridge or change the device author identity.
+When channel module settings are absent, legacy behavior remains. When present,
+0 blocks coordinate-bearing position messages, 1–31 quantizes, 32 preserves
+coordinates, and values above 32 reject coordinate-bearing messages. Empty
+position requests remain possible. Clients must not infer support from the
+firmware label or management operation count. Existing HELLO_ACK layout and
+maximum frame length are unchanged; older firmware omits bit11.
+
+With bit12, `TRANSFER_LIST_OWNED` (38) additionally accepts exactly `[5,null]`.
+Existing track upload kinds and their seven-field rows are unchanged. The new
+reply is `[media_session,null,row|null]`; a present row has nine fields:
+`[transfer_id16,5,total,sha256_32,current_author_generation,1,total,owner16,draft_nonce16]`.
+The generation describes the author proved for this query; legacy staging
+metadata does not establish a historic author generation. Only sealed unsigned
+input whose record prefix contains the current device public author and whose
+whole-file hash matches staging metadata is exposed. Active signing or
+confirmation returns Busy. Receiving input, completed input, configuration,
+drafts and confirmation proofs are excluded. Candidate/private-key bytes are
+never returned. Atomic staging metadata can be recovered by the existing
+journal loader, but query does not sign, advance a phase or delete input.
+
+The returned owner is USB correlation, not an identity credential. Before
+restoring it, clients must prove the author and match their retained transfer
+ID, byte length, hash and draft nonce. Abort remains operation 36 with the exact
+original owner and transfer ID; the query does not grant broader cleanup.
+Clients lacking bit12 must not send this new kind-5 query. Web maintenance
+retains correlation per proved author/generation before writes and must not
+silently rotate owners on storage failure.
+
+Bit13 separately enables `[6,null]` with the same nine-field row, kind 6 and
+maximum 4166 bytes. The SHA256 binds the complete SignedCache staging file.
+The public author/nonce is inspected inside its unsigned-record prefix, not
+returned as file content. This query alone does not prove confirmation; clients
+must match their original signed file and retained operation, and verify the
+directory receipt/device durable status before clearing a confirmed copy.
+Bit12 firmware alone does not support this additional query.
+
+After a matching `CACHE_CONFIRM_BEGIN` or `CACHE_CONFIRM_STATUS` reports a
+durable confirmation, firmware atomically marks the exact kind-6 upload phase
+2 before acknowledging it. Owner, transfer ID and full staging hash must match.
+Failed persistence yields a storage error, leaving the durable publication
+intact for the same operation's status retry. Phase-2 candidate bytes remain
+available for exact replay after reply loss/reboot. Another upload ID may use
+the terminal slot; no signed version, receipt or author key is deleted.
+
+While the original confirmation is active, a nonblocking author-key lock that
+is temporarily unavailable is pending/Busy, not evidence of an identity change.
+The firmware keeps the same task and immutable input until the original
+120-second lifetime expires. Temporary external SD ownership likewise pauses
+work; changed media, a changed proved author/generation, or an actual key
+storage failure still rejects the operation. A client retries only explicit
+Busy reads within its budget, retaining the same author and task binding; it
+must not release the lease, rotate the owner, or obtain a new signature for that
+retry. Device proof must be revalidated when the lock becomes available.
 
 `CapAprsGateway` indicates EV_APP_DATA/EV_RX_MSG carry RX metadata TLV and
 the APRS config keys are supported.

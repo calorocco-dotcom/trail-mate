@@ -156,6 +156,8 @@ class PublishAttempt
                source.bytes == destination_.bytes && request.bytes == request_.bytes;
     }
     const GeocacheId& cacheId() const { return id_; }
+    const RequestId& requestId() const { return request_; }
+    const RevisionHash& revisionHash() const { return hash_; }
     uint32_t revision() const { return revision_; }
     CacheState state() const { return state_; }
 

@@ -9,6 +9,13 @@
 #include "platform/esp/arduino_common/chat/infra/meshtastic/mt_adapter.h"
 #include "platform/esp/arduino_common/chat/infra/reticulum/reticulum_adapter.h"
 #include "platform/ui/reticulum_call_runtime.h"
+#include "platform/esp/arduino_common/chat/infra/lxmf/local_identity_access.h"
+#include "geocaching/protocol/sign_record.h"
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+#include "hostlink/identity_backup_export.h"
+#include "platform/esp/common/radio_identity_management.h"
+#include "track_sharing/device_signer.h"
+#endif
 
 namespace chat
 {
@@ -70,6 +77,7 @@ bool MeshAdapterRouter::installServiceBackend(MeshProtocol protocol, std::unique
 void MeshAdapterRouter::applyGeocachingHandlers(MeshProtocol protocol, IMeshAdapter* backend)
 {
     if (!backend || (protocol != MeshProtocol::Reticulum && protocol != MeshProtocol::RNode)) return;
+    if (auto* tracks = backend->trackTransport()) tracks->setTrackDeliveryBinding(track_delivery_binding_);
     auto* service = backend->geocachingTransport();
     if (!service) return;
     service->setGeocachingAnnouncementHandler(geocaching_announcement_, geocaching_context_);
@@ -93,6 +101,84 @@ bool MeshAdapterRouter::processServiceQueue(MeshProtocol protocol)
 {
     LockGuard lock(mutex_, 0);
     return lock.locked() && core_.processServiceQueue(protocol);
+}
+
+bool MeshAdapterRouter::bindTrackDelivery(const lxmf::TrackDeliveryBinding* binding)
+{
+    // Legacy entry is acquire-only: removal/replacement must name its owner.
+    return replaceTrackDelivery(nullptr,binding) == TrackBindingChange::Applied;
+}
+
+TrackBindingChange MeshAdapterRouter::replaceTrackDelivery(const lxmf::TrackDeliveryBinding* expected, const lxmf::TrackDeliveryBinding* replacement)
+{
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return TrackBindingChange::Busy;
+    if (track_delivery_binding_ != expected) return TrackBindingChange::Conflict;
+    if (expected == replacement) return TrackBindingChange::Applied;
+    track_delivery_binding_ = replacement;
+    auto* backend = core_.backendForProtocol(MeshProtocol::Reticulum);
+    if (backend && backend->trackTransport()) backend->trackTransport()->setTrackDeliveryBinding(replacement);
+    return TrackBindingChange::Applied;
+}
+
+TrackBindingChange MeshAdapterRouter::visitTrackDelivery(const lxmf::TrackDeliveryBinding* expected, uint8_t* author, uint32_t& generation,
+                                                         TrackBindingVisit visit, void* context)
+{
+    if (!expected || !author || !visit || !expected->expected_local_author || !expected->expected_author_generation) return TrackBindingChange::Conflict;
+    const auto a = reinterpret_cast<uintptr_t>(author), b = reinterpret_cast<uintptr_t>(expected->expected_local_author);
+    if (a <= b ? b - a < 64 : a - b < 64) return TrackBindingChange::Conflict;
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return TrackBindingChange::Busy;
+    if (track_delivery_binding_ != expected) return TrackBindingChange::Conflict;
+    const auto* backend = deviceAuthorBackendLocked();
+    if (!backend) return TrackBindingChange::Busy;
+    const auto read = backend->readDeviceAuthorKey(author, generation);
+    if (read != DeviceAuthorResult::Ok) return read == DeviceAuthorResult::Unavailable ? TrackBindingChange::Busy : TrackBindingChange::Conflict;
+    if (generation != expected->expected_author_generation || std::memcmp(author, expected->expected_local_author, 64)) return TrackBindingChange::Conflict;
+    visit(context);
+    return TrackBindingChange::Applied;
+}
+
+bool MeshAdapterRouter::trackLocalDestination(uint8_t* output)
+{
+    if (!output) return false;
+    std::memset(output,0,16);
+    LockGuard lock(mutex_,0);
+    if (!lock.locked()) return false;
+    const auto* backend=deviceAuthorBackendLocked();
+    return backend&&backend->isReady()&&geocachingDestinationLocked(output);
+}
+
+bool MeshAdapterRouter::requestTrackDirectoryPath(const uint8_t* destination)
+{
+    if(!destination)return false;
+    uint8_t bits=0;for(size_t i=0;i<16;++i)bits|=destination[i];if(!bits)return false;
+    LockGuard lock(mutex_,0);
+    if(!lock.locked()||!track_delivery_binding_||!deviceAuthorBackendLocked())return false;
+    auto* backend=core_.backendForProtocol(MeshProtocol::Reticulum);
+    auto* transport=backend&&backend->isReady()?backend->trackTransport():nullptr;
+    return transport&&transport->requestDirectoryPath(destination);
+}
+
+MeshSendResult MeshAdapterRouter::sendTrackData(const uint8_t destination[16], lxmf::ByteSpan data,
+                                               const uint8_t expected_author[64], uint32_t expected_generation,
+                                               bool response, std::array<uint8_t, 32>* accepted_hash)
+{
+    if (accepted_hash) accepted_hash->fill(0);
+    if (!destination || !data.data || !data.size || data.size > 8192 || !expected_author || !expected_generation)
+        return MeshSendResult::fail(MeshOperationFailure::InvalidInput);
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return MeshSendResult::fail(MeshOperationFailure::Busy);
+    if (!deviceAuthorBackendLocked()) return MeshSendResult::fail(MeshOperationFailure::NotReady);
+    auto* backend = core_.backendForProtocol(MeshProtocol::Reticulum);
+    auto* transport = backend ? backend->trackTransport() : nullptr;
+    if (!backend || !backend->isReady() || !transport) return MeshSendResult::fail(MeshOperationFailure::NotReady);
+    uint8_t current[64]{};
+    uint32_t generation = 0;
+    if (backend->readDeviceAuthorKey(current, generation) != DeviceAuthorResult::Ok ||
+        generation != expected_generation || std::memcmp(current, expected_author, sizeof(current)))
+        return MeshSendResult::fail(MeshOperationFailure::LocalIdentityMissing);
+    return transport->sendTrackData(destination, data, response, accepted_hash);
 }
 
 std::unique_ptr<IMeshAdapter> MeshAdapterRouter::takeServiceBackend(MeshProtocol protocol, const IMeshAdapter* expected)
@@ -159,14 +245,139 @@ IGeocachingTransport* MeshAdapterRouter::geocachingTransportLocked()
     return backend ? backend->geocachingTransport() : nullptr;
 }
 
+const IMeshAdapter* MeshAdapterRouter::deviceAuthorBackendLocked() const
+{
+    if (lxmf::LocalIdentityLease::rebootRequired()) return nullptr;
+    const auto active = core_.backendProtocol();
+    if (active != MeshProtocol::Reticulum && active != MeshProtocol::RNode &&
+        !core_.isServiceBackend(MeshProtocol::Reticulum)) return nullptr;
+    return core_.backendForProtocol(MeshProtocol::Reticulum);
+}
+
+DeviceAuthorResult MeshAdapterRouter::readDeviceAuthorKey(uint8_t* public_key, uint32_t& generation) const
+{
+    generation = 0;
+    if (lxmf::LocalIdentityLease::rebootRequired()) return DeviceAuthorResult::Unavailable;
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return DeviceAuthorResult::Unavailable;
+    const auto* backend = deviceAuthorBackendLocked();
+    if (backend) return backend->readDeviceAuthorKey(public_key, generation);
+    // Establish the device account on first USB use without starting RF.
+    // init() only generates when all identity key storage is absent; partial
+    // or unreadable material is refused by the existing persistence policy.
+    lxmf::LocalIdentityLease identity([](lxmf::LxmfIdentity& value) { return value.init(); });
+    return identity.read(public_key, generation);
+}
+DeviceAuthorResult MeshAdapterRouter::exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const
+{
+    written = 0;
+    if (lxmf::LocalIdentityLease::rebootRequired()) return DeviceAuthorResult::Unavailable;
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return DeviceAuthorResult::Unavailable;
+    const auto* backend = deviceAuthorBackendLocked();
+    if (backend) return backend->exportDeviceIdentityBackup(generation, output, capacity, written);
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    lxmf::LocalIdentityLease identity;
+    return identity.get() ? hostlink::management::exportNativeIdentityBackup(*identity.get(), generation, output, capacity, written) : identity.result();
+#else
+    return DeviceAuthorResult::Unsupported;
+#endif
+}
+DeviceIdentityRestoreResult MeshAdapterRouter::restoreDeviceIdentity(const hostlink::management::IdentityRestoreView& request, uint8_t* work, size_t capacity)
+{
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked() || lxmf::LocalIdentityLease::rebootRequired()) return DeviceIdentityRestoreResult::Unavailable;
+    auto* backend = deviceAuthorBackendLocked() ? core_.backendForProtocol(MeshProtocol::Reticulum) : nullptr;
+    DeviceIdentityRestoreResult result;
+    if (backend) result = backend->restoreDeviceIdentity(request, work, capacity);
+    else
+    {
+        lxmf::LocalIdentityLease identity;
+        result = identity.get() ? identity.get()->restoreNativeIdentity(request, work, capacity) : DeviceIdentityRestoreResult::Unavailable;
+    }
+    lxmf::LocalIdentityLease::noteRestore(result);
+    return result;
+}
+DeviceAuthorResult MeshAdapterRouter::readRadioIdentityInfo(uint8_t kind, uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const
+{
+    written = 0;
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked() || lxmf::LocalIdentityLease::rebootRequired()) return DeviceAuthorResult::Unavailable;
+    lxmf::LocalIdentityLease identity;
+    return identity.get() ? platform::esp::common::readRadioIdentityInfo(*identity.get(), kind, generation, output, capacity, written) : identity.result();
+#else
+    return DeviceAuthorResult::Unsupported;
+#endif
+}
+DeviceAuthorResult MeshAdapterRouter::exportRadioIdentityBackup(uint8_t kind, uint32_t generation, uint8_t* output, size_t capacity, size_t& written, const uint8_t* session, const uint8_t* request) const
+{
+    written = 0;
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked() || lxmf::LocalIdentityLease::rebootRequired()) return DeviceAuthorResult::Unavailable;
+    lxmf::LocalIdentityLease identity;
+    return identity.get() ? platform::esp::common::exportRadioIdentityBackup(*identity.get(), kind, generation, output, capacity, written, session, request) : identity.result();
+#else
+    return DeviceAuthorResult::Unsupported;
+#endif
+}
+DeviceIdentityRestoreResult MeshAdapterRouter::restoreRadioIdentity(const hostlink::management::RadioIdentityRestoreView& request, uint8_t* work, size_t capacity)
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked() || lxmf::LocalIdentityLease::rebootRequired()) return DeviceIdentityRestoreResult::Unavailable;
+    lxmf::LocalIdentityLease identity;
+    const auto result = identity.get() ? platform::esp::common::restoreRadioIdentity(*identity.get(), request, work, capacity) : DeviceIdentityRestoreResult::Unavailable;
+    lxmf::LocalIdentityLease::noteRestore(result);
+    return result;
+#else
+    return DeviceIdentityRestoreResult::Unsupported;
+#endif
+}
+DeviceAuthorResult MeshAdapterRouter::signTrackManifest(const uint8_t* raw, size_t size, uint32_t generation, track_sharing::ManifestView& view,
+                                                        uint8_t* workspace, size_t capacity, uint8_t* signature, size_t signature_capacity) const
+{
+    if (lxmf::LocalIdentityLease::rebootRequired()) return DeviceAuthorResult::Unavailable;
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return DeviceAuthorResult::Unavailable;
+    const auto* backend = deviceAuthorBackendLocked();
+    if (backend) return backend->signTrackManifest(raw, size, generation, view, workspace, capacity, signature, signature_capacity);
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    lxmf::LocalIdentityLease identity;
+    return identity.get() ? track_sharing::signDeviceTrackManifest(*identity.get(), raw, size, generation, view, workspace, capacity, signature, signature_capacity) : identity.result();
+#else
+    return DeviceAuthorResult::Unsupported;
+#endif
+}
+
+DeviceAuthorResult MeshAdapterRouter::proveDeviceAuthor(const uint8_t* session, const uint8_t* challenge,
+                                                        uint32_t expected_generation, uint8_t* workspace, size_t capacity,
+                                                        uint8_t* public_key, uint32_t& generation, uint8_t* signature) const
+{
+    generation = 0;
+    if (lxmf::LocalIdentityLease::rebootRequired()) return DeviceAuthorResult::Unavailable;
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked()) return DeviceAuthorResult::Unavailable;
+    const auto* backend = deviceAuthorBackendLocked();
+    // Resolve and sign under one lock; no backend pointer survives a switch.
+    if (backend) return backend->proveDeviceAuthor(session, challenge, expected_generation, workspace, capacity,
+                                                  public_key, generation, signature);
+    lxmf::LocalIdentityLease identity;
+    return identity.prove(session, challenge, expected_generation, workspace, capacity, public_key, generation, signature);
+}
+
 bool MeshAdapterRouter::getGeocachingAuthorKey(uint8_t out[64])
 {
     if (!out) return false;
     std::memset(out, 0, 64);
     LockGuard lock(mutex_, 0);
-    if (!lock.locked()) return false;
+    if (!lock.locked() || lxmf::LocalIdentityLease::rebootRequired()) return false;
     auto* service = geocachingTransportLocked();
-    return service && service->getGeocachingAuthorKey(out);
+    if (service) return service->getGeocachingAuthorKey(out);
+    lxmf::LocalIdentityLease identity;
+    uint32_t generation = 0;
+    return identity.read(out, generation) == DeviceAuthorResult::Ok;
 }
 
 bool MeshAdapterRouter::signGeocachingRecord(lxmf::ByteSpan record, uint8_t* workspace, size_t workspace_capacity,
@@ -174,9 +385,11 @@ bool MeshAdapterRouter::signGeocachingRecord(lxmf::ByteSpan record, uint8_t* wor
 {
     written = 0;
     LockGuard lock(mutex_, 0);
-    if (!lock.locked()) return false;
+    if (!lock.locked() || lxmf::LocalIdentityLease::rebootRequired()) return false;
     auto* service = geocachingTransportLocked();
-    return service && service->signGeocachingRecord(record, workspace, workspace_capacity, output, output_capacity, written);
+    if (service) return service->signGeocachingRecord(record, workspace, workspace_capacity, output, output_capacity, written);
+    lxmf::LocalIdentityLease identity;
+    return identity.get() && ::geocaching::protocol::signGeocacheRecord({record.data, record.size}, *identity.get(), workspace, workspace_capacity, output, output_capacity, written);
 }
 
 MeshProtocol MeshAdapterRouter::backendProtocol() const

@@ -828,3 +828,13 @@ No saved waypoints	Нет сохранённых точек
 Saved waypoint	Сохранённая точка
 Waypoint unavailable	Точка недоступна
 Reticulum	Reticulum
+Image memory unavailable	Недостаточно памяти для изображений
+Image cache needs checking. Download again.	Кэш изображений требует проверки. Скачайте изображения снова.
+Off route %.0fm	Вне маршрута %.0fm
+Route position unavailable	Положение на маршруте недоступно
+Route storage unavailable	Хранилище маршрута недоступно
+Route: waiting for GPS	Маршрут: ожидание GPS
+Route position ambiguous	Положение неоднозначно
+Route end (estimated)	Конец маршрута (оценка)
+Route %u%% | %s left	Маршрут %u%% | осталось %s
+Matching route...	Сопоставление маршрута…

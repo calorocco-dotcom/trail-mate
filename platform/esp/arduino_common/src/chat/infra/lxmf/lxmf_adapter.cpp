@@ -5,6 +5,10 @@
 
 #include "platform/esp/arduino_common/chat/infra/lxmf/lxmf_adapter.h"
 #include "geocaching/protocol/sign_record.h"
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+#include "track_sharing/device_signer.h"
+#include "hostlink/identity_backup_export.h"
+#endif
 
 #include "platform/esp/arduino_common/voice/vmp_pager_session.h"
 
@@ -2115,6 +2119,77 @@ bool LxmfAdapter::respondToSidebandTelemetryRequest(
     return sent;
 }
 
+DeviceAuthorResult LxmfAdapter::readDeviceAuthorKey(uint8_t* public_key, uint32_t& generation) const
+{
+    generation = 0;
+    if (!public_key) return DeviceAuthorResult::InvalidInput;
+    if (!identity_.isReady()) return identity_.identityStorageError() ? DeviceAuthorResult::StorageError : DeviceAuthorResult::Unavailable;
+    if (!identity_.authorGeneration()) return DeviceAuthorResult::StorageError;
+    identity_.combinedPublicKey(public_key);
+    generation = identity_.authorGeneration();
+    return DeviceAuthorResult::Ok;
+}
+DeviceAuthorResult LxmfAdapter::exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    return hostlink::management::exportNativeIdentityBackup(identity_, generation, output, capacity, written);
+#else
+    (void)generation;
+    (void)output;
+    (void)capacity;
+    written = 0;
+    return DeviceAuthorResult::Unsupported;
+#endif
+}
+DeviceIdentityRestoreResult LxmfAdapter::restoreDeviceIdentity(const hostlink::management::IdentityRestoreView& request, uint8_t* work, size_t capacity)
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    bool network_busy = delivery_attempt_ledger_.size() != 0 || !network_page_client_.empty() ||
+                        propagation_client_.hasPendingUploads() || propagation_client_.pendingDeliveryCount() != 0 ||
+                        propagation_client_.state().sync_stage != runtime::PropagationSyncStage::Idle;
+    link_manager_.forEachSession([&network_busy](const LinkSession& session)
+    { network_busy |= session.state != LinkState::Closed; });
+    if (network_busy) return DeviceIdentityRestoreResult::Unavailable;
+    return identity_.restoreNativeIdentity(request, work, capacity);
+#else
+    (void)request;
+    (void)work;
+    (void)capacity;
+    return DeviceIdentityRestoreResult::Unsupported;
+#endif
+}
+DeviceAuthorResult LxmfAdapter::signTrackManifest(const uint8_t* raw, size_t size, uint32_t generation, track_sharing::ManifestView& view,
+                                                  uint8_t* workspace, size_t capacity, uint8_t* signature, size_t signature_capacity) const
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    return track_sharing::signDeviceTrackManifest(identity_, raw, size, generation, view, workspace, capacity, signature, signature_capacity);
+#else
+    (void)raw;
+    (void)size;
+    (void)generation;
+    (void)view;
+    (void)workspace;
+    (void)capacity;
+    (void)signature;
+    (void)signature_capacity;
+    return DeviceAuthorResult::Unsupported;
+#endif
+}
+
+DeviceAuthorResult LxmfAdapter::proveDeviceAuthor(const uint8_t* session, const uint8_t* challenge,
+                                                  uint32_t expected_generation, uint8_t* workspace, size_t capacity,
+                                                  uint8_t* public_key, uint32_t& generation, uint8_t* signature) const
+{
+    if (!signature || !session || !challenge || !workspace || !expected_generation) return DeviceAuthorResult::InvalidInput;
+    const auto result = readDeviceAuthorKey(public_key, generation);
+    if (result != DeviceAuthorResult::Ok) return result;
+    if (generation != expected_generation) return DeviceAuthorResult::StaleIdentity;
+    size_t size = 0;
+    if (!deviceAuthorProofMessage(session, challenge, public_key, generation, workspace, capacity, size))
+        return DeviceAuthorResult::InvalidInput;
+    return identity_.sign(workspace, size, signature) ? DeviceAuthorResult::Ok : DeviceAuthorResult::Unavailable;
+}
+
 bool LxmfAdapter::getGeocachingAuthorKey(uint8_t out[64]) const
 {
     if (!out) return false;
@@ -2122,6 +2197,14 @@ bool LxmfAdapter::getGeocachingAuthorKey(uint8_t out[64]) const
     if (!identity_.isReady()) return false;
     identity_.combinedPublicKey(out);
     return true;
+}
+
+bool LxmfAdapter::requestTrackDirectoryPath(const uint8_t* destination)
+{
+    if (!destination || !track_delivery_binding_ || !track_delivery_binding_->announcement) return false;
+    const auto budget=makeRuntimeBudget();
+    if (!budget.phase || !std::strcmp(budget.phase,"call") || !std::strcmp(budget.phase,"nomad") || !std::strcmp(budget.phase,"saver")) return false;
+    return sendPathRequestForDestination(destination);
 }
 
 bool LxmfAdapter::signGeocachingRecord(ByteSpan record, uint8_t* workspace, size_t workspace_capacity,
@@ -3409,6 +3492,7 @@ bool LxmfAdapter::pollIncomingRawPacket(uint8_t* out_data, size_t& out_len, size
 
 void LxmfAdapter::handleRawPacket(const uint8_t* data, size_t size)
 {
+    if (!identity_.isReady()) return;
     interfaces_.handleRawPacket(data, size);
 }
 
@@ -3464,6 +3548,7 @@ void LxmfAdapter::maintainGatewayDiscovery()
 
 void LxmfAdapter::processRuntime()
 {
+    if (!identity_.isReady()) return;
     rtnet::poll(config_);
     const auto network_status = rtnet::status();
     if (network_status.generation != network_config_generation_)
@@ -3672,8 +3757,9 @@ bool LxmfAdapter::processOneRadioPacket(
             return false;
         }
     }
-    const bool geocaching_discovery = runtime::GeocachingDiscoveryBudget::matches(
-        parsed, geocaching_announcement_handler_ != nullptr, budget);
+    const bool geocaching_discovery = runtime::GeocachingDiscoveryBudget::matchesApplications(
+        parsed, geocaching_announcement_handler_ != nullptr,
+        track_delivery_binding_ && track_delivery_binding_->announcement, budget);
     const bool gateway_discovery = (budget.allow_propagation_client || budget.allow_public_discovery) &&
                                    reticulum::NativeGatewayDiscovery::matches(parsed);
     if (budget.drop_public_discovery && !geocaching_discovery && !gateway_discovery &&
@@ -4196,6 +4282,25 @@ bool LxmfAdapter::handleAnnouncePacket(const uint8_t* raw_packet, size_t raw_len
             geocaching_announcement_handler_(view, geocaching_announcement_context_);
             Serial.printf("[Geocaching][Discovery] verified_announce bytes=%u\n",
                           static_cast<unsigned>(ingest.announce.app_data_len));
+        }
+    }
+
+    if ((ingest.status == runtime::AnnounceIngestResult::Status::Accepted || cached_discovery) &&
+        track_delivery_binding_ && track_delivery_binding_->announcement && !ingest.local_destination &&
+        ingest.announce.name_hash && ingest.announce.public_key && ingest.announce.app_data && ingest.announce.app_data_len <= 128)
+    {
+        uint8_t name_hash[reticulum::kNameHashSize] = {};
+        reticulum::computeNameHash("trailmate", "track.directory", name_hash);
+        if (hashesEqual(name_hash, ingest.announce.name_hash, sizeof(name_hash)))
+        {
+            uint8_t delivery_hash[reticulum::kTruncatedHashSize] = {};
+            reticulum::computeNameHash("lxmf", "delivery", name_hash);
+            reticulum::computeDestinationHash(name_hash, ingest.identity_hash, delivery_hash);
+            const TrackDirectoryAnnouncementView view{
+                {packet.destination_hash, reticulum::kTruncatedHashSize}, {delivery_hash, sizeof(delivery_hash)},
+                {ingest.announce.public_key, reticulum::kCombinedPublicKeySize}, {ingest.announce.app_data, ingest.announce.app_data_len}};
+            if (deliverVerifiedTrackDirectory(track_delivery_binding_, view))
+                rememberPeerIdentity(ingest.announce.public_key, nullptr, false);
         }
     }
 
@@ -9871,6 +9976,20 @@ bool LxmfAdapter::acceptVerifiedEnvelopeForDestination(
         return false;
     }
     constexpr char geocaching_type[] = "trailmate.geocache";
+    if (custom_result == CustomDataResult::Valid && isTrackCustomType(custom_type))
+    {
+        const CustomDeliveryView view{
+            {envelope.source_hash, sizeof(envelope.source_hash)},
+            {expected_destination_hash, reticulum::kTruncatedHashSize},
+            {delivery_context.message_hash, sizeof(delivery_context.message_hash)},
+            custom_data};
+        if (!deliverVerifiedTrackForAuthor(track_delivery_binding_, delivery_context.source_unverified, destination_is_group, view, identity_))
+        {
+            release_packet_for_retry();
+            return false;
+        }
+        return true;
+    }
     if (custom_result == CustomDataResult::Valid && custom_type.size == sizeof(geocaching_type) - 1 &&
         std::memcmp(custom_type.data, geocaching_type, custom_type.size) == 0)
     {

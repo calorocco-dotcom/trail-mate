@@ -828,3 +828,13 @@ No saved waypoints	Brak zapisanych punktów
 Saved waypoint	Zapisany punkt
 Waypoint unavailable	Punkt niedostępny
 Reticulum	Reticulum
+Image memory unavailable	Za mało pamięci na obrazy
+Image cache needs checking. Download again.	Pamięć podręczna obrazów wymaga sprawdzenia. Pobierz je ponownie.
+Off route %.0fm	Poza trasą %.0fm
+Route position unavailable	Pozycja na trasie niedostępna
+Route storage unavailable	Pamięć trasy niedostępna
+Route: waiting for GPS	Trasa: oczekiwanie na GPS
+Route position ambiguous	Pozycja na trasie niejednoznaczna
+Route end (estimated)	Koniec trasy (szacowany)
+Route %u%% | %s left	Trasa %u%% | zostało %s
+Matching route...	Dopasowywanie trasy…

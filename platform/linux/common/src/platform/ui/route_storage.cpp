@@ -1,16 +1,21 @@
 #include "platform/ui/route_storage.h"
+#include "track_sharing/image_source_binding.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <new>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+#if defined(TRAIL_MATE_HAS_OPENSSL)
+#include <openssl/evp.h>
+#endif
 
 #include "platform/linux/runtime_paths.h"
 
@@ -364,6 +369,27 @@ bool route_asset_file_exists(const std::string& path)
            !ec;
 }
 
+bool route_image_source_matches(const std::string& path, const uint8_t expected_source_hash[32])
+{
+    if (path.empty() || !expected_source_hash) return false;
+    const auto root = route_dir_path();
+    const auto input = std::filesystem::path(path);
+    const auto relative = input.is_absolute() ? input.lexically_relative(root) : input;
+    std::filesystem::path resolved;
+    if (!::platform::linux_runtime::resolve_child_under_root(root, relative.generic_string(), resolved)) return false;
+    std::error_code error;
+    std::filesystem::path binding;
+    const auto binding_relative = relative.generic_string() + ".source";
+    if (!::platform::linux_runtime::resolve_child_under_root(root, binding_relative, binding)) return false;
+    if (std::filesystem::file_size(binding, error) != track_sharing::kImageSourceBindingBytes || error) return false;
+    uint8_t bytes[track_sharing::kImageSourceBindingBytes];
+    std::ifstream file(binding, std::ios::binary);
+    if (!file.read(reinterpret_cast<char*>(bytes), sizeof(bytes))) return false;
+    track_sharing::ImageSourceBindingView record;
+    if (!track_sharing::decodeImageSourceBinding(bytes, sizeof(bytes), record) || std::memcmp(record.source_hash.data, expected_source_hash, 32)) return false;
+    return std::filesystem::file_size(resolved, error) == record.file_bytes && !error;
+}
+
 RouteImageDownloadResult download_route_image(const std::string& url,
                                               const std::string& output_path,
                                               std::uint32_t max_bytes)
@@ -374,6 +400,17 @@ RouteImageDownloadResult download_route_image(const std::string& url,
     RouteImageDownloadResult result{};
     result.error = "Route image download unsupported on host";
     return result;
+}
+
+bool route_image_reference_hash(std::string_view reference, uint8_t output[32])
+{
+    if (!output || reference.empty() || reference.size() > 4096) return false;
+#if defined(TRAIL_MATE_HAS_OPENSSL)
+    unsigned length = 0;
+    return EVP_Digest(reference.data(), reference.size(), output, &length, EVP_sha256(), nullptr) == 1 && length == 32;
+#else
+    return false;
+#endif
 }
 
 bool start_route_image_download(const std::string& asset_id,
@@ -447,13 +484,15 @@ bool start_route_image_download(const std::string& asset_id,
 }
 
 bool start_route_image_cache_build(const std::string& asset_id,
-                                   const std::vector<RouteImageCacheItem>& items,
+                                   std::vector<RouteImageCacheItem> items,
                                    std::string& out_error,
-                                   RouteImageTaskPresentation presentation)
+                                   RouteImageTaskPresentation presentation,
+                                   const std::string& package_route_path)
 {
     (void)asset_id;
     (void)items;
     (void)presentation;
+    (void)package_route_path;
     out_error = "Route image cache unsupported on host";
     return false;
 }
