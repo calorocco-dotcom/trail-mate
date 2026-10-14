@@ -1,9 +1,10 @@
 # Wiki updates for Trail Mate 1.0.0
 
 These English pages are the reviewable sources for the requested Wiki update.
-The existing Wiki remains intact; its Home and Sidebar should link these pages
-when the release update is published. Final acceptance and the public Web
-deployment are still pending, so the pages describe the candidate workflow.
+The existing Wiki remains intact. Its Home, Sidebar, Quick Start and Geocaching
+guide link these pages as part of the candidate documentation update. Final
+acceptance and the public Web deployment are still pending, so the pages
+describe the candidate workflow rather than an announced stable release.
 
 | Source | Wiki page |
 | --- | --- |

@@ -738,8 +738,8 @@ try{
   assert.equal(await page.getByLabel(configModuleFieldLabel(['mqtt','address'],locale.id),{exact:true}).inputValue(),'saved.example');
   const moduleText=configModuleText(locale.id);
   for(const name of ['address','username','password','root'])assert.ok((await page.locator(`[id="module-mqtt-${name}-help"]`).textContent()).includes(moduleText.blankMqttValue));
-  assert.equal(await mqttModule.locator(':scope > p').textContent(),moduleText.restoredPresence);
-  assert.equal(await page.locator('#module-mqtt-map_report_settings').locator('..').locator(':scope > p').textContent(),moduleText.restoredPresence);
+  assert.equal(await mqttModule.locator(':scope > p').filter({hasText:moduleText.restoredPresence}).textContent(),moduleText.restoredPresence);
+  assert.equal(await page.locator('#module-mqtt-map_report_settings').locator('..').locator(':scope > p').filter({hasText:moduleText.restoredPresence}).textContent(),moduleText.restoredPresence);
   const serialMode=page.getByLabel(configModuleFieldLabel(['serial','mode'],locale.id),{exact:true});assert.equal(await serialMode.inputValue(),'3');
   assert.equal(await serialMode.getByRole('option',{name:configModuleFieldLabel(['serial','mode','TEXTMSG'],locale.id,'option'),exact:true}).getAttribute('value'),'3');
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

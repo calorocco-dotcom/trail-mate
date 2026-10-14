@@ -125,8 +125,9 @@ browser, and use the connected device as the publication author.
 
 - Browse independently hosted directories and query the visible map extent.
   Pan or zoom the map to explore another area; automatic search can follow map
-  movement. Administrative filtering uses the catalog supplied by the directory
-  and remains a simple global country/region and first-level selection.
+  movement. Administrative filtering uses the catalog supplied by the directory.
+  The public directory currently supplies 242 countries/regions with names in
+  all 11 Web languages; first-level administrative data is still pending.
 - Open a trail by its publication ID, copy that ID or a version link, and inspect
   verified author/version information before downloading it. A publication ID
   identifies the shared object; a KML Placemark ID identifies an item inside a
@@ -140,6 +141,12 @@ browser, and use the connected device as the publication author.
 - Save shared content for offline use and install supported signed packages on
   a connected device. Hardware storage and the supported package capabilities
   determine which resources can be used on that device.
+
+![Shared-trail country search through the public Reticulum directory](docs/images/release-1.0.0/web-track-country-search.png)
+
+*Actual candidate Web page querying the public WSS/Reticulum track directory.
+The selected Austria boundary is verified; this query returned no shared trails.
+This capture uses no USB author and does not claim a completed publication test.*
 
 ![Trail elevation and timed-record maintenance](docs/images/release-1.0.0/web-track-elevation.png)
 
