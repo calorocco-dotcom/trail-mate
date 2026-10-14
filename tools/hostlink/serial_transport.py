@@ -1,6 +1,7 @@
 """Bounded serial exchanges for the read-only HostLink probe."""
 import binascii
 import json
+import os
 import struct
 import sys
 import time
@@ -10,6 +11,8 @@ port = serial.Serial(port=None, baudrate=115200, timeout=0.1, write_timeout=2)
 port.port = sys.argv[1]
 port.dtr = True
 port.rts = True
+diagnostics = os.environ.get('TRAIL_MATE_SERIAL_DIAGNOSTICS') == '1'
+diagnostic_line = bytearray()
 try:
     port.open()
     for line in sys.stdin:
@@ -23,6 +26,16 @@ try:
             buffered.extend(port.read(512))
             while len(buffered) >= 8:
                 if buffered[:3] != b'HL\x01':
+                    if diagnostics:
+                        byte = buffered[0]
+                        if byte == 10:
+                            if diagnostic_line.startswith(b'[Geocaching][WebConfirm]'):
+                                print(diagnostic_line.decode('ascii', errors='replace').strip(), file=sys.stderr, flush=True)
+                            diagnostic_line.clear()
+                        elif 32 <= byte <= 126 and len(diagnostic_line) < 256:
+                            diagnostic_line.append(byte)
+                        elif byte != 13:
+                            diagnostic_line.clear()
                     del buffered[0]
                     continue
                 sequence, size = struct.unpack_from('<HH', buffered, 4)

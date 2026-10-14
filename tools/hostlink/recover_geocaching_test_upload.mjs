@@ -93,4 +93,4 @@ try{
    console.log(JSON.stringify({aborted:true,onlyStagingKind:kind,savedDraftPreserved:true,confirmedVersionPreserved:kind===6}));
   }
  }
-}finally{if(ownedSession)await session.request(3,[]).catch(()=>{});child.stdin.end();const code=await done;lines.close();if(code!==0)throw Error('Serial transport failed: '+stderr);}
+}finally{if(ownedSession)await session.request(3,[]).catch(()=>{});child.stdin.end();const code=await done;lines.close();if(process.env.TRAIL_MATE_SERIAL_DIAGNOSTICS==='1'&&stderr)console.error(stderr.trim());if(code!==0)throw Error('Serial transport failed: '+stderr);}

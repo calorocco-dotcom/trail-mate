@@ -3523,6 +3523,7 @@ void advanceWebConfirmation(Session& s)
     if (validity == WebReadResult::Pending) return;
     if (validity != WebReadResult::Ready)
     {
+        Serial.printf("[Geocaching][WebConfirm] failed validity=%u\n", static_cast<unsigned>(validity));
         job.fail();
         return;
     }
@@ -3531,12 +3532,14 @@ void advanceWebConfirmation(Session& s)
     {
         if (!job.file.is_open() && (!job.file.open("/trailmate/cache.confirm.upload", "r", job.media) || job.file.size() != job.total))
         {
+            Serial.printf("[Geocaching][WebConfirm] failed input-open\n");
             job.fail();
             return;
         }
         const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
         if (job.file.read(job.source + job.offset, count) != static_cast<int>(count))
         {
+            Serial.printf("[Geocaching][WebConfirm] failed input-read\n");
             job.fail();
             return;
         }
@@ -3550,13 +3553,45 @@ void advanceWebConfirmation(Session& s)
         if (!job.digest.finalize(job.work, 32) || std::memcmp(job.work, job.hash.data(), 32) ||
             !job.job.begin(job.transfer, {job.source, job.total}, {job.proof, job.proof_size}, {job.author.data(), 64}, now(nullptr), job.work, job.capacity))
         {
+            Serial.printf("[Geocaching][WebConfirm] failed input-binding\n");
             job.fail();
             return;
         }
         job.begun = true;
     }
+    const auto previous_phase = job.job.phase();
     job.job.advance();
-    if (job.job.phase() == WebConfirmationPhase::Failed || job.job.phase() == WebConfirmationPhase::Cancelled) job.fail();
+    if (job.job.phase() == WebConfirmationPhase::Failed || job.job.phase() == WebConfirmationPhase::Cancelled)
+    {
+        Serial.printf("[Geocaching][WebConfirm] failed phase=%u\n", static_cast<unsigned>(previous_phase));
+        // Diagnose a real rejected preparation with the existing payload and
+        // scratch, after failure only. Never print key, content or proof bytes.
+        if (previous_phase == WebConfirmationPhase::Prepare)
+        {
+            auto content = ::platform::memory::PsramPtr<gc::protocol::VerifiedRecordView>(::platform::memory::createPsram<gc::protocol::VerifiedRecordView>());
+            if (content)
+            {
+                const auto record = gc::protocol::verifyGeocache({job.source, job.total}, s.crypto, job.work, job.capacity, *content);
+                Serial.printf("[Geocaching][WebConfirm] record=%u author-match=%u\n", static_cast<unsigned>(record),
+                              static_cast<unsigned>(record == gc::protocol::VerificationResult::Valid && !std::memcmp(content->record.author_public_key.data, job.author.data(), 64)));
+                gc::storage::PublicationConfirmationView proof;
+                if (record == gc::protocol::VerificationResult::Valid && gc::storage::decodePublicationConfirmation({job.proof, job.proof_size}, proof))
+                {
+                    gc::protocol::CmpReader raw(proof.raw);
+                    size_t count = 0;
+                    uint64_t version = 0;
+                    gc::ByteView directory;
+                    if (raw.array(count, 8) && count == 8 && raw.unsignedInteger(version) && version == 1 && raw.binary(directory, 16) && directory.size == 16)
+                    {
+                        gc::protocol::PublicationReceiptView receipt;
+                        const auto verified = gc::storage::verifyPublicationConfirmation({job.proof, job.proof_size}, directory, *content, s.crypto, job.work, job.capacity, receipt);
+                        Serial.printf("[Geocaching][WebConfirm] proof=%u\n", static_cast<unsigned>(verified));
+                    }
+                }
+            }
+        }
+        job.fail();
+    }
     else if (job.job.phase() == WebConfirmationPhase::Confirmed) job.releasePayload();
 }
 WebReadResult readWebConfirmation(const uint8_t transfer[16], const uint8_t owner[16], uint8_t* output, size_t capacity, size_t& written)
