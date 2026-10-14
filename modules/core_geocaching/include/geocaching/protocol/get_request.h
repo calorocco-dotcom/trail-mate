@@ -1,5 +1,6 @@
 #pragma once
 #include "geocaching/protocol/cmp_reader.h"
+#include <cstring>
 
 namespace geocaching::protocol
 {

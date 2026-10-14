@@ -3416,7 +3416,7 @@ WebReadResult readWebSignature(const uint8_t operation[16], const uint8_t owner[
     {
         if (phase != 1) return WebReadResult::Pending;
         if (!maximum || maximum > 320 || offset >= signed_record.size) return WebReadResult::Invalid;
-        const size_t count = std::min(size_t(maximum), signed_record.size - offset);
+        const size_t count = std::min<size_t>(maximum, signed_record.size - offset);
         if (!writer.array(5) || !writer.binary({job.operation.data(), 16}) || !writer.unsignedInteger(offset) || !writer.unsignedInteger(signed_record.size) ||
             !writer.binary({job.hash.data(), 32}) || !writer.binary({signed_record.data + offset, count})) return WebReadResult::Invalid;
     }
