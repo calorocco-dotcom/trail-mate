@@ -1003,7 +1003,8 @@ if(TRAIL_MATE_MBEDTLS_DIR)
     hostlink_test(verify_ip_confirmation test_verify_ip_confirmation.cpp
         "${ED25519_DIR}/keypair.c" "${ED25519_DIR}/sign.c" "${ED25519_DIR}/verify.c"
         "${ED25519_DIR}/sha512.c" "${ED25519_DIR}/ge.c" "${ED25519_DIR}/fe.c" "${ED25519_DIR}/sc.c"
-        "${TRAIL_MATE_MBEDTLS_DIR}/library/sha256.c" "${TRAIL_MATE_MBEDTLS_DIR}/library/platform.c")
+        "${TRAIL_MATE_MBEDTLS_DIR}/library/sha256.c" "${TRAIL_MATE_MBEDTLS_DIR}/library/platform.c"
+        "${TRAIL_MATE_MBEDTLS_DIR}/library/platform_util.c")
     target_include_directories(verify_ip_confirmation PRIVATE "${REPO}/platform/esp/common/include" "${CMAKE_CURRENT_LIST_DIR}")
     target_include_directories(verify_ip_confirmation BEFORE PRIVATE "${TRAIL_MATE_MBEDTLS_DIR}/include")
     target_compile_definitions(verify_ip_confirmation PRIVATE MBEDTLS_CONFIG_FILE="snapshot_hash_config.h")
