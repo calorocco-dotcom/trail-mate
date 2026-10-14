@@ -146,8 +146,10 @@ browser, and use the connected device as the publication author.
 - Browse independently hosted directories and query the visible map extent.
   Pan or zoom the map to explore another area; automatic search can follow map
   movement. Administrative filtering uses the catalog supplied by the directory.
-  The public directory currently supplies 242 countries/regions with names in
-  all 11 Web languages; first-level administrative data is still pending.
+  The public directory supplies a global catalog with 251 country/region parents
+  and 4,596 administrative units. Selection stops after two levels. Region names
+  use available source translations for the 11 Web languages and otherwise fall
+  back to the base name; boundaries are approximate discovery geometry.
 - Open a trail by its publication ID, copy that ID or a version link, and inspect
   verified author/version information before downloading it. A publication ID
   identifies the shared object; a KML Placemark ID identifies an item inside a

@@ -7,6 +7,12 @@ on:
       - "v*"
   pull_request:
 
+# Push and PR events for one branch share a queue. Keep a running validation;
+# replace duplicate pending runs instead of compiling the same change twice.
+concurrency:
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   hostlink_management:
     name: USB Device Management and Author Proof
@@ -96,12 +102,14 @@ jobs:
           npm run build:geocaching
             npm run build:tracks
           npx playwright install --with-deps chromium
-      - name: Verify actual device page and KML parser in Chromium
+      - name: Verify device configuration and identity in Chromium
         run: |
           mkdir -p docs/locales/zh-Hans/web-outdoor-management/assets docs/locales/zh-Hans/web-outdoor-management/images
           node tests/site/device-page.browser.mjs
           node tests/site/device-page.browser.mjs --normal-flow
           node tests/site/radio-identity.browser.mjs
+      - name: Verify KML workspace and file maintenance in Chromium
+        run: |
           node tests/site/track-kml.browser.mjs
             node tests/site/track-kml-edit.browser.mjs
             node tests/site/track-kml-style.browser.mjs
@@ -118,7 +126,9 @@ jobs:
             node tests/site/recording-original.browser.mjs
             node tests/site/original-format-migration.browser.mjs
             node tests/site/track-map-icons.browser.mjs
-            node --test tests/site/track-ground-overlays.test.mjs
+      - name: Verify existing KML display and editing features in Chromium
+        run: |
+          node --test tests/site/track-ground-overlays.test.mjs
             node tests/site/track-ground-overlays.browser.mjs
             node --test tests/site/track-time-filter.test.mjs tests/site/track-time-editor.test.mjs
             node tests/site/track-time-filter.browser.mjs
@@ -149,6 +159,8 @@ jobs:
             node tests/site/track-gpx.browser.mjs
             node tests/site/track-device-catalog.browser.mjs
           node tests/site/track-device-upload.browser.mjs
+      - name: Verify device-authored Geocaching and trail workflows in Chromium
+        run: |
           node tests/site/geocaching-maintenance.browser.mjs
           node tests/site/geocaching-save-recovery.browser.mjs
           node tests/site/geocaching-signature-recovery.browser.mjs
@@ -163,9 +175,13 @@ jobs:
           node tests/site/track-conflict.browser.mjs
           node tests/site/track-version-history.browser.mjs
           node tests/site/track-multidirectory.browser.mjs
+      - name: Verify Reticulum directory service workflows
+        run: |
           .codex-build/reticulum-directory/venv/bin/python -m unittest discover -s tests/deployment -p test_shared_directory_network.py
           .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_replication_network
           .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_storage_network
+      - name: Verify browser device trail synchronization
+        run: |
           node tests/site/track-device-sync.browser.mjs
 
   geocaching_web:

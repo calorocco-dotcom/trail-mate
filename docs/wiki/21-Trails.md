@@ -5,8 +5,8 @@ workspace for maintaining and sharing trails over Reticulum. The browser uses
 your connected device as its author identity. No website account is needed.
 
 This guide describes the 1.0.0 candidate. Final device acceptance and the public
-Tracks page are still pending. The public directory now supplies 242 global
-country/region boundaries; first-level administrative data is still pending. Refer to the
+Tracks page are still pending. The public directory supplies a global two-level
+catalog with 251 country/region parents and 4,596 administrative units. Refer to the
 Releases page for available firmware rather than treating this guide as a
 release announcement.
 
@@ -48,9 +48,12 @@ to update results as you explore. A selected administrative region is a query
 boundary; moving the map does not silently change that region. The directory
 must supply a compatible region catalog. The intended selection stays simple:
 country/region and first-level administration, globally rather than China-only.
-The current public catalog has one country/region level, with names for all 11
-supported Web languages. It does not yet supply first-level administrative
-boundaries. Use **Load regions**, **More regions**, and **Select region** to browse
+The public catalog stops after these two levels. Names use source translations
+for the 11 Web languages where available and otherwise use the region's base
+name. Its simplified Natural Earth boundaries support approximate discovery;
+the source's administrative classifications may differ from current national
+subdivisions. Map-extent search remains useful near simplified boundaries.
+Use **Load regions**, **More regions**, and **Select region** to browse
 the catalog; select **Use map area** to return to map-based searching.
 
 Open a result to inspect its author, version, route data and resources. Directory
