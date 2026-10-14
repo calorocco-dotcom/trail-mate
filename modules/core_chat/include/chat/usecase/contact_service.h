@@ -11,6 +11,7 @@
 
 #include "../domain/contact_types.h"
 #include "../ports/i_mesh_peer_directory.h"
+#include "chat/domain/peer_browse_entry.h"
 #include <string>
 #include <vector>
 
@@ -100,6 +101,13 @@ class ContactService
 
     /** Get the active protocol's complete peer-directory projection. */
     std::vector<PeerDirectoryItem> getAllPeers() const;
+
+    // Card navigation and single-peer hydration do not build cached_nodes_.
+    MeshPeerDirectoryStatus browsePeers(MeshPeerDirectoryView view,
+                                        const char* query,
+                                        std::vector<PeerBrowseEntry>& output) const;
+    MeshPeerDirectoryStatus readPeer(const PeerBrowseEntry& entry,
+                                     PeerDirectoryItem& output) const;
 
     /**
      * @brief Add contact (set nickname)

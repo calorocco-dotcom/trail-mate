@@ -13,6 +13,20 @@ if(EXISTS "${TRAIL_MATE_MODULE_NANOPB_DIR}/pb_decode.c")
 endif()
 enable_testing()
 get_filename_component(REPO "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+add_executable(contacts_peer_directory
+    "${REPO}/modules/core_chat/tests/test_mesh_peer_directory_contract.cpp"
+    "${REPO}/modules/core_chat/src/infra/mesh_peer_directory_core.cpp"
+    "${REPO}/modules/core_chat/src/usecase/contact_service.cpp"
+    "${REPO}/modules/core_sys/src/sys/clock.cpp")
+target_compile_features(contacts_peer_directory PRIVATE cxx_std_17)
+target_include_directories(contacts_peer_directory PRIVATE
+    "${REPO}/modules/core_chat/include" "${REPO}/modules/core_sys/include")
+if(MSVC)
+    target_compile_options(contacts_peer_directory PRIVATE /UNDEBUG)
+else()
+    target_compile_options(contacts_peer_directory PRIVATE -UNDEBUG)
+endif()
+add_test(NAME contacts_peer_directory COMMAND contacts_peer_directory)
 if(EXISTS "${TRAIL_MATE_MODULE_NANOPB_DIR}/pb_decode.c")
     add_executable(meshtastic_position_precision
         "${REPO}/modules/core_chat/tests/test_meshtastic_position_core.cpp"

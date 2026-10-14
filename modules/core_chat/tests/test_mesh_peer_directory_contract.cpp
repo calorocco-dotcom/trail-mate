@@ -1111,6 +1111,56 @@ void contact_service_preserves_projection_when_visit_temporarily_fails()
 
 } // namespace
 
+// Browse entries retain complete protocol identities, and detail hydration must
+// never enumerate the directory or populate the legacy full projection cache.
+static void card_browse_reads_only_the_selected_peer()
+{
+    MemoryMeshPeerDirectory directory;
+    chat::contacts::ContactService contacts(directory);
+    contacts.begin();
+    assert(directory.record(makeMeshtasticPeer(1, "Alpha", 10)).succeeded());
+    assert(directory.record(makeMeshtasticPeer(2, "Beta", 20)).succeeded());
+    std::vector<chat::contacts::PeerBrowseEntry> entries;
+    assert(contacts.browsePeers(chat::MeshPeerDirectoryView::All, "", entries).succeeded());
+    assert(entries.size() == 2 && entries[0].node_id == 2);
+    const auto visits = directory.visit_count;
+    chat::contacts::PeerDirectoryItem selected{};
+    assert(contacts.readPeer(entries[0], selected).succeeded());
+    assert(selected.node_id == 2 && selected.display_name == "Beta");
+    assert(directory.visit_count == visits);
+    assert(contacts.browsePeers(chat::MeshPeerDirectoryView::All, "aLP", entries).succeeded());
+    assert(entries.size() == 1 && entries[0].node_id == 1);
+
+    const auto mc = makeMeshCorePeer(0x11, "MC", 30);
+    const auto rt = makeReticulumPeer(0x22, "RT", 40);
+    assert(directory.record(mc).succeeded());
+    assert(directory.record(rt).succeeded());
+    contacts.setActiveProtocol(chat::MeshProtocol::MeshCore);
+    assert(contacts.browsePeers(chat::MeshPeerDirectoryView::All, "", entries).succeeded());
+    assert(entries.size() == 1 && entries[0].identity_size == 32);
+    assert(std::memcmp(entries[0].identity_bytes.data(), mc.identity.public_key, 32) == 0);
+    assert(contacts.readPeer(entries[0], selected).succeeded());
+    contacts.setActiveProtocol(chat::MeshProtocol::Reticulum);
+    assert(!contacts.readPeer(entries[0], selected).succeeded());
+    assert(contacts.browsePeers(chat::MeshPeerDirectoryView::All, "", entries).succeeded());
+    assert(entries.size() == 1 && entries[0].identity_size == 16);
+    assert(std::memcmp(entries[0].identity_bytes.data(), rt.identity.reticulum.destination_hash, 16) == 0);
+    assert(contacts.readPeer(entries[0], selected).succeeded());
+    assert(chat::sameReticulumDestinationHash(selected.reticulum_identity, rt.identity.reticulum));
+    assert(contacts.browsePeers(chat::MeshPeerDirectoryView::All, "22", entries).succeeded());
+    assert(entries.size() == 1);
+    auto manual = makeReticulumPeer(0x33, "Imported", 50);
+    manual.source = chat::MeshPeerSource::Import;
+    assert(directory.record(manual).succeeded());
+    assert(contacts.browsePeers(chat::MeshPeerDirectoryView::Contacts, "", entries).succeeded());
+    assert(entries.size() == 1);
+    assert(contacts.readPeer(entries[0], selected).succeeded() && selected.is_contact);
+    directory.failNextVisit(chat::MeshPeerDirectoryStatusCode::Busy);
+    assert(!contacts.browsePeers(chat::MeshPeerDirectoryView::All, "", entries).succeeded());
+    assert(entries.empty());
+    assert(sizeof(chat::contacts::PeerBrowseEntry) < sizeof(chat::contacts::PeerDirectoryItem));
+}
+
 int main()
 {
     upsert_preserves_first_seen_and_updates_peer_facts();
@@ -1126,5 +1176,6 @@ int main()
     remove_and_clear_protocol_are_directory_behaviors();
     contact_service_projects_one_directory_without_legacy_stores();
     contact_service_preserves_projection_when_visit_temporarily_fails();
+    card_browse_reads_only_the_selected_peer();
     return 0;
 }
