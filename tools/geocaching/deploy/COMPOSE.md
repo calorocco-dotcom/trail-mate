@@ -9,7 +9,9 @@ Browser -> wss://vicliu.i234.me:18434/
         -> loopback Reticulum TCP 44242 + persistent directory
 ```
 
-Two containers use the same locally built Python image. Bridge shares directory's private network namespace, so its published port is declared on `directory`. Port 44242 remains loopback-only and unpublished. Neither container uses host networking or the Docker socket. All cache queries are live.
+Three containers use the same locally built Python image. `directory` owns the shared Reticulum instance, `tracks` joins it with a separate persistent service identity and data volume, and `bridge` exposes the packet gateway. Bridge and tracks share directory's private network namespace, so the single published TLS port is declared on `directory`. Port 44242 remains loopback-only and unpublished. No container uses host networking or the Docker socket. Cache and track queries are live.
+
+The packet bridge paces valid bursts with backpressure rather than closing a healthy file transfer. `BRIDGE_PACKET_RATE` defaults to 512 raw packets/s per client and `BRIDGE_BURST_PACKETS` to 128; each accepts 1–4096. Lower rates can be used for a constrained upstream. The 500-byte MTU, 16-packet WebSocket queue and 32-client deployment limit remain bounded. Track directories use a 10 ms reply cadence while replies are active, with a 100 ms idle wait; Geocaching keeps its existing reply cadence. These settings concern computer services and do not change firmware RAM or RF configuration.
 
 ## Requirements
 
@@ -24,12 +26,12 @@ A certificate covers the hostname, not the port. Use the appropriate DSM-managed
 ## Get the files
 
 ```sh
-git clone --branch codex/geocaching --single-branch https://github.com/vicliu624/trail-mate.git
+git clone https://github.com/vicliu624/trail-mate.git
 cd trail-mate/tools/geocaching/deploy
 cp .env.example .env
 ```
 
-For an existing checkout, preserve local changes and update the branch. The complete repository is required because the Dockerfile uses the service source files. Its ignore file excludes certificates, databases and firmware output from the build context.
+Use a published revision containing both directory services; the current local feature branch has not been published. For an existing checkout, preserve local changes and update the intended revision. The complete repository is required because the Dockerfile uses both service source trees. Its ignore file excludes certificates, databases, test fixtures and firmware output from the build context.
 
 ### Updating Reticulum discovery on an existing deployment
 
@@ -41,10 +43,10 @@ credentials. Reticulum retains discovery state in the existing `reticulum-data`
 volume; do not remove that volume during an update.
 
 After updating the mounted configuration, recreate both services together because
-the bridge shares the directory container's network namespace:
+the bridge and tracks share the directory container's network namespace:
 
 ```sh
-docker compose up -d --force-recreate directory bridge
+docker compose up -d --force-recreate directory tracks bridge
 docker compose exec directory rnstatus --config /var/lib/trail-mate/reticulum -d
 docker compose exec directory rnstatus --config /var/lib/trail-mate/reticulum -a
 ```
@@ -63,10 +65,27 @@ WSS_HOST=vicliu.i234.me
 WSS_PORT=18434
 TLS_CERT_DIR=./certs
 DIRECTORY_NAME=Trail Mate public directory
+TRACK_DIRECTORY_NAME=Trail Mate public tracks
+TRACK_REPLICA_SEEDS=
 SITE_ORIGIN=https://vicliu624.github.io
 ```
 
-Origin must not include the website path. Directory name is limited to 40 UTF-8 bytes. `WSS_HOST` controls certificate health verification; DDNS and the website endpoint are configured separately. Remove the unused `TUNNEL_TOKEN` from an earlier deployment's `.env`.
+Origin must not include the website path. Each directory name is limited to 40 UTF-8 bytes. `WSS_HOST` controls certificate health verification; DDNS and the website endpoint are configured separately. Remove the unused `TUNNEL_TOKEN` from an earlier deployment's `.env`.
+
+`TRACK_REPLICA_SEEDS` optionally lists up to three comma-separated **track discovery** hashes from other compatible directories. Track services automatically pull signed histories and complete file packages from discovered peers, with persistent progress and bounded rounds. This setting also works with the administrative override. It is independent of the website's `trackDiscoverySeeds`, which tells browser visitors which service to discover. See `tools/tracks/README.md` for budgets, restart handling and verification boundaries. The default bandwidth guard uses Reticulum interface estimates; do not treat it as a measured end-to-end throughput guarantee.
+
+## Optional administrative hierarchy for tracks
+
+Without an administrative catalogue, tracks still support map-bound queries and direct ID reads; administrative-region operations report unsupported. To enable them, provide a real, licensed and versioned GeoJSON FeatureCollection accepted by `tools.tracks.region_catalog.RegionCatalog`. Each Polygon/MultiPolygon Feature has a stable string `id`, `properties.name`, optional `properties.names` locale translations, and `properties.parent` referencing another Feature ID or null. The service derives hierarchy levels and a boundary version hash. Do not substitute rectangular test regions for actual administrative boundaries.
+
+Set `TRACK_REGIONS_FILE` to an existing absolute file path and `TRACK_REGIONS_NAMESPACE` to a stable identifier matching `[a-z][a-z0-9.-]{0,23}`. The file is mounted read-only, independently of track identity/data. Then use the override consistently:
+
+```sh
+docker compose -f compose.yaml -f compose.track-regions.yaml config --quiet
+docker compose -f compose.yaml -f compose.track-regions.yaml up -d --no-build
+```
+
+The override refuses to create a missing file. Catalogue validation failure stops the track service instead of silently dropping administrative queries. This repository does not yet package a production global administrative catalogue; region search is not accepted on the public deployment until a real catalogue has been installed and verified.
 
 ## Prepare the certificate
 
@@ -105,12 +124,12 @@ docker compose config --quiet
 docker compose build directory
 docker compose up -d --no-build --remove-orphans
 docker compose ps
-docker compose logs --tail=60 directory bridge
+docker compose logs --tail=60 directory tracks bridge
 ```
 
 Only Python services are built, not device firmware. `--remove-orphans` removes the previous `tunnel` container from this same Compose project, if present, without deleting named volumes. Check the project name before using it.
 
-Directory emits a `ready` event containing `delivery`, **`discovery`**, epoch and sequence. Bridge emits `bridge_ready` with `tls: true`. Both processes restart after exit and their logs rotate at 5 MB with three retained files.
+Both directories emit separate `ready` events containing `delivery`, **`discovery`**, and epoch; the Geocaching directory also reports sequence. Bridge emits `bridge_ready` with `tls: true`. All three processes restart after exit and their logs rotate at 5 MB with three retained files.
 
 Directory health verifies its local TCP listener. Bridge health verifies a local TLS handshake using the real hostname, system trust roots and expiry checks. These do not prove public port forwarding or application queries. An unhealthy running container is not automatically restarted by Docker.
 
@@ -128,7 +147,26 @@ docker compose logs --tail=80 bridge directory
 
 Compare the reported NAS port with the router's forwarding destination. The bridge must report `bridge_ready` with `tls: true`; a healthy directory TCP listener alone does not establish that WSS is available. Do not send certificate keys or the contents of `.env`.
 
-Return the WSS URL, the **discovery** hash from the ready log, service status and external connectivity results to the website operator. Never send the private key or database. The operator then updates website connection configuration and any required device discovery hints, and verifies spatial queries, signed details and GPX.
+Return the WSS URL and each service's **discovery** hash from its ready log, service status and external connectivity results to the website operator. Never send the private key or database. Set `site/geocaching/network.json` as follows, using actual discovery hashes (not delivery hashes):
+
+```json
+{
+  "endpoint": "wss://vicliu.i234.me:18434/",
+  "discoverySeeds": ["<32 hexadecimal characters from directory ready.discovery>"],
+  "trackDiscoverySeeds": ["<32 hexadecimal characters from tracks ready.discovery>"]
+}
+```
+
+Each list allows at most three addresses. The protocols have different discovery destinations; never reuse a Geocaching hash as a track seed. Website visitors use the configured track seeds automatically unless explicitly overriding the optional input. The signed announcement and capability exchange still determine whether a discovered service is admitted. Connecting WSS alone is insufficient.
+
+From a source checkout with website dependencies and a Playwright browser installed, run the explicit read-only acceptance tool against the formal page origin:
+
+```sh
+node tools/tracks/browser_network_probe.mjs wss://vicliu.i234.me:18434/ https://vicliu624.github.io/trail-mate/geocaching/ geocaching 75
+node tools/tracks/browser_network_probe.mjs wss://vicliu.i234.me:18434/ https://vicliu624.github.io/trail-mate/geocaching/ tracks 75
+```
+
+Run these from the repository root. The probe uses the current local production clients, waits for capability verification, performs a bounded authenticated query and verifies one author signature when a result exists. It writes separate protocol reports, closes the transport and returns a failing exit code for missing directories or query errors. It never publishes content, accesses USB, or modifies server configuration. An empty successful query proves the query path, not publication or replication.
 
 Only that initial connection configuration needs a website deployment. New cache publications and revisions do not. A new directory starts empty with a new identity and cannot automatically recover data whose only source is offline. Existing identity/data migration must be deliberate and performed with the relevant service stopped.
 
@@ -146,7 +184,7 @@ Run this when the certificate changes. Restart briefly interrupts browser sessio
 
 ## Persistence and upgrades
 
-Named volumes `trail-mate-geocaching_directory-data` and `trail-mate-geocaching_reticulum-data` retain identity, SQLite, LXMF and Reticulum state. Back up consistently while services are stopped; identity material is private. Bind-mount replacements require write access for UID 10001.
+Named volumes `trail-mate-geocaching_directory-data`, `trail-mate-geocaching_track-data` and `trail-mate-geocaching_reticulum-data` retain the two service identities, SQLite/content data, LXMF and Reticulum state. Back up consistently while all services are stopped; identity material is private. Bind-mount replacements require write access for UID 10001. Preserve the administrative catalogue and namespace separately if enabled.
 
 Upgrade the services together because they share a network namespace:
 
@@ -161,6 +199,8 @@ docker compose up -d --no-build --remove-orphans
 
 ## Verification boundary
 
-The Compose model is checked locally for exactly one host-port mapping and no tunnel service. The development machine's Linux Docker engine is unavailable, so image build and container startup still need NAS verification. The bridge's existing TLS options are reused without protocol code changes.
+The Compose model is checked locally for exactly one host-port mapping and no tunnel service. Runtime import testing stages exactly the Docker COPY source files outside the repository, including the reply queue and track package. Native shared-instance/browser-gateway acceptance is separate from Docker startup. The development machine's Linux Docker engine is unavailable, so image build, Linux container sharing, permissions and startup still need NAS verification. The bridge's existing TLS options are reused without loosening the Origin policy.
+
+The Geocaching store releases frozen item lists after a complete query/sync while retaining cached cursor bodies and request receipts. It also reclaims legacy completed snapshots during admission/maintenance; live unprocessed continuations keep their original seven-day expiry and are never evicted for another query. Current browsers additionally negotiate the optional capability selector and explicitly release discarded browse queries before viewport replacement or refresh. The caller can only release its own browse snapshot, with durable retry and released-query tombstones. Older clients, unreachable/replaced services or abruptly closed pages can still leave snapshots until expiry. See `site/geocaching/README.md` for the wire extension. Do not interpret these changes as an unlimited visitor-capacity guarantee.
 
 The bridge limit is 32 concurrent clients, not a tested NAS capacity guarantee. Acceptance requires a publication and a later revision appearing in fresh browser queries without website deployment, plus identity/data persistence across service restart.

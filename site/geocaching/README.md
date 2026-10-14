@@ -176,6 +176,43 @@ our TLS packet bridge, a hostname/certificate, and a reachable Geocaching
 directory service. Do not invent a WSS URL by changing a TCP address's scheme.
 Keep this operator setup out of the visitor interface.
 
+## Query snapshot lifecycle
+
+Completed queries and replication pages release their frozen item lists while
+retaining cached cursor bodies and durable request responses. Unprocessed pages
+keep the advertised expiry; a new query does not implicitly evict another one.
+
+An optional browser extension releases a discarded **browse** query explicitly:
+
+| Request | Meaning |
+| --- | --- |
+| Operation 0, body `[]` | Original capabilities, unchanged by this extension |
+| Operation 0, body `[2]` | Extended capabilities; operation 6 advertises browse query release |
+| Operation 6, body `[snapshot_id]` | Release the caller's own operation-2 snapshot |
+
+The response body is `[snapshot_id, released]`, with `released` equal to 1 for an
+actual release and 0 when no frozen snapshot remains. It never targets objects,
+publication receipts, replication pages or another authenticated source. These
+are `trailmate.geocache` network operations, not USB command numbers.
+
+Release commits a source-bound tombstone for the request replay lifetime. Cached
+query requests then return `410 query_released`; old continuation tokens cannot
+resume the discarded query. The release response remains durable under its
+original request ID, allowing a lost response to be retried without a new action.
+Explicit release is the exception to the normal cursor lifetime promise.
+
+The browser negotiates the optional selector, with the original authenticated
+`400 malformed_request` response treated as legacy support. It releases old
+queries before a viewport/filter replacement or refresh, preserves current
+"more" continuations, and retains a fixed release ID on errors. Superseded but
+valid in-flight replies are tracked for release. Failed releases prevent further
+snapshot admission rather than silently accumulating discarded work.
+
+Older clients, an unreachable/replaced service or an abruptly closed page can
+still leave a live snapshot until expiry. No unload-time acknowledgement is
+claimed, and bounded server capacity still applies. Track directory queries use
+their separate protocol and do not invoke this Geocaching extension.
+
 ## Publishing the live viewer
 
 Run **Pages Geocaching** from `main`. Set `source_ref` to the exact commit

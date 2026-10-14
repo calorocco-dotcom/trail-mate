@@ -1,0 +1,3 @@
+// Values follow the checked-in meshtastic_Config_LoRaConfig_RegionCode enum.
+export const RADIO_REGION_CODES=['UNSET','US','EU_433','EU_868','CN','JP','ANZ','KR','TW','RU','IN','NZ_865','TH','LORA_24','UA_433','UA_868','MY_433','MY_919','SG_923','PH_433','PH_868','PH_915','ANZ_433','KZ_433','KZ_863','NP_865','BR_902'];
+export function radioRegionOptions(locale,unset){const names=new Intl.DisplayNames([locale],{type:'region'});return RADIO_REGION_CODES.map((code,value)=>{if(!value)return {value,label:unset};if(code==='LORA_24')return {value,label:'LoRa 2.4 GHz'};const [region,frequency]=code.split('_'),name=region==='ANZ'?names.of('AU')+' / '+names.of('NZ'):names.of(region);return {value,label:name+(frequency?' · '+frequency+' MHz':'')+' ('+code+')'};});}

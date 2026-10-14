@@ -1,0 +1,28 @@
+const keys=['title','intro','activity','tags','add','remove','save','discard','tagHint','invalid','saved','unsaved','archive','unknown'];
+const copy={
+ en:['Activity and tags','These details are saved with the draft and included in its signed publication.','Activity','Tags','Add tag','Remove tag','Save details','Discard changes','Up to 8 tags, 48 UTF-8 bytes each. Enter one tag at a time.','Check the activity, tag length and duplicate tags.','Details saved.','Save other draft changes before editing these details.','An archive retains its original activity and tags.','Unknown activity ({value})'],
+ 'zh-Hans':['活动与标签','这些信息随草稿保存，并包含在设备签名的发布清单中。','活动类型','标签','添加标签','移除标签','保存信息','放弃修改','最多8个标签，每个最多48个UTF-8字节。每次输入一个标签。','请检查活动类型、标签长度及重复标签。','信息已保存。','请先保存其他草稿修改，再编辑这些信息。','归档保留原来的活动类型和标签。','未知活动类型（{value}）'],
+ 'zh-Hant-TW':['活動與標籤','這些資訊隨草稿儲存，並包含在裝置簽署的發布清單中。','活動類型','標籤','新增標籤','移除標籤','儲存資訊','放棄修改','最多8個標籤，每個最多48個UTF-8位元組。每次輸入一個標籤。','請檢查活動類型、標籤長度及重複標籤。','資訊已儲存。','請先儲存其他草稿修改，再編輯這些資訊。','封存保留原來的活動類型和標籤。','未知活動類型（{value}）'],
+ ja:['アクティビティとタグ','下書きとともに保存され、デバイスが署名する公開マニフェストに含まれます。','アクティビティ','タグ','タグを追加','タグを削除','情報を保存','変更を破棄','タグは8個まで、各48 UTF-8バイトまで。1個ずつ入力してください。','種別、タグの長さ、重複を確認してください。','情報を保存しました。','先に下書きの他の変更を保存してください。','アーカイブは元の種別とタグを保持します。','不明な種別（{value}）'],
+ ko:['활동 및 태그','초안과 함께 저장되며 기기가 서명하는 게시 목록에 포함됩니다.','활동','태그','태그 추가','태그 삭제','정보 저장','변경 취소','태그는 최대 8개, 각각 UTF-8 48바이트까지입니다. 한 번에 하나씩 입력하세요.','활동, 태그 길이 및 중복을 확인하세요.','정보가 저장되었습니다.','먼저 초안의 다른 변경 사항을 저장하세요.','보관은 원래 활동과 태그를 유지합니다.','알 수 없는 활동 ({value})'],
+ ar:['النشاط والوسوم','تُحفظ مع المسودة وتُضمّن في بيان النشر الذي يوقّعه الجهاز.','النشاط','الوسوم','إضافة وسم','إزالة وسم','حفظ المعلومات','إلغاء التغييرات','حتى 8 وسوم، كل منها 48 بايت UTF-8. أدخل وسمًا واحدًا في كل مرة.','تحقق من النشاط وطول الوسوم وتكرارها.','تم حفظ المعلومات.','احفظ تغييرات المسودة الأخرى أولًا.','تحتفظ الأرشفة بالنشاط والوسوم الأصلية.','نشاط غير معروف ({value})'],
+ ru:['Занятие и теги','Сохраняются с черновиком и входят в подписанный устройством манифест публикации.','Занятие','Теги','Добавить тег','Удалить тег','Сохранить сведения','Отменить изменения','До 8 тегов по 48 байт UTF-8. Вводите по одному тегу.','Проверьте занятие, длину и повторы тегов.','Сведения сохранены.','Сначала сохраните остальные изменения черновика.','Архив сохраняет исходное занятие и теги.','Неизвестное занятие ({value})'],
+ de:['Aktivität und Tags','Werden mit dem Entwurf gespeichert und in das vom Gerät signierte Manifest aufgenommen.','Aktivität','Tags','Tag hinzufügen','Tag entfernen','Angaben speichern','Änderungen verwerfen','Bis zu 8 Tags mit je 48 UTF-8-Bytes. Jeweils einen Tag eingeben.','Aktivität, Taglänge und doppelte Tags prüfen.','Angaben gespeichert.','Zuerst andere Entwurfsänderungen speichern.','Ein Archiv behält die ursprüngliche Aktivität und Tags.','Unbekannte Aktivität ({value})'],
+ es:['Actividad y etiquetas','Se guardan con el borrador y se incluyen en el manifiesto firmado por el dispositivo.','Actividad','Etiquetas','Añadir etiqueta','Quitar etiqueta','Guardar datos','Descartar cambios','Hasta 8 etiquetas de 48 bytes UTF-8 cada una. Introduce una a la vez.','Revisa la actividad, la longitud y las etiquetas repetidas.','Datos guardados.','Guarda primero los otros cambios del borrador.','El archivo conserva la actividad y las etiquetas originales.','Actividad desconocida ({value})'],
+ fr:['Activité et étiquettes','Enregistrées avec le brouillon et incluses dans le manifeste signé par l’appareil.','Activité','Étiquettes','Ajouter une étiquette','Retirer une étiquette','Enregistrer les informations','Annuler les modifications','8 étiquettes maximum, chacune de 48 octets UTF-8. Saisissez-les une par une.','Vérifiez l’activité, la longueur et les doublons.','Informations enregistrées.','Enregistrez d’abord les autres modifications du brouillon.','L’archive conserve l’activité et les étiquettes d’origine.','Activité inconnue ({value})'],
+ it:['Attività e tag','Salvati con la bozza e inclusi nel manifesto firmato dal dispositivo.','Attività','Tag','Aggiungi tag','Rimuovi tag','Salva informazioni','Scarta modifiche','Fino a 8 tag di 48 byte UTF-8 ciascuno. Inseriscine uno alla volta.','Controlla attività, lunghezza e tag duplicati.','Informazioni salvate.','Salva prima le altre modifiche della bozza.','L’archivio mantiene attività e tag originali.','Attività sconosciuta ({value})']
+};
+const activities={
+ en:['Unspecified','Hiking','Running','Cycling','Mountaineering','Paddling','Skiing','Driving','Other'],
+ 'zh-Hans':['未指定','徒步','跑步','骑行','登山','划船','滑雪','驾车','其他'],
+ 'zh-Hant-TW':['未指定','健行','跑步','騎行','登山','划船','滑雪','駕車','其他'],
+ ja:['未指定','ハイキング','ランニング','サイクリング','登山','パドリング','スキー','ドライブ','その他'],
+ ko:['미지정','하이킹','달리기','자전거','등산','패들링','스키','운전','기타'],
+ ar:['غير محدد','المشي','الجري','ركوب الدراجات','تسلق الجبال','التجديف','التزلج','القيادة','أخرى'],
+ ru:['Не указано','Пеший поход','Бег','Велосипед','Альпинизм','Гребля','Лыжи','Автомобиль','Другое'],
+ de:['Nicht angegeben','Wandern','Laufen','Radfahren','Bergsteigen','Paddeln','Skifahren','Autofahren','Andere'],
+ es:['Sin especificar','Senderismo','Carrera','Ciclismo','Montañismo','Remo','Esquí','Conducción','Otra'],
+ fr:['Non précisée','Randonnée','Course','Vélo','Alpinisme','Pagaie','Ski','Conduite','Autre'],
+ it:['Non specificata','Escursionismo','Corsa','Ciclismo','Alpinismo','Pagaia','Sci','Guida','Altra']
+};
+export function trackMetadataText(locale){const values=copy[locale],labels=activities[locale];if(values?.length!==keys.length||labels?.length!==9)throw Error('Incomplete track metadata locale: '+locale);return {...Object.fromEntries(keys.map((key,index)=>[key,values[index]])),activities:labels};}

@@ -1,0 +1,25 @@
+# Optional administrative catalogue. Supply real, versioned boundary data;
+# no demonstration regions are exposed as real administrative areas.
+services:
+  tracks:
+    command:
+      - python
+      - -m
+      - tools.tracks.directory_service
+      - --state
+      - /var/lib/trail-mate/tracks
+      - --rns-config
+      - /var/lib/trail-mate/reticulum
+      - --name
+      - ${TRACK_DIRECTORY_NAME:-Trail Mate public tracks}
+      - --regions-file
+      - /regions/catalogue.json
+      - --regions-namespace
+      - ${TRACK_REGIONS_NAMESPACE:?Set a stable namespace for the administrative catalogue}
+    volumes:
+      - type: bind
+        source: ${TRACK_REGIONS_FILE:?Set the absolute administrative catalogue file path}
+        target: /regions/catalogue.json
+        read_only: true
+        bind:
+          create_host_path: false

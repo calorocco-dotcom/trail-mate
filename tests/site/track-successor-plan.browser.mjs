@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import path from 'node:path';
+import {build} from '../../site/node_modules/esbuild/lib/main.js';
+import {chromium} from '../../site/node_modules/playwright/index.mjs';
+const contents=`import {Identity} from '@reticulum/core';
+import {createTrackPublicationPlan} from './site/tracks/src/publication-create.js';
+import {createTrackSuccessorPlan} from './site/tracks/src/publication-successor.js';
+import {prepareSavedTrackSuccessor} from './site/tracks/src/prepare-saved-successor.js';
+import {prepareSavedTrackDraft} from './site/tracks/src/prepare-saved-draft.js';
+import {createOwnedTrackMaintenancePlan} from './site/tracks/src/owned-track-maintenance.js';
+import {trackId} from './site/tracks/src/shared-id.js';
+import {saveTrackDraft,readTrackDraft} from './site/tracks/src/draft-store.js';
+import {decode} from './site/geocaching/src/protocol.js';
+import {verifyTrackManifest,verifyTrackSuccessor,trackManifestSigningBytes} from './site/tracks/src/manifest.js';
+globalThis.runSuccessor=async()=>{
+ const identity=await Identity.generate(),author={verified:true,publicKey:await identity.getPublicKey(),generation:7};
+ const kml=coordinates=>new TextEncoder().encode('<kml xmlns="http://www.opengis.net/kml/2.2"><Placemark><LineString><coordinates>'+coordinates+'</coordinates></LineString></Placemark></kml>');
+ let sequence=10;const randomBytes=size=>new Uint8Array(size).fill(sequence++);
+ const source=kml('120,30 120.01,30.01'),changed=kml('121,31 121.02,31.02');
+ const initial=await createTrackPublicationPlan(source,author,{title:'Original',createdAt:100,randomBytes});
+ const sign=async plan=>[plan.manifest,await identity.sign(trackManifestSigningBytes(plan.manifest))];
+ const firstSigned=await sign(initial),first=await verifyTrackManifest(firstSigned);
+ const update=await createTrackSuccessorPlan(changed,author,firstSigned,{title:'Updated',description:'New description',updatedAt:101,randomBytes});
+ let ownedCalls=0;const owned=await createOwnedTrackMaintenancePlan(async(op,body)=>{ownedCalls++;if(op!==2||body[1]!==null)throw Error('expected fresh head');return [firstSigned,1];},trackId(first.objectId),author,{kml:changed,creationOptions:{updatedAt:101,randomBytes}});if(ownedCalls!==1||decode(owned.plan.manifest)[4]!==2)throw Error('owned update head verification failed');
+ const updateSigned=await sign(update),second=await verifyTrackManifest(updateSigned);
+ const archive=await createTrackSuccessorPlan(changed,author,updateSigned,{archive:true,updatedAt:102,randomBytes}),third=await verifyTrackManifest(await sign(archive));
+ const draft=await saveTrackDraft(changed,{name:'Durable update',predecessor:firstSigned});let transfer,lost=true,calls=0;const operations=[];
+ const session={async request(op,body){calls++;if(op===32){transfer={id:body[0],total:body[2],offset:0};return [transfer.id,320,0,0];}if(op===33){transfer.offset+=body[2].length;return [transfer.id,320,transfer.offset,0];}if(op===35)return [transfer.id,320,transfer.total,1];if(op!==82)throw Error('unexpected operation');const row=await readTrackDraft(draft.id);if(!row.publicationPlan)throw Error('traffic before plan');const plan=decode(new Uint8Array(row.publicationPlan));operations.push([...body[0]]);if(lost){lost=false;throw Error('lost preparation response');}const verified=await verifyTrackManifest(await sign({manifest:plan[5]}));return [body[0],1,verified.objectId,verified.revisionHash,verified.record[4]];}};
+ let failed=false;try{await prepareSavedTrackSuccessor(session,draft.id,draft.version,author,firstSigned,{creationOptions:{updatedAt:101,randomBytes}});}catch{failed=true;}
+ const resumed=await prepareSavedTrackSuccessor(session,draft.id,draft.version,author,firstSigned);const before=calls;let wrongAction=false;try{await prepareSavedTrackSuccessor(session,draft.id,draft.version,author,firstSigned,{archive:true});}catch{wrongAction=true;}if(calls!==before)throw Error('wrong action sent traffic');
+ if(!failed||!wrongAction||resumed.revision!==2||JSON.stringify(operations[0])!==JSON.stringify(operations[1]))throw Error('durable successor retry failed');
+ const edited=await saveTrackDraft(kml('122,32 122.03,32.03'),{id:draft.id,expectedVersion:draft.version,name:'Edited successor'});
+ const rePrepared=await prepareSavedTrackDraft(session,edited.id,edited.version,author);if(rePrepared.revision!==2||![...first.objectId].every((value,index)=>value===rePrepared.objectId[index]))throw Error('editing turned successor into a first revision');
+ const storedEdited=await readTrackDraft(edited.id),editedRecord=decode(decode(new Uint8Array(storedEdited.publicationPlan))[5]);if(![...first.revisionHash].every((value,index)=>value===editedRecord[5][index])||editedRecord[11][0]!==1220000000)throw Error('edited successor lost parent or updated geometry');
+ const archiveDraft=await saveTrackDraft(source,{name:'Archive draft',predecessor:firstSigned,archive:true});let archiveChanged=false;try{await saveTrackDraft(changed,{id:archiveDraft.id,expectedVersion:archiveDraft.version,name:'Wrong archive'});}catch{archiveChanged=true;}if(!archiveChanged||(await readTrackDraft(archiveDraft.id)).version!==archiveDraft.version)throw Error('archive file replacement accepted');
+ return {updateChain:verifyTrackSuccessor(first,second),archiveChain:verifyTrackSuccessor(second,third),sameObject:[...first.objectId].every((v,i)=>v===second.objectId[i]&&v===third.objectId[i]),first:decode(initial.manifest),second:decode(update.manifest),third:decode(archive.manifest),ids:[initial.operationId[0],update.operationId[0],archive.operationId[0]]};
+};`;
+const bundle=await build({stdin:{contents,resolveDir:process.cwd(),loader:'js'},nodePaths:[path.resolve('site/node_modules')],bundle:true,write:false,format:'iife',platform:'browser',logLevel:'silent'});
+const server=http.createServer((req,res)=>res.end('<!doctype html><title>Successor test</title>'));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+let browser;
+try{browser=await chromium.launch({channel:process.env.TRAIL_MATE_TEST_BROWSER_CHANNEL,headless:true});const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);await page.addScriptTag({content:bundle.outputFiles[0].text});const result=await page.evaluate(()=>runSuccessor());
+ assert.equal(result.updateChain,true);assert.equal(result.archiveChain,true);assert.equal(result.sameObject,true);assert.equal(result.second[4],2);assert.equal(result.third[4],3);assert.equal(result.third[6],1);assert.equal(result.second[9],'Updated');assert.equal(result.second[10],'New description');assert.equal(result.second[7],100);assert.deepEqual(result.second[11],[1210000000,310000000,1210200000,310200000]);assert.deepEqual(result.third[13],result.second[13]);assert.notDeepEqual(result.second[13],result.first[13]);assert.equal(new Set(result.ids).size,3);
+ console.log('Actual browser KML update and archive retain identity and pass signed successor chains.');
+}finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

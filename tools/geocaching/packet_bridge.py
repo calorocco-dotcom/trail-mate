@@ -49,8 +49,11 @@ class HDLCReader:
 
 
 class PacketBridge:
-    def __init__(self, host, port, max_clients=32):
+    def __init__(self, host, port, max_clients=32, *, packet_rate=512, burst_packets=128):
+        if type(packet_rate) is not int or not 1 <= packet_rate <= 4096 or type(burst_packets) is not int or not 1 <= burst_packets <= 4096:
+            raise ValueError('packet rate/burst')
         self.host, self.port, self.max_clients = host, port, max_clients
+        self.packet_rate, self.burst_packets = packet_rate, burst_packets
         self.clients = 0
 
     async def connection(self, websocket):
@@ -63,16 +66,21 @@ class PacketBridge:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port, limit=4096), 5)
 
             async def browser_to_network():
-                tokens, tick = 128.0, time.monotonic()
+                tokens, tick = float(self.burst_packets), time.monotonic()
                 async for packet in websocket:
-                    now = time.monotonic()
-                    tokens, tick = min(128, tokens + (now - tick) * 128) - 1, now
-                    if tokens < 0:
-                        await websocket.close(1008, "Packet rate exceeded")
-                        return
                     if type(packet) is not bytes or not 19 < len(packet) <= MTU:
                         await websocket.close(1003, "Expected one binary RNS packet")
                         return
+                    # Backpressure valid bulk traffic instead of disconnecting
+                    # a healthy authenticated application transfer. Retain one
+                    # packet here; WebSocket max_queue still bounds buffering.
+                    while True:
+                        now = time.monotonic()
+                        tokens, tick = min(self.burst_packets, tokens + (now-tick)*self.packet_rate), now
+                        if tokens >= 1:
+                            tokens -= 1
+                            break
+                        await asyncio.sleep((1-tokens)/self.packet_rate)
                     writer.write(hdlc_frame(packet))
                     await asyncio.wait_for(writer.drain(), 10)
 
@@ -108,7 +116,7 @@ async def run(args):
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.minimum_version = ssl.TLSVersion.TLSv1_2
         tls.load_cert_chain(args.tls_cert, args.tls_key)
-    bridge = PacketBridge(args.tcp_host, args.tcp_port, args.max_clients)
+    bridge = PacketBridge(args.tcp_host, args.tcp_port, args.max_clients, packet_rate=args.packet_rate, burst_packets=args.burst_packets)
     origins = list(args.origin)
     if args.allow_no_origin:
         origins.append(None)
@@ -134,6 +142,8 @@ def main():
     parser.add_argument("--tls-cert")
     parser.add_argument("--tls-key")
     parser.add_argument("--max-clients", type=int, default=32)
+    parser.add_argument("--packet-rate", type=int, default=512, help="Per-client packets/s, paced with backpressure")
+    parser.add_argument("--burst-packets", type=int, default=128)
     parser.add_argument("--run-seconds", type=float)
     args = parser.parse_args()
     if bool(args.tls_cert) != bool(args.tls_key):
@@ -142,6 +152,8 @@ def main():
         parser.error("Specify at least one allowed --origin")
     if not 1 <= args.max_clients <= 256:
         parser.error("--max-clients must be 1..256")
+    if not 1 <= args.packet_rate <= 4096 or not 1 <= args.burst_packets <= 4096:
+        parser.error("--packet-rate and --burst-packets must be 1..4096")
     if not args.tls_cert and not ipaddress.ip_address(args.listen).is_loopback:
         parser.error("Plaintext listeners must bind loopback; use TLS or a local TLS proxy")
     try:

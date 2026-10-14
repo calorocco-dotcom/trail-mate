@@ -1,4 +1,5 @@
 {
   "endpoint": "wss://vicliu.i234.me:18434/",
-  "discoverySeeds": ["0784ba3802f0c3fb8a637e2237bfb362"]
+  "discoverySeeds": ["0784ba3802f0c3fb8a637e2237bfb362"],
+  "trackDiscoverySeeds": ["da2a4fe23f465009d3ab7c9a63fd54a7"]
 }
