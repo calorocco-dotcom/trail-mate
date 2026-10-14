@@ -174,6 +174,7 @@ try{
   await page.locator('.geo-draft-marker').waitFor();
   await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor();
   const created=[...records.values()].find(row=>row.value[2][3]==='网页创建草稿');assert.ok(created);assert.notEqual(idText(created.id),idText(draftId));assert.equal(created.value[3],1);assert.equal(created.value[0],null);assert.equal(commits,3);
+  await page.waitForFunction(()=>Object.keys(localStorage).every(name=>!name.startsWith('trailmate.geo.draft-save.v1.')));
   assert.equal(created.value[2][1],Math.round(latitude*1e7));assert.equal(created.value[2][2],Math.round(longitude*1e7));
   const maintenanceCalls=calls.length;
   const maintenanceFields=await page.locator('.geo-draft-editor input,.geo-draft-editor textarea,.geo-draft-editor select').evaluateAll(nodes=>nodes.map(node=>node.value));
@@ -194,7 +195,9 @@ try{
   // New publication uses browser IP. Keep the real-page legacy recovery checks
   // by loading an existing task, rather than resurrecting its removed RF entry.
   assert.equal(publicationCommits,0);assert.equal(directoryReads,0);
-  const operation=new Uint8Array(16).fill(6),legacyOwner=new Uint8Array(16).fill(9);
+  // An existing task uses the owner's actual retained USB session. A
+  // fabricated different owner would correctly conflict with its saved account.
+  const operation=new Uint8Array(16).fill(6),legacyOwner=uploadOwner.slice();
   const priorGeneration=created.value[3],contentHash=await Identity.fullHash(encode(created.value));
   publicationPrepared={id:created.id,generation:BigInt(priorGeneration),directory:directoryDelivery,operation,owner:legacyOwner,hash:contentHash};
   created.value[0]=key;created.value[3]++;publicationCommits=1;catalogEpoch++;
