@@ -32,6 +32,9 @@ try{
  await attachments.getByText('附件修改尚未保存',{exact:true}).waitFor();assert.equal(await page.getByLabel('轨迹名称',{exact:true}).isDisabled(),true);
  assert.equal(await attachments.getByLabel('KML 引用',{exact:true}).inputValue(),'https://invalid.example/image.jpg');
  await attachments.getByRole('button',{name:'保存附件',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.tracks-attachments button').disabled&&!document.querySelector('.tracks-attachments [role=status]'));
+ const disconnectNetwork=page.getByRole('button',{name:'断开网络',exact:true});
+ if(await disconnectNetwork.isEnabled())await disconnectNetwork.click();
+ await page.locator('.track-network-advanced > summary').click();
  await page.getByLabel('WSS 连接地址',{exact:true}).fill('wss://gateway.example');await page.evaluate(()=>window.scrollTo(0,0));await page.waitForFunction(()=>scrollY===0);
  await fs.mkdir('.codex-build/ui-check',{recursive:true});await page.screenshot({path:'.codex-build/ui-check/track-attachments-in-workspace.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await attachments.scrollIntoViewIfNeeded();await page.screenshot({path:'.codex-build/ui-check/track-attachments-in-workspace-mobile.png'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.setViewportSize({width:1440,height:1000});
