@@ -3530,15 +3530,49 @@ void advanceWebConfirmation(Session& s)
     if (job.released) return;
     if (job.offset < job.total)
     {
-        if (!job.file.is_open() && (!job.file.open("/trailmate/cache.confirm.upload", "r", job.media) || job.file.size() != job.total))
+        if (!job.file.is_open() && !job.file.open("/trailmate/cache.confirm.upload", "r", job.media))
         {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
             Serial.printf("[Geocaching][WebConfirm] failed input-open\n");
+            job.fail();
+            return;
+        }
+        if (!job.offset && job.file.size() != job.total)
+        {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
+            Serial.printf("[Geocaching][WebConfirm] failed input-size\n");
+            job.fail();
+            return;
+        }
+        // A Busy read may have consumed part of the requested slice. Always
+        // restore the last fully hashed offset before retrying that slice.
+        if (!job.file.seek(job.offset))
+        {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
+            Serial.printf("[Geocaching][WebConfirm] failed input-seek\n");
             job.fail();
             return;
         }
         const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
         if (job.file.read(job.source + job.offset, count) != static_cast<int>(count))
         {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
             Serial.printf("[Geocaching][WebConfirm] failed input-read\n");
             job.fail();
             return;

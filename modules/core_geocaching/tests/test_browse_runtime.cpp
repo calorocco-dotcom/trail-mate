@@ -506,6 +506,11 @@ void checkExternalConfirmationProjection(const std::vector<uint8_t>& signed_reco
     until([&]
           { return rt::queueWebConfirmation(upload_id.data(), upload_owner.data(), upload_hash.data(), static_cast<uint32_t>(signed_record.size()), content.record.author_public_key.data, generation, proof.data(), proof_size) == rt::WebReadResult::Ready; },
           "runtime confirmation not admitted");
+    // Ordinary shared-SD contention while reading the sealed input must yield,
+    // rather than reject an already signed publication and directory receipt.
+    test::file_busy_remaining.fill(0);
+    test::file_busy_hits.fill(0);
+    test::file_busy_cycles = 1;
     size_t status_size = 0;
     test::busy_author_reads = 3;
     require(rt::readWebConfirmation(upload_id.data(), upload_owner.data(), verification.data(), verification.size(), status_size) == rt::WebReadResult::Pending,
@@ -516,6 +521,7 @@ void checkExternalConfirmationProjection(const std::vector<uint8_t>& signed_reco
     until([&]
           {
         if(rt::readWebConfirmation(upload_id.data(),upload_owner.data(),verification.data(),verification.size(),status_size)!=rt::WebReadResult::Ready)return false;
+        if(test::file_busy_hits[3])test::file_busy_cycles=0;
         protocol::CmpReader status({verification.data(),status_size});size_t count=0;ByteView id,hash;uint64_t version=0,phase=0;
         require(status.array(count,8)&&status.binary(id,16)&&status.binary(hash,32)&&status.unsignedInteger(version)&&status.unsignedInteger(phase),"runtime confirmation status invalid");
         require(version==generation&&!std::memcmp(id.data,upload_id.data(),16)&&!std::memcmp(hash.data,upload_hash.data(),32),"runtime confirmation generation or upload binding changed");
@@ -527,6 +533,8 @@ void checkExternalConfirmationProjection(const std::vector<uint8_t>& signed_reco
                 !std::memcmp(revision_hash.data,content.hash.bytes.data(),32)&&durable==1,"runtime confirmation is not the exact durable publication");
         return true; },
           "runtime confirmation not committed");
+    require(test::file_busy_hits[0] && test::file_busy_hits[1] && test::file_busy_hits[2] && test::file_busy_hits[3],
+            "confirmation did not exercise busy open, size, seek and read");
     auto stranger = upload_owner;
     stranger[0] ^= 1;
     require(rt::readWebConfirmation(upload_id.data(), stranger.data(), verification.data(), verification.size(), status_size) == rt::WebReadResult::Forbidden, "foreign session read confirmation result");
