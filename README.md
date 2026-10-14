@@ -15,9 +15,53 @@
 
 > An edge-first decentralized communication and situational-awareness system where identity, data, and connectivity choices remain with the user
 
-**Trail Mate is a multi-target open-source platform for phone-independent outdoor navigation, off-grid messaging, and team situational awareness. Its shared architecture spans ESP32, nRF52, and Linux, with selectable Meshtastic, MeshCore, and Reticulum/LXMF networking paths.**
+**Trail Mate is a decentralized Geocaching and trail-sharing platform built around personally held devices. It combines phone-independent navigation, off-grid messaging, team awareness, device-authored publications, and browser tools for maintaining caches and KML trails.** Its shared architecture spans ESP32, nRF52, and Linux, with selectable Meshtastic, MeshCore, and Reticulum/LXMF networking paths.
 
 [English](README.md) | [Documentation](https://github.com/vicliu624/trail-mate/wiki) | [Releases](https://github.com/vicliu624/trail-mate/releases) | [Join Discord](https://discord.gg/shkueG4zfc)
+
+## The device is your account
+
+Connect a supported Trail Mate device over USB to prove your author identity in
+the browser. There is no website account or password to register. The device
+holds its identity and signs publications; the browser provides convenient
+editing, maps, file handling, and access to Reticulum through the computer's
+network. These author operations do not require changing the device's selected
+chat protocol or routing Internet traffic through its LoRa radio.
+
+| Part of the system | What it does |
+| --- | --- |
+| **Firmware** | Owns identity, records local tracks, reads offline maps, communicates in the field, and signs authorized maintenance operations. |
+| **Web** | Edits device configuration through Web Serial, maintains Geocaching publications, and imports, edits, browses and shares KML trails. |
+| **Trail Mate Center** | Prepares offline map regions, provides a desktop dashboard, and handles HostLink data, replay, export and propagation tools. |
+| **Reticulum services** | Independently operated gateways and directories carry requests and index signed shared content. They can run on different nodes. |
+
+Browsing shared content does not require the author's device. Creating, updating
+or archiving under your device identity requires its authorization. Browser USB
+access requires a browser that implements Web Serial and a secure origin, such
+as the HTTPS site or localhost. Browser support differs; the page reports
+availability before asking you to choose a serial port.
+
+### Ownership and privacy
+
+Your identity and private local records do not have to live in one platform's
+account database. You decide which caches and tracks to publish, keep portable
+files, and can use independently operated directories. Author signatures allow
+receivers to check who created a publication without trusting the directory to
+invent that identity. A single operator is not required to control the entire
+system or collect every user's complete activity history.
+
+**Public sharing is still public.** A directory or recipient can store and
+analyse the routes, coordinates, timestamps, author identity and metadata you
+publish. Repeated use of one public author identity can link those publications.
+Gateways can observe connection metadata, and external map providers can see
+map requests. Archiving changes the current published state; it cannot erase
+copies already received by others. Decentralization gives users choices and
+reduces dependence on one operator; it does not make published location data
+secret or prevent every form of behavioural analysis.
+
+The [1.0.0 delivery record](docs/releases/1.0.0.md) distinguishes the release
+candidate from the final verified release. Documentation on this feature branch
+includes the new browser tools; consult the Releases page for published builds.
 
 ---
 
@@ -38,9 +82,74 @@ Engineering evidence: [CI and release workflow](.github/workflows/ci.yml) · [sh
 
 ## 🚀 Try Trail Mate
 
+### Browser device configuration
+
+Open the [Device page](https://vicliu624.github.io/trail-mate/device/), connect
+the device and choose its USB port. The page verifies the author and configuration
+snapshot before allowing edits. Settings are grouped by purpose and searchable;
+enumerations, percentages, durations, frequencies, masks and collections use
+appropriate controls with explanations rather than unexplained numeric fields.
+
+Review the changed values before saving. The page reads back the device result
+and supports configuration backup/restore and explicit identity maintenance.
+Identity backups are sensitive: normal author operations use device-side signing
+and do not require exposing the private key in the browser.
+
+![Web configuration percentage control](docs/images/release-1.0.0/web-config-percent.png)
+
+*Actual browser configuration control with simulated-device data. The screenshot
+illustrates readable percentage input, not a physical-device acceptance result.*
+
 ### Decentralized Geocaching
 
 Create and publish signed caches over Reticulum, browse independently operated directories, and download cache details for offline maps. The [live web map](https://vicliu624.github.io/trail-mate/geocaching/) queries the network directly, so new publications do not require a website update. Publishers keep their own identities; the protocol supports independent directory operators rather than requiring one central service.
+
+The browser also maintains your own caches. Connect USB, open your device drafts,
+edit the cache, review the publication and authorize its signature. The browser
+publishes through the computer's Reticulum connection, verifies the directory
+receipt and confirms the result on the device. Updates keep the cache identity;
+archive operations publish a new state. Pending confirmation remains visible
+and can be continued instead of silently starting a second publication.
+
+![Web Geocaching maintenance](docs/images/release-1.0.0/web-geocaching-maintenance.png)
+
+*Actual Web maintenance page from a native Reticulum directory check with a
+simulated USB author. Sample cache data is shown; this is not a real-Wio result.*
+
+### Decentralized KML trail sharing
+
+The [Tracks workspace](https://vicliu624.github.io/trail-mate/tracks/) combines
+**your own trail library**, **shared-trail discovery**, and **trail details and
+maintenance**. Import KML/KMZ or supported device recordings, keep drafts in the
+browser, and use the connected device as the publication author.
+
+- Browse independently hosted directories and query the visible map extent.
+  Pan or zoom the map to explore another area; automatic search can follow map
+  movement. Administrative filtering uses the catalog supplied by the directory
+  and remains a simple global country/region and first-level selection.
+- Open a trail by its publication ID, copy that ID or a version link, and inspect
+  verified author/version information before downloading it. A publication ID
+  identifies the shared object; a KML Placemark ID identifies an item inside a
+  file and is not a global directory address.
+- Maintain geometry, segments, waypoints, supported KML metadata and attachments;
+  inspect elevation and timed records; and keep portable local backups. Source
+  files are retained rather than quietly replaced by an unrelated format.
+- Publish, update and archive using device signatures. Successive updates keep
+  the object ID and link to the previous signed version. Archiving preserves the
+  published history rather than pretending to delete every remote copy.
+- Save shared content for offline use and install supported signed packages on
+  a connected device. Hardware storage and the supported package capabilities
+  determine which resources can be used on that device.
+
+![Trail elevation and timed-record maintenance](docs/images/release-1.0.0/web-track-elevation.png)
+
+*Actual browser workspace with sample KML data, showing elevation inspection and
+time replay. A simple example does not imply automatic terrain data or invented
+recording timestamps.*
+
+The Device and Tracks links describe the candidate pages in this PR. Their
+formal Pages deployment and final device acceptance are still pending; the
+[release record](docs/releases/1.0.0.md) tracks those limits.
 
 Configure network access under **Settings > Reticulum** without changing the chat protocol. Manually configured TCP interfaces support IFAC through the SD configuration; RNode/LoRa and AutoInterface IFAC are still pending. See the [Reticulum settings guide](https://github.com/vicliu624/trail-mate/wiki/4.1.1-Reticulum-Settings) and [Geocaching developer guide](https://github.com/vicliu624/trail-mate/wiki/20.-Geocaching-Developer-Guide).
 
@@ -311,7 +420,7 @@ Messages view shows recent conversations and history for quick review.
 * Chinese text support
 * Compatible with the **Meshtastic public mesh** (LongFast/PSK)
 * Compatible with **MeshCore networks** (native MeshCore packet path)
-* Bluetooth connectivity to Meshtastic / MeshCore companion apps
+* Standalone operation with on-device controls and optional USB tools; Meshtastic / MeshCore companion-app connections are outside the supported product workflow
 * Designed for high latency, low bandwidth, and packet-loss environments
 * Contacts, conversations, and messages are persisted on-device; the SD card is the configuration source for Reticulum networking and its editable contact directory
 
@@ -369,6 +478,14 @@ for real-time APRS/iGate integration, diagnostics, and data capture.
 [Trail Mate Center](https://github.com/vicliu624/trail-mate-center) is the desktop-side control center for Trail Mate and Meshtastic-compatible field devices connected through USB HostLink. Its Avalonia interface combines live maps, nodes, teams, event streams, messaging, device configuration, replay, protocol inspection, and data export in one application.
 
 It also prepares offline OSM, terrain, satellite, and contour-map regions for removable media; can build a buffered cache around imported KML routes; and provides a propagation workbench for coverage, interference, relay placement, calibration, and result export. Trail Mate Center is maintained as a separate desktop repository and does not contain the embedded firmware.
+
+| Offline map preparation | Desktop propagation workbench |
+| --- | --- |
+| ![Center map cache workflow](docs/images/release-1.0.0/center-map-cache.png) | ![Center propagation workflow](docs/images/release-1.0.0/center-propagation.png) |
+
+*Existing actual screenshots from the Center repository. These illustrate the
+desktop workflow; Center has its own release cycle and is not assigned the
+firmware's 1.0.0 version. Screenshot provenance is recorded with the assets.*
 
 ### 🤝 TAK / Team Mode (ESP-NOW Pairing + LoRa Ops)
 
@@ -636,7 +753,7 @@ This section provides a searchable implementation index. The [Trail Mate Wiki](h
 - MeshCore network compatibility (native MeshCore packet path)
 - On-device Reticulum/LXMF runtime with LoRa, AutoInterface, and TCP gateway interfaces
 - SD-card-based Reticulum configuration and editable contact directory
-- Bluetooth connectivity to Meshtastic / MeshCore companion apps
+- Standalone controls and optional USB tooling; no supported Meshtastic / MeshCore companion-app workflow
 - Message history and conversation list
 - Routing confirmations and reliability diagnostics
 - Unishox2 decompression for incoming messages
