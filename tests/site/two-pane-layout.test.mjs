@@ -28,8 +28,10 @@ for(const [device,width,height] of [['pager',480,222],['tdeck',320,240],['wio-tr
     const pixels=new Uint16Array(runtime.HEAPU8.buffer,framePointer,width*height);
     const y=height-50;
     const background=pixels[y*width+10];
-    // Below the filters, the complete seam must be the same color as both panes.
-    for(let x=10;x<width-10;x++)assert.equal(pixels[y*width+x],background,`${device}:${page}: divider or contrasting panel at ${x},${y}`);
+    // Tracker now deliberately uses colored item cards. Its seam must remain
+    // continuous, while the content card may contrast with the pane background.
+    const seamEnd=page===14?content.x:width-10;
+    for(let x=10;x<seamEnd;x++)assert.equal(pixels[y*width+x],background,`${device}:${page}: divider or contrasting panel at ${x},${y}`);
   }
   console.log(`${device}: compact two-pane geometry, row alignment and continuous background passed.`);
 }
