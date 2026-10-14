@@ -39,13 +39,20 @@ jobs:
           mkdir -p .codex-build/hostlink-codec/library-deps
           pio pkg install --global --storage-dir .codex-build/hostlink-codec/library-deps --library "rweather/Crypto@0.4.0" --skip-dependencies
           pio pkg install --global --storage-dir .codex-build/hostlink-codec/library-deps --library "nanopb/Nanopb@0.4.92" --skip-dependencies
+      - name: Prepare pinned native SHA-256 source without installing an ESP SDK
+        run: |
+          curl --fail --location --retry 3 https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df --output "$RUNNER_TEMP/trail-mate-native-mbedtls.tar.gz"
+          echo "052dccf3a404dce25a467c6fe044b0c858d609ace8e883b59e9dfd479fdd4528  $RUNNER_TEMP/trail-mate-native-mbedtls.tar.gz" | sha256sum --check
+          mkdir -p .codex-build/hostlink-codec/mbedtls-source
+          tar --extract --gzip --file "$RUNNER_TEMP/trail-mate-native-mbedtls.tar.gz" --directory .codex-build/hostlink-codec/mbedtls-source --strip-components=1
       - name: Verify packet bridge pacing and origin boundaries
         working-directory: tools/geocaching
         run: ../../.codex-build/reticulum-directory/venv/bin/python -m unittest test_packet_bridge test_packet_bridge_pacing
       - name: Verify native protocol, storage policy and cryptographic vectors
         run: |
-          cmake -S tests/hostlink -B .codex-build/hostlink-codec/native -DCMAKE_BUILD_TYPE=Debug -DTRAIL_MATE_ARDUINO_CRYPTO_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Crypto" -DTRAIL_MATE_MODULE_NANOPB_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Nanopb" -DTRAIL_MATE_REQUIRE_RADIO_IDENTITY_TESTS=ON
+          cmake -S tests/hostlink -B .codex-build/hostlink-codec/native -DCMAKE_BUILD_TYPE=Debug -DTRAIL_MATE_ARDUINO_CRYPTO_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Crypto" -DTRAIL_MATE_MODULE_NANOPB_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Nanopb" -DTRAIL_MATE_REQUIRE_RADIO_IDENTITY_TESTS=ON -DTRAIL_MATE_MBEDTLS_DIR="$PWD/.codex-build/hostlink-codec/mbedtls-source"
           cmake --build .codex-build/hostlink-codec/native --parallel 2
+          test -x .codex-build/hostlink-codec/native/track_snapshot_owner
           ctest --test-dir .codex-build/hostlink-codec/native --output-on-failure
           cmake -S tests/tracker_recording -B .codex-build/tracker-recording -DCMAKE_BUILD_TYPE=Debug
           cmake --build .codex-build/tracker-recording --parallel 2

@@ -81,10 +81,13 @@ const script=bundle.outputFiles.find(file=>file.path.endsWith('.js')).text,css=b
 const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>');});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({channel:process.env.TRAIL_MATE_TEST_BROWSER_CHANNEL,headless:true});
 const child=spawn(path.resolve('.codex-build/hostlink-codec/native/track_snapshot_owner'+(process.platform==='win32'?'.exe':'')),['package-protocol'],{stdio:['pipe','pipe','pipe']}),pending=[];
-let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);
-const ready=new Promise((resolve,reject)=>pending.push({resolve,reject})),exit=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error('Native package fixture failed: '+stderr)));});exit.catch(()=>{});
+let stderr='',nativeFailure=null;child.stderr.on('data',chunk=>stderr+=chunk);
+const ready=new Promise((resolve,reject)=>pending.push({resolve,reject})),exit=new Promise((resolve,reject)=>{
+ child.on('error',error=>{nativeFailure=error;for(const waiter of pending.splice(0))waiter.reject(error);reject(error);});
+ child.on('exit',code=>{const error=nativeFailure??Error('Native package fixture exited '+code+': '+stderr);for(const waiter of pending.splice(0))waiter.reject(error);code===0?resolve():reject(error);});
+});exit.catch(()=>{});ready.catch(()=>{});
 createInterface({input:child.stdout}).on('line',line=>{const wait=pending.shift();if(!wait)return;const [code,hex]=line.split(' ');Number(code)===0?wait.resolve(new Uint8Array(Buffer.from(hex,'hex'))):wait.reject(Object.assign(Error('Native status '+code),{code:Number(code)}));});
-const send=line=>new Promise((resolve,reject)=>{pending.push({resolve,reject});child.stdin.write(line+'\n');});
+const send=line=>new Promise((resolve,reject)=>{if(nativeFailure||child.exitCode!==null){reject(nativeFailure??Error('Native fixture already exited'));return;}pending.push({resolve,reject});child.stdin.write(line+'\n');});
 const session={request:async(op,body)=>decode(await send(op+' '+Buffer.from(encode(body)).toString('hex')),471)};
 try{
  const page=await browser.newPage({viewport:{width:1200,height:1000}}),url=`http://127.0.0.1:${server.address().port}`;
@@ -118,4 +121,4 @@ try{
  const edited=await page.evaluate(()=>editTest());assert.equal(edited.count,1);assert.equal(edited.bytes,photo.length);assert.equal(edited.same,true);
  assert.equal(await page.evaluate(()=>corruptTest()),'DRAFT_CORRUPT');assert.deepEqual(await page.evaluate(()=>removeTest()),{empty:true,jobs:1});
  console.log('Attachment UI/storage passed legacy v2 migration, exact files/index, stable retry IDs, reload, 11 locales, mobile/RTL, CAS, invalidation, corruption and cleanup.');
-}finally{await send('close');child.stdin.end();await exit;assert.equal(stderr,'');await browser.close();await new Promise(resolve=>server.close(resolve));}
+}finally{if(!nativeFailure&&child.exitCode===null)await send('close');child.stdin.end();await exit.catch(error=>{console.error(error);process.exitCode=1;});assert.equal(stderr,'');await browser.close();await new Promise(resolve=>server.close(resolve));}
