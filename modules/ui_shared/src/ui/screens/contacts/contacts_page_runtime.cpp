@@ -387,7 +387,8 @@ void refresh_node_card_data()
     if (state.card_index >= state.card_entries.size()) state.card_index = 0;
     state.card_mode = state.current_mode;
     state.card_context_valid = true;
-    std::snprintf(state.card_query, sizeof(state.card_query), "%s", state.search_query);
+    std::snprintf(state.card_query, sizeof(state.card_query), "%.*s",
+                  static_cast<int>(sizeof(state.card_query) - 1), state.search_query);
     // Release full projections left by another mode; only one peer is hydrated.
     state.total_items = state.card_entries.size();
     hydrate_node_card();
