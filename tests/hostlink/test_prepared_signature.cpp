@@ -535,7 +535,12 @@ int main()
         std::memset(local, 6, 16);
         PublicationReplyReceiver<decltype(publication), decltype(receipt_guard), decltype(receipt_crypto), Lease> receiver(
             publication, receipt_guard, receipt_crypto, lease, stored_job, progressed, job_verify, proof, {directory_public, 64}, local, 0, workspace, sizeof(workspace));
-        static_assert(sizeof(receiver) <= 160, "Publication receiver owns no response buffer");
+        // Borrowed references, views, address and callback binding only. Keep
+        // this bound strict while accounting for 64-bit host pointer widths.
+        constexpr size_t receiver_header_budget = 8 * sizeof(void*) + sizeof(geocaching::ByteView) +
+                                                  sizeof(uint8_t*) + sizeof(size_t) + 16 + alignof(void*) +
+                                                  sizeof(chat::lxmf::TrackDeliveryBinding);
+        static_assert(sizeof(receiver) <= receiver_header_budget, "Publication receiver owns no response buffer");
         struct PublicationSender
         {
             Io& io;
