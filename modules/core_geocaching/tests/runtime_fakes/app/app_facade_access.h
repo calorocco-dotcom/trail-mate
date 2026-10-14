@@ -3,4 +3,4 @@
 namespace app
 {
 inline AppContext& appFacade() { return AppContext::getInstance(); }
-}
+} // namespace app

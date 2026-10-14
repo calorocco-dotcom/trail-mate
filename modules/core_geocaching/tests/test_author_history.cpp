@@ -55,25 +55,29 @@ int main()
     issued.has_utc = false;
     if (!storage::encodeAuthorIssued(hash, {public_key, 64}, issued, value, sizeof(value), length) ||
         no_utc.consume({key, 36}, {value, length}, cache, {public_key, 64})) return 13;
-    const auto restored_scan=[&](std::initializer_list<uint8_t> revisions,uint32_t floor,uint32_t confirmed,bool expected)
+    const auto restored_scan = [&](std::initializer_list<uint8_t> revisions, uint32_t floor, uint32_t confirmed, bool expected)
     {
         storage::PublicationHistoryScan scan;
-        const auto rows=[&]() {
-            for(auto revision:revisions)
+        const auto rows = [&]()
+        {
+            for (auto revision : revisions)
             {
-                key[35]=revision;hash.bytes.fill(revision);issued.has_utc=true;issued.utc_seconds=1000+revision;
-                const auto anchor=revision==floor?uint64_t(1001):UINT64_MAX;
-                if(!storage::encodeAuthorIssued(hash,{public_key,64},issued,value,sizeof(value),length,anchor)||
-                   !scan.consume({key,36},{value,length},cache,{public_key,64}))return false;
+                key[35] = revision;
+                hash.bytes.fill(revision);
+                issued.has_utc = true;
+                issued.utc_seconds = 1000 + revision;
+                const auto anchor = revision == floor ? uint64_t(1001) : UINT64_MAX;
+                if (!storage::encodeAuthorIssued(hash, {public_key, 64}, issued, value, sizeof(value), length, anchor) ||
+                    !scan.consume({key, 36}, {value, length}, cache, {public_key, 64})) return false;
             }
             return true;
         };
-        if(!rows()||!scan.needsRecoveryValidation()||scan.finish(confirmed,history)||!scan.beginRecoveryValidation()||!rows())return false;
-        const bool ready=scan.finish(confirmed,history);
-        return ready==expected&&(!ready||(history.created_at==1001&&history.confirmed_revision==confirmed));
+        if (!rows() || !scan.needsRecoveryValidation() || scan.finish(confirmed, history) || !scan.beginRecoveryValidation() || !rows()) return false;
+        const bool ready = scan.finish(confirmed, history);
+        return ready == expected && (!ready || (history.created_at == 1001 && history.confirmed_revision == confirmed));
     };
-    if(!restored_scan({3},3,3,true)||!restored_scan({1,5,3,4},3,3,true))return 14;
-    if(!restored_scan({1,3,5},3,3,false)||!restored_scan({1,3,5},5,3,false))return 15;
-    if(!restored_scan({1,3,5},5,5,true))return 16;
+    if (!restored_scan({3}, 3, 3, true) || !restored_scan({1, 5, 3, 4}, 3, 3, true)) return 14;
+    if (!restored_scan({1, 3, 5}, 3, 3, false) || !restored_scan({1, 3, 5}, 5, 3, false)) return 15;
+    if (!restored_scan({1, 3, 5}, 5, 5, true)) return 16;
     return 0;
 }

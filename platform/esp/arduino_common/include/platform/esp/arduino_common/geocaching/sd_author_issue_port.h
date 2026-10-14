@@ -22,8 +22,7 @@ class SdAuthorIssuePort final : public ::geocaching::AuthorIssuePort
         using Result = ::geocaching::AuthorReservationResult;
         if (failed_) return Result::Failed;
         if (reserved_) return Result::Reserved;
-        const auto result = committing_ ? store_.stepCommit() : draft_.size ? web_author_ ? store_.reserveWebDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_)
-                                                                                       : store_.reserveDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_)
+        const auto result = committing_ ? store_.stepCommit() : draft_.size ? web_author_ ? store_.reserveWebDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_) : store_.reserveDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_)
                                                                             : store_.reserveUnsignedRecord(record, crypto_, workspace, capacity, issued_);
         if (result == JournalWriteResult::Busy) return Result::Pending;
         if (result == JournalWriteResult::InProgress)

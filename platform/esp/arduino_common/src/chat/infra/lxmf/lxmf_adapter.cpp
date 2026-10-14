@@ -6,8 +6,8 @@
 #include "platform/esp/arduino_common/chat/infra/lxmf/lxmf_adapter.h"
 #include "geocaching/protocol/sign_record.h"
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-#include "track_sharing/device_signer.h"
 #include "hostlink/identity_backup_export.h"
+#include "track_sharing/device_signer.h"
 #endif
 
 #include "platform/esp/arduino_common/voice/vmp_pager_session.h"
@@ -2148,7 +2148,7 @@ DeviceIdentityRestoreResult LxmfAdapter::restoreDeviceIdentity(const hostlink::m
                         propagation_client_.hasPendingUploads() || propagation_client_.pendingDeliveryCount() != 0 ||
                         propagation_client_.state().sync_stage != runtime::PropagationSyncStage::Idle;
     link_manager_.forEachSession([&network_busy](const LinkSession& session)
-    { network_busy |= session.state != LinkState::Closed; });
+                                 { network_busy |= session.state != LinkState::Closed; });
     if (network_busy) return DeviceIdentityRestoreResult::Unavailable;
     return identity_.restoreNativeIdentity(request, work, capacity);
 #else
@@ -2202,8 +2202,8 @@ bool LxmfAdapter::getGeocachingAuthorKey(uint8_t out[64]) const
 bool LxmfAdapter::requestTrackDirectoryPath(const uint8_t* destination)
 {
     if (!destination || !track_delivery_binding_ || !track_delivery_binding_->announcement) return false;
-    const auto budget=makeRuntimeBudget();
-    if (!budget.phase || !std::strcmp(budget.phase,"call") || !std::strcmp(budget.phase,"nomad") || !std::strcmp(budget.phase,"saver")) return false;
+    const auto budget = makeRuntimeBudget();
+    if (!budget.phase || !std::strcmp(budget.phase, "call") || !std::strcmp(budget.phase, "nomad") || !std::strcmp(budget.phase, "saver")) return false;
     return sendPathRequestForDestination(destination);
 }
 
@@ -4297,8 +4297,7 @@ bool LxmfAdapter::handleAnnouncePacket(const uint8_t* raw_packet, size_t raw_len
             reticulum::computeNameHash("lxmf", "delivery", name_hash);
             reticulum::computeDestinationHash(name_hash, ingest.identity_hash, delivery_hash);
             const TrackDirectoryAnnouncementView view{
-                {packet.destination_hash, reticulum::kTruncatedHashSize}, {delivery_hash, sizeof(delivery_hash)},
-                {ingest.announce.public_key, reticulum::kCombinedPublicKeySize}, {ingest.announce.app_data, ingest.announce.app_data_len}};
+                {packet.destination_hash, reticulum::kTruncatedHashSize}, {delivery_hash, sizeof(delivery_hash)}, {ingest.announce.public_key, reticulum::kCombinedPublicKeySize}, {ingest.announce.app_data, ingest.announce.app_data_len}};
             if (deliverVerifiedTrackDirectory(track_delivery_binding_, view))
                 rememberPeerIdentity(ingest.announce.public_key, nullptr, false);
         }

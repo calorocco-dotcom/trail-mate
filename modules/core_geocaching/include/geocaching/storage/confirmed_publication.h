@@ -11,26 +11,27 @@ inline protocol::VerificationResult verifyConfirmedPublication(ByteView request_
                                                                protocol::RecordCrypto& crypto, uint8_t* workspace, size_t capacity,
                                                                protocol::VerifiedRecordView& content)
 {
-    if(!request_key.data||request_key.size!=48)return protocol::VerificationResult::InvalidRecord;
+    if (!request_key.data || request_key.size != 48) return protocol::VerificationResult::InvalidRecord;
     RequestId request;
-    std::memcpy(request.bytes.data(),request_key.data+32,16);
+    std::memcpy(request.bytes.data(), request_key.data + 32, 16);
     protocol::PublishRequestView publication;
-    if(!protocol::decodePublishRequest(request_bytes,request,publication))return protocol::VerificationResult::InvalidRecord;
-    auto result=protocol::verifyGeocache(publication.signed_cache,crypto,workspace,capacity,content);
-    if(result!=protocol::VerificationResult::Valid)return result;
+    if (!protocol::decodePublishRequest(request_bytes, request, publication)) return protocol::VerificationResult::InvalidRecord;
+    auto result = protocol::verifyGeocache(publication.signed_cache, crypto, workspace, capacity, content);
+    if (result != protocol::VerificationResult::Valid) return result;
     PublicationConfirmationView proof;
-    if(decodePublicationConfirmation(response_bytes,proof))
+    if (decodePublicationConfirmation(response_bytes, proof))
     {
         protocol::PublicationReceiptView receipt;
-        result=verifyPublicationConfirmation(response_bytes,{request_key.data+16,16},content,crypto,workspace,capacity,receipt);
+        result = verifyPublicationConfirmation(response_bytes, {request_key.data + 16, 16}, content, crypto, workspace, capacity, receipt);
     }
     else
     {
         protocol::PublishDisposition disposition;
-        result=protocol::decodePublishResponse(response_bytes,request,content.id,content.hash,content.record.revision,content.record.state,disposition)
-                   ?protocol::VerificationResult::Valid:protocol::VerificationResult::InvalidRecord;
+        result = protocol::decodePublishResponse(response_bytes, request, content.id, content.hash, content.record.revision, content.record.state, disposition)
+                     ? protocol::VerificationResult::Valid
+                     : protocol::VerificationResult::InvalidRecord;
     }
-    if(result!=protocol::VerificationResult::Valid)content={};
+    if (result != protocol::VerificationResult::Valid) content = {};
     return result;
 }
 } // namespace geocaching::storage

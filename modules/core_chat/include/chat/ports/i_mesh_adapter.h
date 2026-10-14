@@ -16,13 +16,20 @@ namespace track_sharing
 {
 struct ManifestView;
 }
-namespace hostlink::management { struct IdentityRestoreView; struct RadioIdentityRestoreView; }
+namespace hostlink::management
+{
+struct IdentityRestoreView;
+struct RadioIdentityRestoreView;
+} // namespace hostlink::management
 namespace chat
 {
 class IIncomingDeliveryCommitPort;
 class IGeocachingTransport;
 class ITrackTransport;
-namespace lxmf { struct TrackDeliveryBinding; }
+namespace lxmf
+{
+struct TrackDeliveryBinding;
+}
 
 namespace meshcore
 {
@@ -76,13 +83,23 @@ class IMeshAdapter
 {
   public:
     virtual DeviceIdentityRestoreResult restoreDeviceIdentity(const hostlink::management::IdentityRestoreView&, uint8_t*, size_t)
-    { return DeviceIdentityRestoreResult::Unsupported; }
+    {
+        return DeviceIdentityRestoreResult::Unsupported;
+    }
     virtual DeviceIdentityRestoreResult restoreRadioIdentity(const hostlink::management::RadioIdentityRestoreView&, uint8_t*, size_t)
-    { return DeviceIdentityRestoreResult::Unsupported; }
+    {
+        return DeviceIdentityRestoreResult::Unsupported;
+    }
     virtual DeviceAuthorResult readRadioIdentityInfo(uint8_t, uint32_t, uint8_t*, size_t, size_t& written) const
-    { written = 0; return DeviceAuthorResult::Unsupported; }
+    {
+        written = 0;
+        return DeviceAuthorResult::Unsupported;
+    }
     virtual DeviceAuthorResult exportRadioIdentityBackup(uint8_t, uint32_t, uint8_t*, size_t, size_t& written, const uint8_t*, const uint8_t*) const
-    { written = 0; return DeviceAuthorResult::Unsupported; }
+    {
+        written = 0;
+        return DeviceAuthorResult::Unsupported;
+    }
     virtual DeviceAuthorResult readDeviceAuthorKey(uint8_t*, uint32_t&) const { return DeviceAuthorResult::Unsupported; }
     // Internal physical-USB export port. Caller owns authorization and the
     // transient output; implementations must serialize identity access.
@@ -112,7 +129,7 @@ class IMeshAdapter
     virtual bool trackLocalDestination(uint8_t*) { return false; }
     virtual bool requestTrackDirectoryPath(const uint8_t*) { return false; }
     virtual MeshSendResult sendTrackData(const uint8_t*, lxmf::ByteSpan, const uint8_t*, uint32_t,
-                                         bool, std::array<uint8_t,32>*) { return MeshSendResult::fail(MeshOperationFailure::Unsupported); }
+                                         bool, std::array<uint8_t, 32>*) { return MeshSendResult::fail(MeshOperationFailure::Unsupported); }
     virtual ~IMeshAdapter() = default;
 
     /**

@@ -1,8 +1,8 @@
 #pragma once
 #include "track_sharing/directory_capabilities.h"
 #include "track_sharing/read_query_response.h"
-#include "track_sharing/verify_read_manifest.h"
 #include "track_sharing/region_read_response.h"
+#include "track_sharing/verify_read_manifest.h"
 
 namespace track_sharing
 {
@@ -43,7 +43,7 @@ class ReadResponseValidator
         if (operation == 2) return verifyReadManifest(raw, request, context_.object, context_.revision, crypto_, hash_, workspace_, capacity_, manifest_) == ReadManifestVerification::Valid;
         if (operation == 8 || operation == 12)
         {
-            if (operation == 12 && (!context_.region || !regionVersion(context_.region->version) || !regionInNamespace(context_.region->id,context_.region->name_space))) return false;
+            if (operation == 12 && (!context_.region || !regionVersion(context_.region->version) || !regionInNamespace(context_.region->id, context_.region->name_space))) return false;
             ReadFileResponse file;
             return decodeTrackReadFileResponse(raw, request, context_.file_hash, context_.file_bytes, context_.offset, context_.length, file, operation);
         }
@@ -52,11 +52,10 @@ class ReadResponseValidator
         {
             if (!context_.region) return false;
             const auto& region = *context_.region;
-            if (operation == 10) return regions_ && context_.query && decodeRegionChildren(raw,request,region.version,region.name_space,region.parent,region.after,
-                region.parent_level,region.depth,context_.query->limit,regions_->row,regions_->page);
-            if (operation == 11) return regions_ && decodeRegionDescriptor(raw,request,region.id,region.version,region.name_space,region.depth,regions_->descriptor);
-            if (operation == 13) return context_.query && regionVersion(region.version) && regionInNamespace(region.id,region.name_space) &&
-                decodeRegionQueryResponse(raw,request,*context_.query,context_.query_binding,row_,page_);
+            if (operation == 10) return regions_ && context_.query && decodeRegionChildren(raw, request, region.version, region.name_space, region.parent, region.after, region.parent_level, region.depth, context_.query->limit, regions_->row, regions_->page);
+            if (operation == 11) return regions_ && decodeRegionDescriptor(raw, request, region.id, region.version, region.name_space, region.depth, regions_->descriptor);
+            if (operation == 13) return context_.query && regionVersion(region.version) && regionInNamespace(region.id, region.name_space) &&
+                                        decodeRegionQueryResponse(raw, request, *context_.query, context_.query_binding, row_, page_);
         }
         return false;
     }

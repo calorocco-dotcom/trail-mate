@@ -32,8 +32,8 @@ inline bool decodeTrackReadEnvelope(geocaching::ByteView bytes, geocaching::Byte
     if (status == 200)
     {
         const size_t expected = operation == 0 || operation == 9 ? 8 : operation == 1 || operation == 10 || operation == 11 || operation == 13 ? 3
-                                                 : operation == 2   ? 2
-                                                                    : 4;
+                                                                   : operation == 2                                                            ? 2
+                                                                                                                                               : 4;
         if (count != expected) return false;
     }
     else

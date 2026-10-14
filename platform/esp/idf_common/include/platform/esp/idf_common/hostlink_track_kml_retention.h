@@ -19,10 +19,15 @@ class TrackKmlRetention
     }
     track_sharing::ImmutableCopyResult step(uint8_t* scratch, size_t capacity)
     {
-        if (!input_.ready()) { copy_.cancel(); return track_sharing::ImmutableCopyResult::StorageFailure; }
+        if (!input_.ready())
+        {
+            copy_.cancel();
+            return track_sharing::ImmutableCopyResult::StorageFailure;
+        }
         return copy_.step(scratch, capacity);
     }
     const char* destination() const { return destination_; }
+
   private:
     TrackPrepareOwner& input_;
     char temporary_[160]{}, destination_[160]{};

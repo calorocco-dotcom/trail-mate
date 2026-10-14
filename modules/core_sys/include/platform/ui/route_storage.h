@@ -77,7 +77,7 @@ bool count_route_saved_images(const std::string& asset_id,
                               std::size_t max_count,
                               std::size_t& out_count);
 bool route_asset_file_exists(const std::string& path);
-bool route_image_reference_hash(std::string_view reference,uint8_t output[32]);
+bool route_image_reference_hash(std::string_view reference, uint8_t output[32]);
 // Fast source-binding and length check. A true result is not an author's
 // signature or an independent full-file hash verification.
 bool route_image_source_matches(const std::string& path, const uint8_t expected_source_hash[32]);

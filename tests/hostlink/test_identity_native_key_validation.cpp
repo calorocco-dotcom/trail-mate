@@ -21,22 +21,23 @@ int main()
     std::memcpy(public_key.data(), expected, 32);
     seed.fill(19);
     ed25519_create_keypair(public_key.data() + 32, private_key.data() + 32, seed.data());
-    std::array<uint8_t,64> seeds{};
-    std::array<uint8_t,96> converted{};
-    for(size_t i=0;i<32;++i)seeds[i]=uint8_t(i+1);
-    std::memcpy(seeds.data()+32,seed.data(),32);
-    const auto original_seeds=seeds;
-    assert(platform::esp::common::convertSeedIdentityKeys(public_key.data(),seeds.data(),converted.data(),converted.size(),scratch.data(),scratch.size()));
-    assert(converted==private_key&&seeds==original_seeds);
-    for(auto byte:scratch)assert(byte==0);
-    for(const size_t index:{size_t(0),size_t(32)}){
-        public_key[index]^=1;
-        assert(!platform::esp::common::convertSeedIdentityKeys(public_key.data(),seeds.data(),converted.data(),converted.size(),scratch.data(),scratch.size()));
-        for(auto byte:converted)assert(byte==0);
-        public_key[index]^=1;
+    std::array<uint8_t, 64> seeds{};
+    std::array<uint8_t, 96> converted{};
+    for (size_t i = 0; i < 32; ++i) seeds[i] = uint8_t(i + 1);
+    std::memcpy(seeds.data() + 32, seed.data(), 32);
+    const auto original_seeds = seeds;
+    assert(platform::esp::common::convertSeedIdentityKeys(public_key.data(), seeds.data(), converted.data(), converted.size(), scratch.data(), scratch.size()));
+    assert(converted == private_key && seeds == original_seeds);
+    for (auto byte : scratch) assert(byte == 0);
+    for (const size_t index : {size_t(0), size_t(32)})
+    {
+        public_key[index] ^= 1;
+        assert(!platform::esp::common::convertSeedIdentityKeys(public_key.data(), seeds.data(), converted.data(), converted.size(), scratch.data(), scratch.size()));
+        for (auto byte : converted) assert(byte == 0);
+        public_key[index] ^= 1;
     }
-    assert(!platform::esp::common::convertSeedIdentityKeys(public_key.data(),seeds.data(),seeds.data(),96,scratch.data(),scratch.size()));
-    assert(seeds==original_seeds);
+    assert(!platform::esp::common::convertSeedIdentityKeys(public_key.data(), seeds.data(), seeds.data(), 96, scratch.data(), scratch.size()));
+    assert(seeds == original_seeds);
     assert(platform::esp::common::validateNativeIdentityKeys(public_key.data(), private_key.data(), scratch.data(), scratch.size()));
     for (auto byte : scratch) assert(byte == 0);
     private_key[11] ^= 1;

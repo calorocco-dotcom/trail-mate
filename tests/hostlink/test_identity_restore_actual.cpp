@@ -57,18 +57,18 @@ void testIdentityRestoreActual()
         std::memcpy(pub.data() + 32, identity.signingPublicKey(), 32);
         assert(identity.copyNativePrivateKey(7, priv.data(), priv.size()));
         const auto expected_private = priv;
-        std::array<uint8_t,64> seeds{};
-        std::memcpy(seeds.data(),priv.data(),32);
-        std::memset(seeds.data()+32,17,32);
-        if(scenario==6)seeds[5]^=1;
-        if(scenario==7)seeds[35]^=1;
-        const bool seed_format=scenario>=5;
+        std::array<uint8_t, 64> seeds{};
+        std::memcpy(seeds.data(), priv.data(), 32);
+        std::memset(seeds.data() + 32, 17, 32);
+        if (scenario == 6) seeds[5] ^= 1;
+        if (scenario == 7) seeds[35] ^= 1;
+        const bool seed_format = scenario >= 5;
         std::array<uint8_t, 16> hash{}, delivery{};
         hash.fill(scenario == 3 ? 11 : 9);
         delivery.fill(10);
         std::array<uint8_t, 320> payload{};
         CmpWriter writer(payload.data(), payload.size());
-        assert(writer.array(8) && writer.unsignedInteger(1) && writer.text("trailmate.identity.backup.v1") && writer.unsignedInteger(seed_format?1:0) && writer.binary({pub.data(), 64}) && writer.binary(seed_format?geocaching::ByteView{seeds.data(),64}:geocaching::ByteView{priv.data(),96}) && writer.binary({hash.data(), 16}) && writer.binary({delivery.data(), 16}) && writer.unsignedInteger(2));
+        assert(writer.array(8) && writer.unsignedInteger(1) && writer.text("trailmate.identity.backup.v1") && writer.unsignedInteger(seed_format ? 1 : 0) && writer.binary({pub.data(), 64}) && writer.binary(seed_format ? geocaching::ByteView{seeds.data(), 64} : geocaching::ByteView{priv.data(), 96}) && writer.binary({hash.data(), 16}) && writer.binary({delivery.data(), 16}) && writer.unsignedInteger(2));
         std::array<uint8_t, 352> work{};
         constexpr char domain[] = "TrailMate.Identity.Backup.v1";
         std::memcpy(work.data(), domain, sizeof(domain));
@@ -95,7 +95,7 @@ void testIdentityRestoreActual()
             fake_nvs::fail_commit = false;
             assert(platform::esp::common::readIdentityRecord(work.data(), work.size()) == platform::esp::common::IdentityRecordResult::Ready);
             assert(platform::esp::common::identityRecordU32(work.data() + 8) == 8);
-            assert(!std::memcmp(work.data()+76,expected_private.data(),expected_private.size()));
+            assert(!std::memcmp(work.data() + 76, expected_private.data(), expected_private.size()));
         }
         else
         {

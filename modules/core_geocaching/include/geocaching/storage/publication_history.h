@@ -24,28 +24,29 @@ class PublicationHistoryScan
         AuthorIssuedView issued;
         if (!decodeAuthorIssued(key, value, issued) || !issued.issued_at.has_utc ||
             std::memcmp(issued.author_public_key.data, author.data, 64) || count_ == UINT32_MAX) return false;
-        if(recovery_validation_)
+        if (recovery_validation_)
         {
-            if(issued.revision>history_.latest_revision||
-               (issued.has_recovered_creation&&issued.recovered_created_at!=history_.created_at))return false;
-            if(issued.revision>=recovery_floor_)
+            if (issued.revision > history_.latest_revision ||
+                (issued.has_recovered_creation && issued.recovered_created_at != history_.created_at)) return false;
+            if (issued.revision >= recovery_floor_)
             {
-                if(recovery_count_==UINT32_MAX)return false;
+                if (recovery_count_ == UINT32_MAX) return false;
                 ++recovery_count_;
             }
             return true;
         }
         ++count_;
-        if(issued.has_recovered_creation)
+        if (issued.has_recovered_creation)
         {
-            if((recovery_origin_||first_)&&history_.created_at!=issued.recovered_created_at)return false;
-            history_.created_at=issued.recovered_created_at;recovery_origin_=true;
-            if(issued.revision>recovery_floor_)recovery_floor_=issued.revision;
+            if ((recovery_origin_ || first_) && history_.created_at != issued.recovered_created_at) return false;
+            history_.created_at = issued.recovered_created_at;
+            recovery_origin_ = true;
+            if (issued.revision > recovery_floor_) recovery_floor_ = issued.revision;
         }
         if (issued.revision == 1)
         {
             if (first_) return false;
-            if(recovery_origin_&&history_.created_at!=issued.issued_at.utc_seconds)return false;
+            if (recovery_origin_ && history_.created_at != issued.issued_at.utc_seconds) return false;
             first_ = true;
             history_.created_at = issued.issued_at.utc_seconds;
         }
@@ -69,25 +70,27 @@ class PublicationHistoryScan
     {
         // The scan visits unique index keys. Count plus the latest revision
         // proves there is no missing issuance; table order need not be sorted.
-        if(recovery_floor_>1)
+        if (recovery_floor_ > 1)
         {
-            if(!recovery_validation_||confirmed<recovery_floor_||confirmed>history_.latest_revision||
-               recovery_count_!=history_.latest_revision-recovery_floor_+1||
-               history_.created_at>history_.latest_time.utc_seconds||
-               (history_.latest_revision>recovery_floor_&&previous_revision_!=history_.latest_revision-1))return false;
+            if (!recovery_validation_ || confirmed < recovery_floor_ || confirmed > history_.latest_revision ||
+                recovery_count_ != history_.latest_revision - recovery_floor_ + 1 ||
+                history_.created_at > history_.latest_time.utc_seconds ||
+                (history_.latest_revision > recovery_floor_ && previous_revision_ != history_.latest_revision - 1)) return false;
         }
         else if (confirmed > history_.latest_revision || count_ != history_.latest_revision ||
-            (count_ && (!first_ || history_.created_at > history_.latest_time.utc_seconds)) ||
-            (count_ > 1 && previous_revision_ != history_.latest_revision - 1)) return false;
+                 (count_ && (!first_ || history_.created_at > history_.latest_time.utc_seconds)) ||
+                 (count_ > 1 && previous_revision_ != history_.latest_revision - 1)) return false;
         out = history_;
         out.confirmed_revision = confirmed;
         return true;
     }
-    bool needsRecoveryValidation() const { return recovery_floor_>1&&!recovery_validation_; }
+    bool needsRecoveryValidation() const { return recovery_floor_ > 1 && !recovery_validation_; }
     bool beginRecoveryValidation()
     {
-        if(!needsRecoveryValidation())return false;
-        recovery_validation_=true;recovery_count_=0;return true;
+        if (!needsRecoveryValidation()) return false;
+        recovery_validation_ = true;
+        recovery_count_ = 0;
+        return true;
     }
 
   private:
@@ -119,12 +122,12 @@ PublicationHistoryResult readLogicalPublicationHistory(const View& view, ByteVie
     MutationView row;
     while (view.next(cursor, row))
         if (row.table == 3 && !scan.consume(row.key, row.value, cache, author)) return PublicationHistoryResult::Invalid;
-    if(scan.needsRecoveryValidation())
+    if (scan.needsRecoveryValidation())
     {
-        if(!scan.beginRecoveryValidation())return PublicationHistoryResult::Invalid;
-        cursor=0;
-        while(view.next(cursor,row))
-            if(row.table==3&&!scan.consume(row.key,row.value,cache,author))return PublicationHistoryResult::Invalid;
+        if (!scan.beginRecoveryValidation()) return PublicationHistoryResult::Invalid;
+        cursor = 0;
+        while (view.next(cursor, row))
+            if (row.table == 3 && !scan.consume(row.key, row.value, cache, author)) return PublicationHistoryResult::Invalid;
     }
     return scan.finish(published.confirmed_revision, out) ? PublicationHistoryResult::Ready : PublicationHistoryResult::Invalid;
 }

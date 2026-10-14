@@ -52,7 +52,11 @@ class SdIndexedAuthorReservation
         {
             if ((!web_author_ && (!issued.has_utc || issued.utc_seconds != record.updated_at)) ||
                 (record.revision == 1 && record.created_at != record.updated_at)) return false;
-            if (web_author_) { issued_.has_utc = true; issued_.utc_seconds = record.updated_at; }
+            if (web_author_)
+            {
+                issued_.has_utc = true;
+                issued_.utc_seconds = record.updated_at;
+            }
             std::memcpy(draft_.data(), draft.data, draft_.size());
             if (!io_.emplace<SdIndexGet>(volume_).begin(root_, 4, {draft_.data(), draft_.size()}, frame_, capacity_)) return false;
             phase_ = Phase::Draft;
@@ -208,10 +212,10 @@ class SdIndexedAuthorReservation
         {
             if (std::memcmp(issued.author_public_key.data, author_.data(), 64)) return fail(IndexedCommitStep::Invalid);
             if (issued.revision > highest_) highest_ = issued.revision;
-            if(issued.has_recovered_creation)
+            if (issued.has_recovered_creation)
             {
-                if(issued.recovered_created_at!=record.created_at)return fail(IndexedCommitStep::Invalid);
-                first_valid_=true;
+                if (issued.recovered_created_at != record.created_at) return fail(IndexedCommitStep::Invalid);
+                first_valid_ = true;
             }
             if (issued.revision == record.revision)
             {

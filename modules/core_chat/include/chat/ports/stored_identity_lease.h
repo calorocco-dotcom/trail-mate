@@ -12,7 +12,8 @@ template <class Identity, class Memory>
 class StoredIdentityLease
 {
   public:
-    StoredIdentityLease() : StoredIdentityLease([](Identity& identity) { return identity.initExisting(); }) {}
+    StoredIdentityLease() : StoredIdentityLease([](Identity& identity)
+                                                { return identity.initExisting(); }) {}
     template <class Initialize>
     explicit StoredIdentityLease(Initialize initialize)
     {

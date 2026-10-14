@@ -76,12 +76,12 @@ int main()
     {
         Identity::exists = false;
         unsigned initialized = 0;
-        chat::StoredIdentityLease<Identity, Memory> account([&](Identity& value) {
+        chat::StoredIdentityLease<Identity, Memory> account([&](Identity& value)
+                                                            {
             ++initialized;
             if (value.identityStorageError()) return false;
             Identity::exists = true;
-            return value.initExisting();
-        });
+            return value.initExisting(); });
         assert(initialized == 1 && account.read(key.data(), generation) == chat::DeviceAuthorResult::Ok);
     }
     using Lease = chat::StoredIdentityLease<Identity, Memory>;

@@ -3350,10 +3350,12 @@ int checkIndexedAuthorReservation(const char* path)
         auto incorrect = selected;
         incorrect.hash.bytes[0] ^= 1;
         if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
-                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid || job_size) return false;
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid ||
+            job_size) return false;
         auto wrong_author = std::array<uint8_t, 64>{};
         if (encodePublicationHistoryJob(selected, operation, {wrong_author.data(), wrong_author.size()}, crypto, signing, sizeof(signing),
-                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Forbidden || job_size) return false;
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Forbidden ||
+            job_size) return false;
         crypto.available = false;
         const auto unavailable_job = encodePublicationHistoryJob(selected, operation, record.author_public_key, crypto, signing, sizeof(signing),
                                                                  job_verified, job_output, sizeof(job_output), job_size);
@@ -3384,7 +3386,8 @@ int checkIndexedAuthorReservation(const char* path)
         incorrect = selected;
         incorrect.request = {corrupt_request.data(), corrupt_request.size()};
         if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
-                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid || job_size) return false;
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid ||
+            job_size) return false;
         if (confirmed)
         {
             auto invalid_response = response_copy;
@@ -3392,7 +3395,8 @@ int checkIndexedAuthorReservation(const char* path)
             incorrect = selected;
             incorrect.response = {invalid_response.data(), invalid_response.size()};
             if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
-                                            job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid || job_size) return false;
+                                            job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid ||
+                job_size) return false;
         }
         SdPublishPort invalid_port(restored_store, crypto, local, selected.cache, selected.hash, selected.task, selected.created);
         PublishAttempt invalid_attempt(invalid_port, crypto);
@@ -3724,7 +3728,8 @@ int checkIndexedAuthorReservation(const char* path)
     protocol::VerifiedRecordView stopped_verified;
     if (encodePublicationHistoryJob(recovered_publication, {another_task.data(), another_task.size()}, record.author_public_key,
                                     crypto, signing, sizeof(signing), stopped_verified, stopped_output, sizeof(stopped_output), stopped_size) !=
-        PublicationHistoryJobResult::Ready || files != before_operation_read) return 133;
+            PublicationHistoryJobResult::Ready ||
+        files != before_operation_read) return 133;
     protocol::CmpReader stopped_reader({stopped_output, stopped_size});
     size_t stopped_fields = 0;
     uint64_t stopped_phase = 0, stopped_revision = 0, stopped_durable = 0;

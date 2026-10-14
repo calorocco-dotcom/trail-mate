@@ -47,36 +47,46 @@ inline bool readUsbFilter(geocaching::protocol::CmpReader& reader, geocaching::B
 inline bool decodeReadUsbRegion(geocaching::protocol::CmpReader& reader, geocaching::ByteView raw, ReadUsbRequest& output)
 {
     auto& region = output.region;
-    size_t fields=0;
-    const size_t expected=output.operation==10?7:output.operation==11?4:output.operation==12?7:10;
-    if (!reader.array(fields,expected)||fields!=expected||!reader.text(region.name_space,24)||!regionNamespace(region.name_space)) return false;
-    if (output.operation==10)
+    size_t fields = 0;
+    const size_t expected = output.operation == 10 ? 7 : output.operation == 11 ? 4
+                                                     : output.operation == 12   ? 7
+                                                                                : 10;
+    if (!reader.array(fields, expected) || fields != expected || !reader.text(region.name_space, 24) || !regionNamespace(region.name_space)) return false;
+    if (output.operation == 10)
     {
-        int64_t level=0;uint64_t depth=0,limit=0;
-        if (!reader.binary(region.version,32)||!regionVersion(region.version)||!decodeRegionOptionalId(reader,raw,region.parent)||
-            !reader.signedInteger(level)||level< -1||level>8||!decodeRegionOptionalId(reader,raw,region.after)||
-            !reader.unsignedInteger(depth)||depth>8||level>int64_t(depth)||!reader.unsignedInteger(limit)||!limit||limit>32||
-            (region.parent.empty()!=(level==-1))||(!region.parent.empty()&&!regionInNamespace(region.parent,region.name_space))||
-            (!region.after.empty()&&!regionInNamespace(region.after,region.name_space))) return false;
-        region.parent_level=int8_t(level);region.depth=uint8_t(depth);output.query.limit=uint8_t(limit);output.expected.query=&output.query;
+        int64_t level = 0;
+        uint64_t depth = 0, limit = 0;
+        if (!reader.binary(region.version, 32) || !regionVersion(region.version) || !decodeRegionOptionalId(reader, raw, region.parent) ||
+            !reader.signedInteger(level) || level < -1 || level > 8 || !decodeRegionOptionalId(reader, raw, region.after) ||
+            !reader.unsignedInteger(depth) || depth > 8 || level > int64_t(depth) || !reader.unsignedInteger(limit) || !limit || limit > 32 ||
+            (region.parent.empty() != (level == -1)) || (!region.parent.empty() && !regionInNamespace(region.parent, region.name_space)) ||
+            (!region.after.empty() && !regionInNamespace(region.after, region.name_space))) return false;
+        region.parent_level = int8_t(level);
+        region.depth = uint8_t(depth);
+        output.query.limit = uint8_t(limit);
+        output.expected.query = &output.query;
     }
     else
     {
-        if (!reader.text(region.id,89)||!regionInNamespace(region.id,region.name_space)||!reader.binary(region.version,32)||!regionVersion(region.version)) return false;
-        if (output.operation==11)
+        if (!reader.text(region.id, 89) || !regionInNamespace(region.id, region.name_space) || !reader.binary(region.version, 32) || !regionVersion(region.version)) return false;
+        if (output.operation == 11)
         {
-            uint64_t depth=0;if(!reader.unsignedInteger(depth)||depth>8)return false;region.depth=uint8_t(depth);
+            uint64_t depth = 0;
+            if (!reader.unsignedInteger(depth) || depth > 8) return false;
+            region.depth = uint8_t(depth);
         }
-        else if (output.operation==12)
+        else if (output.operation == 12)
         {
-            uint64_t total=0,offset=0,length=0;
-            if (!reader.binary(output.expected.file_hash,32)||output.expected.file_hash.size!=32||!reader.unsignedInteger(total)||!total||total>8388608||
-                !reader.unsignedInteger(offset)||offset>=total||!reader.unsignedInteger(length)||!length||length>1024||length>total-offset) return false;
-            output.expected.file_bytes=uint32_t(total);output.expected.offset=uint32_t(offset);output.expected.length=uint16_t(length);
+            uint64_t total = 0, offset = 0, length = 0;
+            if (!reader.binary(output.expected.file_hash, 32) || output.expected.file_hash.size != 32 || !reader.unsignedInteger(total) || !total || total > 8388608 ||
+                !reader.unsignedInteger(offset) || offset >= total || !reader.unsignedInteger(length) || !length || length > 1024 || length > total - offset) return false;
+            output.expected.file_bytes = uint32_t(total);
+            output.expected.offset = uint32_t(offset);
+            output.expected.length = uint16_t(length);
         }
     }
-    output.expected.region=&region;
-    return output.operation==13||reader.finished();
+    output.expected.region = &region;
+    return output.operation == 13 || reader.finished();
 }
 inline bool decodeReadUsbRequest(geocaching::ByteView raw, ReadUsbRequest& output)
 {
@@ -94,7 +104,7 @@ inline bool decodeReadUsbRequest(geocaching::ByteView raw, ReadUsbRequest& outpu
     if (operation == 0 || operation == 9) return reader.array(fields, 0) && !fields && reader.finished();
     if (operation >= 10)
     {
-        if (!decodeReadUsbRegion(reader,raw,output)) return false;
+        if (!decodeReadUsbRegion(reader, raw, output)) return false;
         if (operation != 13) return true;
     }
     if (operation == 1 || operation == 13)
@@ -102,7 +112,7 @@ inline bool decodeReadUsbRequest(geocaching::ByteView raw, ReadUsbRequest& outpu
         auto& query = output.query;
         int64_t coordinate = 0;
         uint64_t limit = 0;
-        if ((operation==1&&(!reader.array(fields,7)||fields!=7))||!reader.array(fields,4)||fields!=4) return false;
+        if ((operation == 1 && (!reader.array(fields, 7) || fields != 7)) || !reader.array(fields, 4) || fields != 4) return false;
         for (auto* target : {&query.west, &query.south, &query.east, &query.north})
         {
             if (!reader.signedInteger(coordinate) || coordinate < INT32_MIN || coordinate > INT32_MAX) return false;

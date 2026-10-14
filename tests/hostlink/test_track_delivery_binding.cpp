@@ -42,30 +42,48 @@ int main()
     struct Identity
     {
         uint8_t public_key[64]{};
-        uint32_t generation=7;
-        bool ready=true,error=false;
+        uint32_t generation = 7;
+        bool ready = true, error = false;
         bool isReady() const { return ready; }
         bool identityStorageError() const { return error; }
         uint32_t authorGeneration() const { return generation; }
         const uint8_t* encryptionPublicKey() const { return public_key; }
-        const uint8_t* signingPublicKey() const { return public_key+32; }
+        const uint8_t* signingPublicKey() const { return public_key + 32; }
     } identity;
-    uint8_t expected_public[64];std::memset(expected_public,4,64);std::memcpy(identity.public_key,expected_public,64);
-    binding.expected_local_author=expected_public;binding.expected_author_generation=7;
-    view.source.size=16;view.data.size=1;
-    const auto before_guard=state.calls;
-    assert(deliverVerifiedTrackForAuthor(&binding,false,false,view,identity) && state.calls==before_guard+1);
-    identity.ready=false;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));identity.ready=true;
-    identity.error=true;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));identity.error=false;
-    ++identity.generation;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));--identity.generation;
-    identity.public_key[0]^=1;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));identity.public_key[0]^=1;
-    identity.public_key[32]^=1;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));identity.public_key[32]^=1;
-    assert(state.calls==before_guard+1);
-    binding.expected_author_generation=0;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));
-    binding.expected_author_generation=7;binding.expected_local_author=nullptr;assert(!deliverVerifiedTrackForAuthor(&binding,false,false,view,identity));
-    binding.expected_author_generation=0;identity.ready=false;
-    assert(trackBindingAuthorMatches(&binding,identity));
-    state.calls=before_guard;
+    uint8_t expected_public[64];
+    std::memset(expected_public, 4, 64);
+    std::memcpy(identity.public_key, expected_public, 64);
+    binding.expected_local_author = expected_public;
+    binding.expected_author_generation = 7;
+    view.source.size = 16;
+    view.data.size = 1;
+    const auto before_guard = state.calls;
+    assert(deliverVerifiedTrackForAuthor(&binding, false, false, view, identity) && state.calls == before_guard + 1);
+    identity.ready = false;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    identity.ready = true;
+    identity.error = true;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    identity.error = false;
+    ++identity.generation;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    --identity.generation;
+    identity.public_key[0] ^= 1;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    identity.public_key[0] ^= 1;
+    identity.public_key[32] ^= 1;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    identity.public_key[32] ^= 1;
+    assert(state.calls == before_guard + 1);
+    binding.expected_author_generation = 0;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    binding.expected_author_generation = 7;
+    binding.expected_local_author = nullptr;
+    assert(!deliverVerifiedTrackForAuthor(&binding, false, false, view, identity));
+    binding.expected_author_generation = 0;
+    identity.ready = false;
+    assert(trackBindingAuthorMatches(&binding, identity));
+    state.calls = before_guard;
     view.data.size = 1;
     view.source.size = 15;
     assert(!deliverVerifiedTrack(&binding, false, false, view) && state.calls == 2);

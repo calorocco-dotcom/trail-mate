@@ -1,6 +1,6 @@
 #pragma once
-#include "track_sharing/signed_object_head.h"
 #include "track_sharing/object_head_store.h"
+#include "track_sharing/signed_object_head.h"
 namespace track_sharing
 {
 // Caller holds immutable signed bytes, current identity and object exclusive
@@ -21,8 +21,8 @@ inline bool signedHeadMatches(const ObjectHead& head, const VerifiedManifestView
 }
 template <class Store>
 HeadStoreResult persistSignedObjectHead(Store& store, const VerifiedManifestView& signed_view, const RevisionReservation& reservation,
-                                       uint32_t generation, geocaching::ByteView author, geocaching::ByteView author_hash,
-                                       ObjectHead& current, ObjectHead& next, ObjectHead& verify, uint8_t* scratch, size_t capacity)
+                                        uint32_t generation, geocaching::ByteView author, geocaching::ByteView author_hash,
+                                        ObjectHead& current, ObjectHead& next, ObjectHead& verify, uint8_t* scratch, size_t capacity)
 {
     if (&current == &next || &current == &verify || &next == &verify) return HeadStoreResult::Invalid;
     const auto loaded = store.load(current, verify, scratch, capacity);

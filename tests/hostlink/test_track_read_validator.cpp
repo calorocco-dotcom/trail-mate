@@ -65,41 +65,58 @@ int main()
     assert(!validator.validate(8, id, decoded, {raw.data(), length}));
     track_sharing::ReadResponseValidator<Crypto, Hash> regional(context, crypto, hash, manifest, row, page, workspace.data(), workspace.size(), &regional_workspace);
     {
-        geocaching::protocol::CmpWriter response(raw.data(),raw.size());
-        assert(envelope(response,9,200,8)&&response.unsignedInteger(1)&&response.text("trailmate.track.regions.v1")&&response.text("test")&&response.binary(context.file_hash)&&
-               response.unsignedInteger(3)&&response.unsignedInteger(32)&&response.unsignedInteger(1024)&&response.array(5));
-        for(unsigned op=9;op<=13;op++)assert(response.unsignedInteger(op));
-        length=response.size();
-        assert(track_sharing::decodeTrackReadEnvelope({raw.data(),length},id,9,decoded));
-        assert(!validator.validate(9,id,decoded,{raw.data(),length}));
-        assert(regional.validate(9,id,decoded,{raw.data(),length})&&regional_workspace.capabilities.depth==3);
+        geocaching::protocol::CmpWriter response(raw.data(), raw.size());
+        assert(envelope(response, 9, 200, 8) && response.unsignedInteger(1) && response.text("trailmate.track.regions.v1") && response.text("test") && response.binary(context.file_hash) &&
+               response.unsignedInteger(3) && response.unsignedInteger(32) && response.unsignedInteger(1024) && response.array(5));
+        for (unsigned op = 9; op <= 13; op++) assert(response.unsignedInteger(op));
+        length = response.size();
+        assert(track_sharing::decodeTrackReadEnvelope({raw.data(), length}, id, 9, decoded));
+        assert(!validator.validate(9, id, decoded, {raw.data(), length}));
+        assert(regional.validate(9, id, decoded, {raw.data(), length}) && regional_workspace.capabilities.depth == 3);
     }
-    regional_scope.name_space="test";regional_scope.id="test:r";regional_scope.version=context.file_hash;regional_scope.depth=3;context.region=&regional_scope;context.query=&query;
+    regional_scope.name_space = "test";
+    regional_scope.id = "test:r";
+    regional_scope.version = context.file_hash;
+    regional_scope.depth = 3;
+    context.region = &regional_scope;
+    context.query = &query;
     {
-        geocaching::protocol::CmpWriter response(raw.data(),raw.size());
-        assert(envelope(response,10,200,3)&&response.binary(context.file_hash)&&response.nil()&&response.array(0));length=response.size();
-        assert(track_sharing::decodeTrackReadEnvelope({raw.data(),length},id,10,decoded)&&regional.validate(10,id,decoded,{raw.data(),length}));
-        context.region=nullptr;assert(!regional.validate(10,id,decoded,{raw.data(),length}));context.region=&regional_scope;
-    }
-    {
-        geocaching::protocol::CmpWriter response(raw.data(),raw.size());
-        assert(envelope(response,11,200,3)&&response.binary(context.file_hash)&&response.array(7)&&response.text("test:r")&&response.nil()&&response.unsignedInteger(0)&&response.text("Root")&&
-               response.array(0)&&response.array(4)&&response.signedInteger(0)&&response.signedInteger(0)&&response.signedInteger(1)&&response.signedInteger(1)&&response.unsignedInteger(0)&&
-               response.array(3)&&response.text("region-e7-json-v1")&&response.binary(context.file_hash)&&response.unsignedInteger(100));length=response.size();
-        assert(track_sharing::decodeTrackReadEnvelope({raw.data(),length},id,11,decoded)&&regional.validate(11,id,decoded,{raw.data(),length}));
-        regional_scope.id="test:other";assert(!regional.validate(11,id,decoded,{raw.data(),length}));regional_scope.id="test:r";
-    }
-    {
-        geocaching::protocol::CmpWriter response(raw.data(),raw.size());
-        assert(envelope(response,12,200,4)&&response.binary(context.file_hash)&&response.unsignedInteger(3)&&response.unsignedInteger(0)&&response.binary({data,3}));length=response.size();
-        assert(track_sharing::decodeTrackReadEnvelope({raw.data(),length},id,12,decoded)&&regional.validate(12,id,decoded,{raw.data(),length}));
-        context.region=nullptr;assert(!regional.validate(12,id,decoded,{raw.data(),length}));context.region=&regional_scope;
+        geocaching::protocol::CmpWriter response(raw.data(), raw.size());
+        assert(envelope(response, 10, 200, 3) && response.binary(context.file_hash) && response.nil() && response.array(0));
+        length = response.size();
+        assert(track_sharing::decodeTrackReadEnvelope({raw.data(), length}, id, 10, decoded) && regional.validate(10, id, decoded, {raw.data(), length}));
+        context.region = nullptr;
+        assert(!regional.validate(10, id, decoded, {raw.data(), length}));
+        context.region = &regional_scope;
     }
     {
-        geocaching::protocol::CmpWriter response(raw.data(),raw.size());
-        context.query_binding=context.file_hash;
-        assert(envelope(response,13,200,3)&&response.unsignedInteger(9007199254740993ULL)&&response.nil()&&response.array(0));length=response.size();
-        assert(track_sharing::decodeTrackReadEnvelope({raw.data(),length},id,13,decoded)&&regional.validate(13,id,decoded,{raw.data(),length}));
-        query.has_snapshot=true;query.snapshot=9007199254740994ULL;assert(!regional.validate(13,id,decoded,{raw.data(),length}));
+        geocaching::protocol::CmpWriter response(raw.data(), raw.size());
+        assert(envelope(response, 11, 200, 3) && response.binary(context.file_hash) && response.array(7) && response.text("test:r") && response.nil() && response.unsignedInteger(0) && response.text("Root") &&
+               response.array(0) && response.array(4) && response.signedInteger(0) && response.signedInteger(0) && response.signedInteger(1) && response.signedInteger(1) && response.unsignedInteger(0) &&
+               response.array(3) && response.text("region-e7-json-v1") && response.binary(context.file_hash) && response.unsignedInteger(100));
+        length = response.size();
+        assert(track_sharing::decodeTrackReadEnvelope({raw.data(), length}, id, 11, decoded) && regional.validate(11, id, decoded, {raw.data(), length}));
+        regional_scope.id = "test:other";
+        assert(!regional.validate(11, id, decoded, {raw.data(), length}));
+        regional_scope.id = "test:r";
+    }
+    {
+        geocaching::protocol::CmpWriter response(raw.data(), raw.size());
+        assert(envelope(response, 12, 200, 4) && response.binary(context.file_hash) && response.unsignedInteger(3) && response.unsignedInteger(0) && response.binary({data, 3}));
+        length = response.size();
+        assert(track_sharing::decodeTrackReadEnvelope({raw.data(), length}, id, 12, decoded) && regional.validate(12, id, decoded, {raw.data(), length}));
+        context.region = nullptr;
+        assert(!regional.validate(12, id, decoded, {raw.data(), length}));
+        context.region = &regional_scope;
+    }
+    {
+        geocaching::protocol::CmpWriter response(raw.data(), raw.size());
+        context.query_binding = context.file_hash;
+        assert(envelope(response, 13, 200, 3) && response.unsignedInteger(9007199254740993ULL) && response.nil() && response.array(0));
+        length = response.size();
+        assert(track_sharing::decodeTrackReadEnvelope({raw.data(), length}, id, 13, decoded) && regional.validate(13, id, decoded, {raw.data(), length}));
+        query.has_snapshot = true;
+        query.snapshot = 9007199254740994ULL;
+        assert(!regional.validate(13, id, decoded, {raw.data(), length}));
     }
 }

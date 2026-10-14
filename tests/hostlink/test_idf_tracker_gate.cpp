@@ -2,8 +2,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
-#include <string>
 #include <cstring>
+#include <string>
 
 static bool available = true, fail_open = false;
 static unsigned headers = 0, footers = 0, samples = 0, removals = 0;

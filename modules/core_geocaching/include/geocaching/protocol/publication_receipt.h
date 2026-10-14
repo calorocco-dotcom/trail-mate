@@ -14,9 +14,9 @@ struct PublicationReceiptView
 // Inputs are immutable; the storage worker lends a disjoint 320-byte scratch
 // area. This proof observes a head at a time, not a promise of future currency.
 inline VerificationResult verifyPublicationReceipt(ByteView raw, ByteView signature, ByteView public_key,
-                                                    ByteView directory, ByteView epoch, const VerifiedRecordView& content,
-                                                    RecordCrypto& crypto, uint8_t* workspace, size_t capacity,
-                                                    PublicationReceiptView& output)
+                                                   ByteView directory, ByteView epoch, const VerifiedRecordView& content,
+                                                   RecordCrypto& crypto, uint8_t* workspace, size_t capacity,
+                                                   PublicationReceiptView& output)
 {
     const auto overlaps = [](ByteView a, ByteView b)
     {
@@ -25,9 +25,9 @@ inline VerificationResult verifyPublicationReceipt(ByteView raw, ByteView signat
         return x <= y ? y - x < a.size : x - y < b.size;
     };
     const ByteView result_bytes{reinterpret_cast<const uint8_t*>(&output), sizeof(output)};
-    const ByteView inputs[] = {raw, signature, public_key, directory, epoch, content.record.encoded, content.signature,
-                              {reinterpret_cast<const uint8_t*>(&content), sizeof(content)}};
-    for (const auto input : inputs) if (overlaps(result_bytes, input)) return VerificationResult::InvalidRecord;
+    const ByteView inputs[] = {raw, signature, public_key, directory, epoch, content.record.encoded, content.signature, {reinterpret_cast<const uint8_t*>(&content), sizeof(content)}};
+    for (const auto input : inputs)
+        if (overlaps(result_bytes, input)) return VerificationResult::InvalidRecord;
     if (overlaps(result_bytes, {workspace, capacity})) return VerificationResult::InvalidRecord;
     output = {};
     if (!raw.data || !raw.size || raw.size > 256 || !signature.data || signature.size != 64 ||

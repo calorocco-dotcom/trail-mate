@@ -7,18 +7,18 @@
 
 #include "../../internal/blob_store_io.h"
 #include "chat/infra/meshcore/crypto/ed25519/ed_25519.h"
+#include "hostlink/identity_restore_request.h"
 #include "platform/esp/common/config_preferences.h"
-#include "platform/esp/common/identity_generation_store.h"
 #include "platform/esp/common/identity_generation_recovery.h"
+#include "platform/esp/common/identity_generation_store.h"
 #include "platform/esp/common/identity_key_state.h"
 #include "platform/esp/common/identity_native_key_validation.h"
 #include "platform/esp/common/identity_seed_key_conversion.h"
 #include "platform/esp/common/reticulum_crypto_compat.h"
 #include "platform/esp/common/reticulum_runtime_compat.h"
-#include "hostlink/identity_restore_request.h"
 
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 
 namespace chat::lxmf
 {
@@ -176,7 +176,11 @@ bool LxmfIdentity::loadFromPrefs()
         struct ReleaseRecord
         {
             uint8_t* record;
-            ~ReleaseRecord() { clearIdentityRecordWork(record, kIdentityRecordWorkBytes); std::free(record); }
+            ~ReleaseRecord()
+            {
+                clearIdentityRecordWork(record, kIdentityRecordWorkBytes);
+                std::free(record);
+            }
         } release_record{record};
         if (readIdentityRecord(record, kIdentityRecordWorkBytes) != IdentityRecordResult::Ready ||
             !validateNativeIdentityKeys(record + 12, record + 76, record + kIdentityRecordBytes, 32)) return false;
@@ -291,7 +295,7 @@ void LxmfIdentity::recomputeDerivedFields()
 }
 
 DeviceIdentityRestoreResult LxmfIdentity::restoreNativeIdentity(const hostlink::management::IdentityRestoreView& request,
-                                                              uint8_t* work, size_t capacity)
+                                                                uint8_t* work, size_t capacity)
 {
     using Result = DeviceIdentityRestoreResult;
     using namespace platform::esp::common;
@@ -310,7 +314,11 @@ DeviceIdentityRestoreResult LxmfIdentity::restoreNativeIdentity(const hostlink::
     if (overlaps(request.expected_public.data, 64) || overlaps(request.payload.data, request.payload.size) ||
         overlaps(request.signature.data, request.signature.size) || overlaps(request.public_key.data, 64) ||
         overlaps(request.private_key.data, request.private_key.size) || overlaps(request.identity_hash.data, 16) || overlaps(request.delivery.data, 16)) return Result::InvalidInput;
-    struct Clear { uint8_t* work; ~Clear() { clearIdentityRecordWork(work, work_size); } } clear{work};
+    struct Clear
+    {
+        uint8_t* work;
+        ~Clear() { clearIdentityRecordWork(work, work_size); }
+    } clear{work};
     if (request.expected_generation != author_generation_ ||
         std::memcmp(request.expected_public.data, enc_pub_.data(), 32) ||
         std::memcmp(request.expected_public.data + 32, sig_pub_.data(), 32)) return Result::StaleIdentity;
@@ -342,8 +350,8 @@ DeviceIdentityRestoreResult LxmfIdentity::restoreNativeIdentity(const hostlink::
         clearIdentityRecordWork(sig_priv_.data(), sig_priv_.size());
         return stored == IdentityRecordResult::Committed ? Result::CommittedRebootRequired : Result::IndeterminateRebootRequired;
     }
-    return stored == IdentityRecordResult::TargetChanged ? Result::StaleIdentity :
-           stored == IdentityRecordResult::Invalid ? Result::InvalidInput : Result::StorageError;
+    return stored == IdentityRecordResult::TargetChanged ? Result::StaleIdentity : stored == IdentityRecordResult::Invalid ? Result::InvalidInput
+                                                                                                                           : Result::StorageError;
 }
 
 bool LxmfIdentity::advanceAuthorGeneration()

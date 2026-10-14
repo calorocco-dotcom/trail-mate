@@ -22,11 +22,12 @@ int main()
     using namespace track_sharing;
     uint8_t session[16] = {1}, other[16] = {2}, zero[16]{}, scratch[128];
     {
-        Owner rejected;rejected.write_result=JournalStoreResult::Conflict;
-        UploadSession<Owner> lease(rejected,session,7,100);
-        assert(lease.matches(session,7,30099));
-        assert(lease.append(session,7,30099,session,0,session,1,scratch,sizeof(scratch))==JournalStoreResult::Conflict);
-        assert(lease.advance(7,30100,true,scratch,sizeof(scratch))==UploadSealResult::Cancelled&&lease.releasable());
+        Owner rejected;
+        rejected.write_result = JournalStoreResult::Conflict;
+        UploadSession<Owner> lease(rejected, session, 7, 100);
+        assert(lease.matches(session, 7, 30099));
+        assert(lease.append(session, 7, 30099, session, 0, session, 1, scratch, sizeof(scratch)) == JournalStoreResult::Conflict);
+        assert(lease.advance(7, 30100, true, scratch, sizeof(scratch)) == UploadSealResult::Cancelled && lease.releasable());
     }
     for (unsigned mode = 0; mode < 4; ++mode)
     {

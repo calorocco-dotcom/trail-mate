@@ -13,7 +13,10 @@
 #include <cstdint>
 #include <cstring>
 
-namespace hostlink::management { struct IdentityRestoreView; }
+namespace hostlink::management
+{
+struct IdentityRestoreView;
+}
 namespace chat::lxmf
 {
 

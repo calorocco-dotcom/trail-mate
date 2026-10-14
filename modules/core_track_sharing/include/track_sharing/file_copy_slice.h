@@ -4,7 +4,14 @@
 #include <cstring>
 namespace track_sharing
 {
-enum class FileCopyResult : uint8_t { Pending, Copied, StorageFailure, Conflict, Invalid };
+enum class FileCopyResult : uint8_t
+{
+    Pending,
+    Copied,
+    StorageFailure,
+    Conflict,
+    Invalid
+};
 // Caller admits an exclusive, media-bound temporary file and retains offset.
 // This primitive does not authorize paths or declare content hash verification.
 template <class Io>
@@ -14,7 +21,8 @@ FileCopyResult copyFileSlice(Io& io, const char* source, const char* temporary, 
     if (!source || !*source || !temporary || !*temporary || !std::strcmp(source, temporary) ||
         !bytes || bytes > 8388608 || offset >= bytes || !scratch || !capacity) return FileCopyResult::Invalid;
     const size_t count = std::min({size_t(320), capacity, size_t(bytes - offset)});
-    const auto overlaps = [](const void* a, size_t na, const void* b, size_t nb) {
+    const auto overlaps = [](const void* a, size_t na, const void* b, size_t nb)
+    {
         const auto x = reinterpret_cast<uintptr_t>(a), y = reinterpret_cast<uintptr_t>(b);
         return na && nb && (x <= y ? y - x < na : x - y < nb);
     };

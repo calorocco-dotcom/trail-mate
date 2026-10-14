@@ -16,7 +16,7 @@ int main(int argc, char** argv)
     }
     track_sharing::ManifestView view;
     if (!track_sharing::decodeManifest({bytes.data(), bytes.size()}, view)) return 1;
-    if(argc != 2 && (view.created != 5000000000ULL || view.points != 1)) return 1;
+    if (argc != 2 && (view.created != 5000000000ULL || view.points != 1)) return 1;
     std::cout << view.created << ',' << view.points << '\n';
     return 0;
 }

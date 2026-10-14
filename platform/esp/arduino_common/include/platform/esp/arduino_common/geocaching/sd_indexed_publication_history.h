@@ -11,7 +11,7 @@ class SdIndexedPublicationHistory
 {
   public:
     SdIndexedPublicationHistory(const ::geocaching::storage::VolumeInstance& volume, ::geocaching::protocol::RecordCrypto& crypto,
-                                 uint8_t* verification = nullptr, size_t verification_capacity = 0)
+                                uint8_t* verification = nullptr, size_t verification_capacity = 0)
         : volume_(volume), crypto_(crypto), verification_(verification), verification_capacity_(verification_capacity) {}
     bool begin(const ::geocaching::storage::IndexRootView& root, ::geocaching::ByteView key, uint64_t generation,
                const ::geocaching::GeocacheId& cache, ::geocaching::ByteView author,
@@ -99,14 +99,19 @@ class SdIndexedPublicationHistory
         if (status == IndexScanStep::Working) return IndexGetStep::Working;
         if (status == IndexScanStep::End)
         {
-            if(history_.needsRecoveryValidation())
+            if (history_.needsRecoveryValidation())
             {
-                if(!history_.beginRecoveryValidation())return IndexGetStep::Invalid;
+                if (!history_.beginRecoveryValidation()) return IndexGetStep::Invalid;
                 // Drop before allocating so a second scan never owns another
                 // simultaneous frame or scanner. The same snapshot stays pinned.
-                scan_.reset();scan_.reset(::platform::memory::createPsram<SdIndexScan>(volume_));
-                if(!scan_){unavailable_=true;return IndexGetStep::Invalid;}
-                if(!scan_->begin(root_,3,frame_,capacity_))return IndexGetStep::Invalid;
+                scan_.reset();
+                scan_.reset(::platform::memory::createPsram<SdIndexScan>(volume_));
+                if (!scan_)
+                {
+                    unavailable_ = true;
+                    return IndexGetStep::Invalid;
+                }
+                if (!scan_->begin(root_, 3, frame_, capacity_)) return IndexGetStep::Invalid;
                 return IndexGetStep::Working;
             }
             return history_.finish(confirmed_, *out_) ? IndexGetStep::Ready : IndexGetStep::Invalid;

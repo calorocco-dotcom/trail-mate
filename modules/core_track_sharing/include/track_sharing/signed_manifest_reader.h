@@ -1,6 +1,6 @@
 #pragma once
-#include "track_sharing/file_integrity.h"
 #include "geocaching/domain/record.h"
+#include "track_sharing/file_integrity.h"
 namespace track_sharing
 {
 // Read exact bounded signed CMP bytes into caller-admitted PSRAM. Caller must
@@ -24,7 +24,9 @@ class SignedManifestReader
         const bool sized = io_.size(opened.handle, size), closed = io_.close(opened.handle);
         if (!sized || !closed) return result_ = FileIntegrityResult::StorageFailure;
         if (size < 69 || size > 4166) return result_ = FileIntegrityResult::Invalid;
-        output_ = output; path_ = path; size_ = uint32_t(size);
+        output_ = output;
+        path_ = path;
+        size_ = uint32_t(size);
         return result_ = FileIntegrityResult::Pending;
     }
     FileIntegrityResult step()
@@ -42,8 +44,13 @@ class SignedManifestReader
     }
     FileIntegrityResult cancel() { return result_ == FileIntegrityResult::Pending ? stop(FileIntegrityResult::Cancelled) : result_; }
     geocaching::ByteView bytes() const { return result_ == FileIntegrityResult::Ready ? geocaching::ByteView{output_, size_} : geocaching::ByteView{}; }
+
   private:
-    FileIntegrityResult stop(FileIntegrityResult result) { if (output_) std::memset(output_, 0, size_); return result_ = result; }
+    FileIntegrityResult stop(FileIntegrityResult result)
+    {
+        if (output_) std::memset(output_, 0, size_);
+        return result_ = result;
+    }
     Io& io_;
     const char* path_ = nullptr;
     uint8_t* output_ = nullptr;

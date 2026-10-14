@@ -13,11 +13,13 @@ inline Status ensureObjectDirectory(uint32_t media, geocaching::ByteView object,
 {
     namespace storage = platform::esp::arduino_common::storage;
     if (!scratch || capacity < track_sharing::kObjectPathCapacity) return Status::Internal;
-    const auto ready = [&]() { return media == storage::sd_media_session() && storage::sd_card_ready() && !storage::sd_external_block_owner_active(); };
+    const auto ready = [&]()
+    { return media == storage::sd_media_session() && storage::sd_card_ready() && !storage::sd_external_block_owner_active(); };
     if (!ready()) return Status::StorageUnavailable;
     auto* object_path = reinterpret_cast<char*>(scratch);
     if (!track_sharing::resolveObjectPath(object, track_sharing::ObjectFile::Directory, {}, object_path, capacity)) return Status::InvalidField;
-    const auto probe = [&](const char* path) { storage::SdRuntimeDir directory; return directory.open_read_status(path, media); };
+    const auto probe = [&](const char* path)
+    { storage::SdRuntimeDir directory; return directory.open_read_status(path, media); };
     for (const auto* path : {"/trailmate", track_sharing::kObjectDirectory, static_cast<const char*>(object_path)})
     {
         const auto status = probe(path);
@@ -59,8 +61,8 @@ inline Status requireEmptyObjectDirectory(uint32_t media, geocaching::ByteView o
 // and verified head absence under the same exclusive object/media lease.
 template <class Store>
 Status requireOwnedFirstRevisionDirectory(uint32_t media, const track_sharing::PrepareRequest& request,
-                                         const uint8_t* author_hash, const track_sharing::RevisionReservation& current,
-                                         Store& store, track_sharing::RevisionReservation& verify, uint8_t* scratch, size_t capacity)
+                                          const uint8_t* author_hash, const track_sharing::RevisionReservation& current,
+                                          Store& store, track_sharing::RevisionReservation& verify, uint8_t* scratch, size_t capacity)
 {
     namespace storage = platform::esp::arduino_common::storage;
     if (!scratch || capacity < 288) return Status::Internal;
@@ -88,7 +90,8 @@ Status requireOwnedFirstRevisionDirectory(uint32_t media, const track_sharing::P
         if (entry == storage::SdDirReadStatus::End) return media == storage::sd_media_session() && storage::sd_card_ready() && !storage::sd_external_block_owner_active() ? Status::Ok : Status::StorageUnavailable;
         if (entry != storage::SdDirReadStatus::Entry) return Status::StorageUnavailable;
         if (is_directory) return Status::Conflict;
-        const size_t length = std::strlen(name), key_size = length == 36 ? 16 : length == 68 ? 32 : 0;
+        const size_t length = std::strlen(name), key_size = length == 36 ? 16 : length == 68 ? 32
+                                                                                             : 0;
         if (!key_size) return Status::Conflict;
         const auto* key = key_size == 16 ? current.operation : current.candidate;
         for (size_t i = 0; i < key_size; ++i)
