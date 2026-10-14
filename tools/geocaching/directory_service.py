@@ -20,6 +20,7 @@ import msgpack
 
 from directory_store import APP_TYPE, DirectoryStore, packed, unpacked
 from directory_sync import ReplicaScheduler
+from reply_queue import advance_reply_queue
 
 
 def report(event, **fields):
@@ -78,7 +79,7 @@ class DirectoryService:
         self.delivery = self.router.register_delivery_identity(self.identity, display_name=name, stamp_cost=None)
         self.discovery = RNS.Destination(self.identity, RNS.Destination.IN, RNS.Destination.SINGLE,
                                          "trailmate", "geocache", "directory")
-        self.store = DirectoryStore(state / "directory.sqlite", self.delivery.hash, name)
+        self.store = DirectoryStore(state / "directory.sqlite", self.delivery.hash, name, receipt_identity=self.identity)
         # Only validated source keys and <=8 KiB application payloads enter this
         # queue. Do not retain full transport messages/resources in app memory.
         self.inbound = queue.Queue(maxsize=32)
@@ -161,6 +162,7 @@ class DirectoryService:
         started = time.monotonic()
         next_announce = started + (random.uniform(0, 60) if startup_delay is None else startup_delay)
         last_announce, announced_sequence, maintenance_at = -float("inf"), -1, started
+        next_outbound = started
         report("ready", delivery=self.delivery.hash.hex(), discovery=self.discovery.hash.hex(),
                epoch=self.store.epoch.hex(), sequence=self.store.sequence())
         try:
@@ -172,6 +174,7 @@ class DirectoryService:
                 self.outbound[:] = [m for m in self.outbound if m.state not in
                                     (LXMF.LXMessage.DELIVERED, LXMF.LXMessage.FAILED,
                                      LXMF.LXMessage.REJECTED, LXMF.LXMessage.CANCELLED)]
+                next_outbound = advance_reply_queue(self.router, self.outbound, now, next_outbound)
                 sequence = self.store.sequence()
                 dirty_due = sequence != announced_sequence and now - last_announce >= 1800
                 if now >= next_announce or (last_announce != -float("inf") and dirty_due):

@@ -20,7 +20,11 @@ self.onmessage = async ({data}) => {
       await client?.close(); client = null;
     } else {
       if (!client || !liveReady) throw Error('Live directory connection unavailable');
-      if (command === 'query') await client.query(args.bounds, args.stateMask, args.region, args.queryToken, {refresh:args.refresh===true});
+      if (command === 'directories') result = await client.verifiedDirectories();
+      else if (command === 'current') result = await client.current(args.directoryKey,args.cacheId);
+      else if (command === 'publish') result = await client.publish(args.signed,{directoryKey:args.directoryKey,authorPublicKey:args.authorPublicKey});
+      else if (command === 'publicationReceipt') result = await client.publicationReceipt(args.directoryKey,args.signed,args.authorPublicKey);
+      else if (command === 'query') await client.query(args.bounds, args.stateMask, args.region, args.queryToken, {refresh:args.refresh===true});
       else if (command === 'more') await client.more();
       else if (command === 'get') result = await client.get(args.cacheId);
       else if (command === 'download') {
@@ -35,6 +39,7 @@ self.onmessage = async ({data}) => {
     }
     self.postMessage({id, result});
   } catch (error) {
-    self.postMessage({id, error: error.message});
+    self.postMessage({id, error: error.message, errorCode:typeof error.code==='string'?error.code:null,
+                     errorStatus:Number.isInteger(error.status)?error.status:null,errorReason:typeof error.reason==='string'?error.reason:null});
   }
 };

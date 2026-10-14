@@ -5,6 +5,10 @@ import {APP_TYPE, bytes, decode, encode, equal, integer, validText, validateSumm
 import {compressionProvider, MAX_LXMF_BYTES} from './compression.js';
 import {countryContains} from './country-boundaries.js';
 import {createLiveRefresh} from './live-refresh.js';
+import {publishSignedCache} from './publish-signed.js';
+import {readDirectoryCurrent} from './directory-current.js';
+import {readDirectoryPublicationReceipt} from './directory-receipt.js';
+import {rememberQuerySnapshot,releaseQuerySnapshots} from './query-snapshots.js';
 
 // These limits apply to the dedicated worker's stack instance, before links
 // are accepted. Large LXMF messages still use normal RNS Resource transport.
@@ -41,11 +45,29 @@ class BrowserLXMRouter extends LXMRouter {
 }
 
 export class DirectoryClient {
-  constructor(notify = () => {}) {
+  publicationReceipt(directoryKey,signed,authorPublicKey){return readDirectoryPublicationReceipt(this,directoryKey,signed,authorPublicKey);}
+  current(directoryKey,cacheId){return readDirectoryCurrent(this,directoryKey,cacheId);}
+  async verifiedDirectories(){
+    const rows=[];
+    for(const entry of this.directories.values()){
+      if(!entry.ready)continue;
+      const publicKey=await entry.identity.getPublicKey();
+      if(this.closed||this.directories.get(entry.key)!==entry||!entry.ready)continue;
+      rows.push({key:entry.key,delivery:entry.destination.slice(),publicKey:publicKey.slice(),epoch:entry.epoch.slice(),name:entry.name,capabilitiesVerified:true,receiptSupported:entry.receiptSupported===true});
+    }
+    return rows;
+  }
+  publish(signed,{directoryKey,authorPublicKey}={}){
+    return publishSignedCache(this,directoryKey,signed,authorPublicKey);
+  }
+  constructor(notify = () => {}, appType = APP_TYPE) {
+    if(![APP_TYPE,'trailmate.track.v1'].includes(appType))throw Error('Unsupported browser directory protocol');
+    this.appType=appType;
     this.notify = notify;
     this.directories = new Map();
     this.rows = new Map();
     this.pages = [];
+    this.querySnapshots = new Map();
     this.tail = Promise.resolve();
     this.generation = 0;
     this.pending = null;
@@ -136,7 +158,7 @@ export class DirectoryClient {
     if (!equal(data[1], delivery.destinationHash)) return;
     const key = toHex(data[1]);
     if (this.directories.has(key) || this.directories.size >= 32) return;
-    const entry = {key, destination: data[1], identity, name: data[4], ready: false};
+    const entry = {key, destination: data[1], identity, epoch:data[2].slice(), name: data[4], ready: false};
     this.directories.set(key, entry);
     try {
       await this.rns.transport.rememberIdentity(await packet.getHash(), data[1], await identity.getPublicKey(), null);
@@ -150,10 +172,25 @@ export class DirectoryClient {
 
   async checkDirectory(entry) {
     const caps = await this.request(entry, 0, []);
-    if (!Array.isArray(caps) || caps.length !== 12 || !Array.isArray(caps[0]) || !caps[0].includes(1) ||
-        !Array.isArray(caps[1]) || !caps[1].includes(1) || !Array.isArray(caps[2]) ||
-        ![0,1,2,3,4].every(op => caps[2].includes(op)) || caps[3] !== 8192 || caps[4] !== 4096 ||
-        !integer(caps[5], 1, 64) || caps[8] !== 2 || caps[10] !== 1) throw Error('Directory is not compatible');
+    const compatible=value=>Array.isArray(value)&&value.length===12&&Array.isArray(value[0])&&value[0].includes(1)&&
+      Array.isArray(value[1])&&value[1].includes(1)&&Array.isArray(value[2])&&value[2].length<=32&&
+      value[2].every(op=>integer(op,0,255))&&new Set(value[2]).size===value[2].length&&
+      [0,1,2,3,4].every(op=>value[2].includes(op))&&value[3]===8192&&value[4]===4096&&
+      integer(value[5],1,64)&&value[8]===2&&value[10]===1;
+    if(!compatible(caps))throw Error('Directory is not compatible');
+    entry.receiptSupported = caps[2].includes(5);
+    entry.queryReleaseSupported = false;
+    // Keep the legacy capability response unchanged. Old services reject this
+    // optional selector; new services explicitly advertise query lease release.
+    let extended;
+    try{extended=await this.request(entry,0,[2]);}
+    catch(error){if(error.status!==400||error.reason!=='malformed_request')throw error;}
+    if(extended!==undefined){
+      if(!compatible(extended)||caps[2].some(op=>!extended[2].includes(op))||
+         [0,1,3,4,5,6,7,8,9,10,11].some(index=>!equal(encode(caps[index]),encode(extended[index]))))throw Error('Directory is not compatible');
+      entry.queryReleaseSupported=extended[2].includes(6);
+    }
+    if(this.closed||this.directories.get(entry.key)!==entry)throw Error('Directory connection changed');
     entry.ready = true;
     this.discoveryRefresh?.setReady(false);
     entry.limit = Math.min(20, caps[5]);
@@ -166,20 +203,22 @@ export class DirectoryClient {
         !equal(message.destinationHash, this.router.deliveryDest.destinationHash) ||
         !await message.verifySignature(pending.directory.identity)) return;
     const field = key => message.fields instanceof Map ? message.fields.get(key) : message.fields[key];
-    if (field(0xfb) !== APP_TYPE) return;
+    if (field(0xfb) !== this.appType) return;
     const response = decode(field(0xfc));
     if (!Array.isArray(response) || response.length !== 6 || response[0] !== 1 || response[1] !== 1 ||
         response[2] !== pending.operation || !equal(response[3], pending.id)) return;
     if (this.pending !== pending) return;
     if (response[4] === 200) pending.resolve(response[5]);
     else if (integer(response[4], 400, 599) && Array.isArray(response[5])) {
-      pending.reject(Error(`Directory ${response[4]}: ${String(response[5][0]).slice(0, 60)}`));
+      const reason=String(response[5][0]).slice(0,60);
+      pending.reject(Object.assign(Error(`Directory ${response[4]}: ${reason}`),{code:'DIRECTORY_REJECTED',status:response[4],reason}));
     }
   }
 
-  async request(directory, operation, body) {
+  async request(directory, operation, body, {requestId} = {}) {
     if (this.pending) throw Error('A directory request is already active');
-    const id = crypto.getRandomValues(new Uint8Array(16));
+    if(requestId!==undefined&&(!bytes(requestId,16)||!requestId.some(Boolean)))throw Error('Invalid directory request ID');
+    const id = requestId?.slice()??crypto.getRandomValues(new Uint8Array(16));
     const raw = encode([1, 0, operation, id, 8192, body]);
     let timer;
     const response = new Promise((resolve, reject) => {
@@ -190,7 +229,7 @@ export class DirectoryClient {
     response.catch(() => {});
     const send = () => this.router.send(new LXMessage({sourceHash: this.router.deliveryDest.destinationHash,
       destinationHash: directory.destination, title: 'Trail Mate Geocache v1', content: 'Geocache request',
-      fields: new Map([[0xfb, APP_TYPE], [0xfc, raw]])}), this.identity, null);
+      fields: new Map([[0xfb, this.appType], [0xfc, raw]])}), this.identity, null);
     let retry, attempts = 0, sending = false;
     const attempt = async () => {
       if (this.pending?.id !== id || sending || attempts >= 3) return;
@@ -224,7 +263,12 @@ export class DirectoryClient {
     if (!integer(stateMask, 1, 7)) return Promise.reject(Error('Invalid state filter'));
     const generation = ++this.generation;
     return this.enqueue(async () => {
+      if(generation!==this.generation)return;
       const previousPages=refresh ? this.queryPages || [] : [];
+      // Replacement discards old continuations; return their capacity before
+      // admitting a new snapshot. Current "more" never calls this operation.
+      await releaseQuerySnapshots(this);
+      if(generation!==this.generation)return;
       const nextRows=new Map();
       if (!refresh) this.rows=nextRows;
       this.pages = [];
@@ -264,11 +308,13 @@ export class DirectoryClient {
 
   async readPage(page, generation) {
     const result = await this.request(page.directory, 2, [page.bbox, page.stateMask, null, page.directory.limit, page.cursor]);
-    if (generation !== this.generation) return;
     if (!Array.isArray(result) || result.length !== 4 || !bytes(result[0], 16) || !Array.isArray(result[1]) ||
         result[1].length > page.directory.limit || !(result[2] === null || (result[2] instanceof Uint8Array && result[2].length >= 1 && result[2].length <= 64)) ||
         !integer(result[3], 0, 604800) || (result[2] !== null && !result[1].length) ||
         (page.snapshot && !equal(page.snapshot, result[0]))) throw Error('Invalid query page');
+    rememberQuerySnapshot(this,page,result);
+    // Even a response superseded while in flight has an owned lease to release.
+    if (generation !== this.generation) return;
     const rows=page.rows || this.rows;
     for (const summary of result[1]) {
       validateSummary(summary);
@@ -332,6 +378,7 @@ export class DirectoryClient {
 
   async close() {
     this.closed = true; this.generation++;
+    this.querySnapshots.clear();
     this.discoveryRefresh?.stop();
     this.pending?.reject(Error('Disconnected'));
     await this.interface?.disconnect();

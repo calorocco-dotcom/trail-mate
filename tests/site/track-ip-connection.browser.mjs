@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {build} from '../../site/node_modules/esbuild/lib/main.js';
+import {chromium} from '../../site/node_modules/playwright/index.mjs';
+import {trackIPText} from '../../site/i18n/track-ip-labels.js';
+import {locales} from '../../site/i18n/registry.js';
+const root=path.resolve('.codex-build/hostlink-codec/track-ip-connection-browser');await fs.mkdir(root,{recursive:true});
+await fs.writeFile(path.join(root,'NOTES.txt'),'Reusable track IP connection UI harness; Trail Mate web management task; generated from current source; remove after validation.');
+const source=`import React,{useState}from'react';import{createRoot}from'react-dom/client';import{ManagementCopyProvider}from'./i18n/management-copy.jsx';import{TrackIPConnection}from'./tracks/src/track-ip-connection.jsx';import'animal-island-ui/style';import'./tracks/src/directories.css';
+let language;function App(){const[locale,setLocale]=useState('zh-Hans');language=setLocale;return<ManagementCopyProvider locale={locale}><TrackIPConnection createClient={notify=>{const client={closed:false,connect:async(url,key,seeds)=>{window.connections.push({url,seeds});notify({type:'sources'});},verifiedDirectories:async()=>[{key:'directory',name:'IP trail directory',delivery:new Uint8Array(16),publicKey:new Uint8Array(64),epoch:new Uint8Array(16),capabilitiesVerified:true}],close:async()=>{client.closed=true;}};window.client=client;window.disconnectEvent=()=>notify({type:'status',state:'disconnected'});return client;}} onSelect={value=>{window.selection=value?{key:value.directory.key,ip:Boolean(value.network),fileLimit:value.directory.fileLimit}:null;}}/></ManagementCopyProvider>};window.connections=[];window.language=id=>language(id);createRoot(document.getElementById('root')).render(<App/>);`;
+await build({stdin:{contents:source,loader:'jsx',resolveDir:path.resolve('site')},bundle:true,format:'esm',outfile:path.join(root,'page.js'),loader:{'.png':'dataurl','.svg':'dataurl','.woff2':'dataurl','.woff':'dataurl','.ttf':'dataurl'},logLevel:'silent'});
+const server=http.createServer(async(req,res)=>{const name=new URL(req.url,'http://localhost').pathname.slice(1);if(!name){res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="page.css"><div id="root"></div><script type="module" src="page.js"></script>');return;}if(!['page.js','page.css'].includes(name)){res.writeHead(404).end();return;}res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':'text/css');res.end(await fs.readFile(path.join(root,name)));});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({channel:process.env.TRAIL_MATE_TEST_BROWSER_CHANNEL,headless:true});
+try{const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(String(error)));
+ await page.route('**/geocaching/network.json',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({endpoint:'wss://operator.test/',discoverySeeds:['ee'.repeat(16)],trackDiscoverySeeds:['01'.repeat(16),'A2'.repeat(16)]})}));
+ await page.goto('http://127.0.0.1:'+server.address().port);const text=trackIPText('zh-Hans');
+ await page.getByText(text.ready,{exact:true}).waitFor();assert.deepEqual(await page.evaluate(()=>window.connections),[{url:'wss://operator.test/',seeds:['01'.repeat(16),'a2'.repeat(16)]}]);assert.deepEqual(await page.evaluate(()=>window.selection),{key:'directory',ip:true,fileLimit:8388608});assert.equal(await page.getByLabel(text.endpoint,{exact:true}).isVisible(),false);
+ await page.getByRole('button',{name:text.disconnect,exact:true}).click();await page.getByText(text.advanced,{exact:true}).click();
+ await page.getByLabel(text.endpoint,{exact:true}).fill('wss://example.test/');await page.getByLabel(text.seed,{exact:true}).fill('04'.repeat(16));
+ await page.getByRole('button',{name:text.connect,exact:true}).click();await page.getByLabel(text.directory,{exact:true}).selectOption('directory');
+ assert.deepEqual(await page.evaluate(()=>window.selection),{key:'directory',ip:true,fileLimit:8388608});assert.deepEqual(await page.evaluate(()=>window.connections),[{url:'wss://operator.test/',seeds:['01'.repeat(16),'a2'.repeat(16)]},{url:'wss://example.test/',seeds:['04'.repeat(16)]}]);
+ await page.getByRole('button',{name:text.refresh,exact:true}).click();assert.equal(await page.getByLabel(text.directory,{exact:true}).inputValue(),'directory');assert.equal(await page.evaluate(()=>window.selection?.key),'directory');
+ for(const locale of locales){await page.evaluate(id=>window.language(id),locale.id);const copy=trackIPText(locale.id);await page.getByText(copy.ready,{exact:true}).waitFor();await page.getByText(copy.advanced,{exact:true}).waitFor();assert.equal(await page.getByLabel(copy.directory,{exact:true}).inputValue(),'directory');assert.equal(await page.evaluate(()=>window.connections.length),2);}
+ await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.evaluate(()=>{const original=window.client.verifiedDirectories;window.client.verifiedDirectories=()=>new Promise(resolve=>{window.finishRefresh=async()=>resolve(await original());});});
+ await page.getByRole('button',{name:trackIPText(locales.at(-1).id).refresh,exact:true}).click();await page.waitForFunction(()=>typeof window.finishRefresh==='function');await page.evaluate(()=>window.disconnectEvent());await page.getByText(trackIPText(locales.at(-1).id).offline,{exact:true}).waitFor();
+ await page.evaluate(async()=>{await window.finishRefresh();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});assert.equal(await page.evaluate(()=>window.selection),null);assert.equal(await page.getByRole('combobox').count(),0);
+ const last=trackIPText(locales.at(-1).id);
+ await page.getByRole('button',{name:last.disconnect,exact:true}).click();
+ await page.getByLabel(last.endpoint,{exact:true}).fill('wss://operator.test/');await page.getByLabel(last.seed,{exact:true}).fill('');
+ await page.getByRole('button',{name:last.connect,exact:true}).click();await page.getByText(last.ready,{exact:true}).waitFor();
+ assert.deepEqual(await page.evaluate(()=>window.connections.at(-1)),{url:'wss://operator.test/',seeds:['01'.repeat(16),'a2'.repeat(16)]});
+ assert.equal(await page.getByLabel(last.seed,{exact:true}).inputValue(),'');assert.equal(await page.evaluate(()=>window.connections.length),3);
+ assert.deepEqual(errors,[]);console.log('Track IP connection: automatic operator gateway/verified directory selection, collapsed advanced settings, protocol-specific hints, manual override, stable selection, late refresh rejection, 11 locales and mobile passed.');
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

@@ -1,0 +1,23 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {MODULE_SCHEMA} from '../../site/device/src/meshtastic-module-schema.js';
+import {moduleDuration,validateModuleDuration,formatModuleDuration,moduleDurationHint} from '../../site/device/src/config-module-duration.js';
+import {parseDurationInput,durationDisplay} from '../../site/device/src/config-duration.js';
+import {configModuleDurationText} from '../../site/i18n/config-module-duration-labels.js';import {configDurationText} from '../../site/i18n/config-duration-labels.js';
+import {configModuleFieldLabel,configModuleText} from '../../site/i18n/config-module-labels.js';import {locales} from '../../site/i18n/registry.js';
+import {configurationModuleSearchRows} from '../../site/device/src/config-module-search.js';import {configurationModuleReview} from '../../site/device/src/config-module-review.js';
+import {TmsDocument} from '../../site/device/src/tms-document.js';import {updateStructuredModuleField} from '../../site/device/src/meshtastic-module-model.js';
+const fixture=()=>new TmsDocument(new TextEncoder().encode('TMSET7\nschema.version=u16:7\ndocument.kind=enum:working\nmt_module.format=str:pb-v1\nmt_module.size=u16:2\nmt_module.chunk_count=u8:3\nmt_module.chunk.0=b64:QAE=\nmt_module.chunk.1=b64:\nmt_module.chunk.2=b64:\nEND\n'));
+function field(path){let message=MODULE_SCHEMA.root,result;for(const key of path){result=MODULE_SCHEMA.messages[message].fields.find(field=>field.name===key);message=result.message;}return result;}
+test('15 verified module durations have explicit native units and actual generated bounds',()=>{
+ const rows=[];function walk(message,path=[]){for(const f of MODULE_SCHEMA.messages[message].fields){const names=[...path,f.name];if(f.type==='MESSAGE')walk(f.message,names);else if(moduleDuration(names,f))rows.push([names,moduleDuration(names,f),f]);}}walk(MODULE_SCHEMA.root);assert.equal(rows.length,15);
+ assert.equal(moduleDuration(['serial','timeout'],field(['serial','timeout'])).nativeUnit,'milliseconds');assert.equal(moduleDuration(['store_forward','history_return_window'],field(['store_forward','history_return_window'])).nativeUnit,'minutes');assert.equal(field(['external_notification','nag_timeout']).max,65535);
+ for(const [path,spec,f] of rows){for(const unit of spec.units){const input=unit.factor===1?'2':'1.5',value=parseDurationInput(input,unit.factor);assert.equal(value,unit.factor*Number(input));validateModuleDuration(f,value);}assert.equal(durationDisplay(1,60).approximate,true);assert.equal(moduleDuration(path,{...f,type:'INT32'}),undefined);}
+ assert.equal(moduleDuration(['store_forward','records'],field(['store_forward','records'])),undefined);assert.equal(moduleDuration(['paxcounter','ble_threshold'],field(['paxcounter','ble_threshold'])),undefined);
+});
+test('module duration range rejects overflow and fractional native minutes without rounding',()=>{
+ const nag=field(['external_notification','nag_timeout']);assert.throws(()=>validateModuleDuration(nag,65536),error=>error.code==='CONFIG_RANGE'&&error.params.max===65535);validateModuleDuration(nag,65535);const full=field(['telemetry','device_update_interval']);validateModuleDuration(full,4294967295);assert.throws(()=>validateModuleDuration(full,4294967296));assert.throws(()=>parseDurationInput('1.5',1));assert.equal(parseDurationInput('.5',60),30);
+});
+test('all language helpers identify sender as an interval, preserve zero semantics and give units in review/search',()=>{
+ const base=fixture(),changed=updateStructuredModuleField(base,['telemetry','device_update_interval'],90),p=['telemetry','device_update_interval'];for(const {id} of locales){const text=configModuleDurationText(id);assert.ok(Object.values(text).every(value=>typeof value==='string'&&value.length));assert.equal(configModuleFieldLabel(['range_test','sender'],id),text.senderInterval);assert.equal(formatModuleDuration(p,{...field(p),value:90},id),new Intl.NumberFormat(id).format(90)+' '+configDurationText(id).seconds);const rows=configurationModuleReview(changed,base,id);assert.ok(rows.some(row=>row.after.includes(configDurationText(id).seconds)));const search=configurationModuleSearchRows(changed,base,{label:(path,kind)=>configModuleFieldLabel(path,id,kind),text:configModuleText(id)});assert.ok(search.find(row=>row.key==='module:telemetry.device_update_interval').help.includes(configDurationText(id).seconds));}
+ assert.equal(moduleDurationHint(['external_notification','nag_timeout']),'repeatOff');assert.equal(moduleDurationHint(['detection_sensor','state_broadcast_secs']),'eventsOnly');assert.equal(moduleDurationHint(['range_test','sender']),'senderOff');assert.equal(moduleDurationHint(['telemetry','device_update_interval']),'zeroRetained');
+});

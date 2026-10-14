@@ -82,6 +82,42 @@ class ReplicationTests(unittest.TestCase):
         self.assertIsNone(self.state()["page"])
         self.assertEqual(self.local.db.execute("SELECT COUNT(*) FROM objects").fetchone()[0], 2)
 
+    def test_receipt_capability_extends_legacy_replication_without_quarantine(self):
+        self.remote.receipt_identity = self.remote_identity
+        self.publish("Receipt-capable peer")
+        self.announce()
+        for _ in range(4):
+            self.step()
+            if self.sent:
+                self.deliver()
+        self.assertEqual(self.state()["health"], "Ready")
+        self.assertEqual(self.local.db.execute("SELECT COUNT(*) FROM objects").fetchone()[0], 1)
+
+    def test_capability_extensions_keep_required_operations_and_reject_malformed_lists(self):
+        for operations in ([0, 1, 2, 3, 4], [0, 1, 2, 3, 4, 5], [7, 4, 3, 2, 1, 0]):
+            with self.subTest(operations=operations):
+                self.announce()
+                self.step()
+                request = unpacked(self.sent.pop())
+                body = self.remote.capabilities()
+                body[2] = operations
+                self.scheduler.received(self.remote_delivery, packed([1, 1, 0, request[3], 200, body]))
+                self.assertGreater(self.state()["capabilities_until"], self.now)
+                row = self.local.db.execute("SELECT * FROM peers").fetchone()
+                state = self.state()
+                state["capabilities_until"] = 0
+                self.scheduler.save(row, state, self.now)
+        for operations in ([0, 1, 2, 3], [0, 1, 2, 3, 4, 4], [0, 1, 2, 3, 4, "5"], [0, 1, 2, 3, 4, 256], [0, 1, 2, 3, 4, True]):
+            self.announce()
+            self.step()
+            request = unpacked(self.sent.pop())
+            body = self.remote.capabilities()
+            body[2] = operations
+            self.scheduler.received(self.remote_delivery, packed([1, 1, 0, request[3], 200, body]))
+            self.assertEqual(self.state()["health"], "Quarantined")
+            row = self.local.db.execute("SELECT * FROM peers").fetchone()
+            self.scheduler.save(row, self.state(), self.now)
+
     def test_valid_signature_for_wrong_reference_quarantines_without_advancing(self):
         expected = self.publish("Expected")
         wrong = self.publish("Other")

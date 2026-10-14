@@ -1,0 +1,17 @@
+const copy={
+ en:['All interfaces','LoRa only','Wi-Fi gateway only','V1 only','Automatic · prefer V2','V2 only','Allow all formats','Multibyte paths only','Device interface strategy. When Reticulum runs, it may adjust LoRa and Wi-Fi enable states to match this policy. Browser author identity and online maintenance remain independent.'],
+ 'zh-Hans':['全部接口','仅 LoRa','仅 Wi-Fi 网关','仅 V1','自动 · 优先 V2','仅 V2','允许所有格式','仅多字节路径','设备接口策略。Reticulum 运行时可能按策略调整 LoRa 与 Wi-Fi 的启用状态；网页作者身份和在线维护不受此策略限制。'],
+ 'zh-Hant-TW':['全部介面','僅 LoRa','僅 Wi-Fi 閘道','僅 V1','自動 · 優先 V2','僅 V2','允許所有格式','僅多位元組路徑','裝置介面策略。Reticulum 執行時可能依策略調整 LoRa 與 Wi-Fi 的啟用狀態；網頁作者身分和線上維護不受此策略限制。'],
+ ja:['すべてのインターフェース','LoRa のみ','Wi-Fi ゲートウェイのみ','V1 のみ','自動 · V2 を優先','V2 のみ','すべての形式を許可','マルチバイト経路のみ','デバイスのインターフェース方針です。Reticulum の実行時に LoRa と Wi-Fi の有効状態が方針に合わせて調整される場合があります。ブラウザーの作成者認証とオンライン管理には影響しません。'],
+ ko:['모든 인터페이스','LoRa만','Wi-Fi 게이트웨이만','V1만','자동 · V2 우선','V2만','모든 형식 허용','다중 바이트 경로만','기기 인터페이스 정책입니다. Reticulum 실행 시 정책에 맞게 LoRa와 Wi-Fi 활성화 상태가 조정될 수 있습니다. 브라우저 작성자 신원과 온라인 관리는 이 정책과 독립적입니다.'],
+ ar:['جميع الواجهات','LoRa فقط','بوابة Wi-Fi فقط','V1 فقط','تلقائي · تفضيل V2','V2 فقط','السماح بجميع التنسيقات','المسارات متعددة البايت فقط','سياسة واجهات الجهاز. قد يضبط Reticulum عند التشغيل تفعيل LoRa وWi-Fi ليتوافق معها. هوية المؤلف في المتصفح والإدارة عبر الإنترنت مستقلتان عنها.'],
+ ru:['Все интерфейсы','Только LoRa','Только шлюз Wi-Fi','Только V1','Автоматически · приоритет V2','Только V2','Все форматы','Только многобайтовые пути','Политика интерфейсов устройства. При работе Reticulum состояния LoRa и Wi-Fi могут приводиться к этой политике. Идентификация автора и управление через браузер от неё не зависят.'],
+ de:['Alle Schnittstellen','Nur LoRa','Nur Wi-Fi-Gateway','Nur V1','Automatisch · V2 bevorzugen','Nur V2','Alle Formate erlauben','Nur Mehrbyte-Pfade','Schnittstellenrichtlinie des Geräts. Reticulum kann im Betrieb LoRa und Wi-Fi passend aktivieren oder deaktivieren. Browser-Autoridentität und Online-Verwaltung bleiben unabhängig.'],
+ es:['Todas las interfaces','Solo LoRa','Solo pasarela Wi-Fi','Solo V1','Automático · preferir V2','Solo V2','Permitir todos los formatos','Solo rutas multibyte','Política de interfaces del dispositivo. Reticulum puede ajustar la activación de LoRa y Wi-Fi al ejecutarse. La identidad del autor y la gestión en línea del navegador son independientes.'],
+ fr:['Toutes les interfaces','LoRa uniquement','Passerelle Wi-Fi uniquement','V1 uniquement','Automatique · priorité à V2','V2 uniquement','Autoriser tous les formats','Chemins multioctets uniquement','Politique des interfaces de l’appareil. Reticulum peut ajuster l’activation de LoRa et du Wi-Fi en fonctionnement. L’identité de l’auteur et la gestion en ligne du navigateur restent indépendantes.'],
+ it:['Tutte le interfacce','Solo LoRa','Solo gateway Wi-Fi','Solo V1','Automatico · preferisci V2','Solo V2','Consenti tutti i formati','Solo percorsi multibyte','Politica delle interfacce del dispositivo. Reticulum può regolare l’attivazione di LoRa e Wi-Fi durante il funzionamento. L’identità dell’autore e la gestione online nel browser restano indipendenti.'],
+};
+export function configRadioPolicyText(locale){
+ const values=copy[locale];if(!values||values.length!==9)throw Error(`Incomplete radio policy catalog: ${locale}`);
+ return {reticulumPolicies:values.slice(0,3),meshCoreSendProfiles:values.slice(3,6),meshCoreForwardProfiles:values.slice(6,8),reticulumPolicyHelp:values[8]};
+}

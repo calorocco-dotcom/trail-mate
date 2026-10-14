@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {locales} from '../../site/i18n/registry.js';import {kmlListStyleText} from '../../site/i18n/kml-list-style-labels.js';
+test('list behavior, icon states and edit safeguards have complete eleven-language labels',()=>{for(const {id}of locales){const text=kmlListStyleText(id);assert.equal(Object.keys(text).length,35);assert.ok(Object.values(text).every(value=>typeof value==='string'&&value.length));assert.notEqual(text.checkOffOnly,text.checkHideChildren);assert.notEqual(text.fetching0,text.fetching1);}assert.throws(()=>kmlListStyleText('missing'));});

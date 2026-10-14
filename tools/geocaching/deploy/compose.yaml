@@ -21,7 +21,7 @@ x-runtime: &runtime
 services:
   directory:
     <<: *runtime
-    # Bridge shares this namespace; publish only its TLS listener.
+    # Bridge and tracks share this namespace; publish only the TLS listener.
     ports:
       - "${WSS_PORT:-18434}:8787/tcp"
     command:
@@ -43,6 +43,31 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    stop_grace_period: 40s
+
+  tracks:
+    <<: *runtime
+    environment:
+      TRAIL_MATE_TRACK_REPLICA_SEEDS: ${TRACK_REPLICA_SEEDS:-}
+    network_mode: service:directory
+    depends_on:
+      directory:
+        condition: service_healthy
+        restart: true
+    command:
+      - python
+      - -m
+      - tools.tracks.directory_service
+      - --state
+      - /var/lib/trail-mate/tracks
+      - --rns-config
+      - /var/lib/trail-mate/reticulum
+      - --name
+      - ${TRACK_DIRECTORY_NAME:-Trail Mate public tracks}
+    volumes:
+      - track-data:/var/lib/trail-mate/tracks
+      - reticulum-data:/var/lib/trail-mate/reticulum
+      - ./reticulum/config:/var/lib/trail-mate/reticulum/config:ro
     stop_grace_period: 40s
 
   bridge:
@@ -67,6 +92,10 @@ services:
       - ${SITE_ORIGIN:-https://vicliu624.github.io}
       - --max-clients
       - "32"
+      - --packet-rate
+      - "${BRIDGE_PACKET_RATE:-512}"
+      - --burst-packets
+      - "${BRIDGE_BURST_PACKETS:-128}"
       - --tls-cert
       - /certs/fullchain.pem
       - --tls-key
@@ -89,4 +118,5 @@ services:
 
 volumes:
   directory-data:
+  track-data:
   reticulum-data:

@@ -1,0 +1,2 @@
+const labels={en:['Show value','Hide value'],'zh-Hans':['查看内容','隐藏内容'],'zh-Hant-TW':['查看內容','隱藏內容'],ja:['値を表示','値を隠す'],ko:['값 보기','값 숨기기'],ar:['إظهار القيمة','إخفاء القيمة'],ru:['Показать значение','Скрыть значение'],de:['Wert anzeigen','Wert verbergen'],es:['Mostrar valor','Ocultar valor'],fr:['Afficher la valeur','Masquer la valeur'],it:['Mostra valore','Nascondi valore']};
+export function configSecretText(locale){const values=labels[locale];if(!values||values.length!==2)throw Error(`Incomplete config secret catalog: ${locale}`);return {show:values[0],hide:values[1]};}
