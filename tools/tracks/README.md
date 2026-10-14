@@ -14,6 +14,34 @@ exchange still bind the discovered directory's public key and epoch. A seed
 requests discovery; it grants no trust to content. The handler accepts signed
 path responses so a new service can find directories that started earlier.
 
+## Global country/region selection
+
+`data/country-regions.json` adapts the 242 country/region boundaries already
+shipped with the Geocaching page. It adds no province/city/county database.
+The directory serves these as one selectable level through its existing region
+operations; compatible operator catalogs may provide additional levels.
+This dataset does not claim complete worldwide first-level administration.
+
+```sh
+python -m tools.tracks.directory_service --state /private/tracks --rns-config /private/reticulum --regions-file tools/tracks/data/country-regions.json --regions-namespace world
+```
+
+The source and public-domain terms are documented in
+`site/geocaching/data/README.md`. Country labels are generated for all 11 Web
+locales using Node's `Intl.DisplayNames`. Generalized boundaries have the same
+coastal/small-island limits as the source; map-extent search remains available.
+The polar region is divided into bounded polygon pieces without omitting it.
+
+To regenerate, install build-time Shapely 2.1.2 and run:
+
+```sh
+python -m tools.tracks.build_country_regions --output tools/tracks/data/country-regions.json
+```
+
+Node and Shapely are needed only for generation. The running directory uses the
+existing JSON catalog reader; neither the dataset nor a new dependency is sent
+to firmware or allocated in device RAM.
+
 `TRAIL_MATE_TRACK_REPLICA_SEEDS` supplies comma-separated defaults when no
 `--replica-seed` argument is passed. The shared NAS Compose template maps
 `TRACK_REPLICA_SEEDS` from `.env`, including with the administrative-catalogue

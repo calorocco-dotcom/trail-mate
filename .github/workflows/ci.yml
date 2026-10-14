@@ -650,13 +650,9 @@ jobs:
         shell: bash
         run: |
           BUILD_DIR="build.${{ matrix.env }}"
-          SIZE=$(stat -c%s "${BUILD_DIR}/trail-mate.bin")
-          MAX_SIZE=$((0x400000))
-          echo "trail-mate.bin size=${SIZE} max=${MAX_SIZE}"
-          if [ "${SIZE}" -gt "${MAX_SIZE}" ]; then
-            echo "trail-mate.bin exceeds OTA slot size" >&2
-            exit 1
-          fi
+          python scripts/check_ota_slot_size.py \
+            --firmware "${BUILD_DIR}/trail-mate.bin" \
+            --partitions "${BUILD_DIR}/partition_table/partition-table.bin"
 
       - name: Collect firmware and web flasher image
         shell: bash
