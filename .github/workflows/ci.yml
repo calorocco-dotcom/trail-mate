@@ -83,6 +83,8 @@ jobs:
       - name: Verify native Geocaching replication and signature admission
         working-directory: tools/geocaching
         run: ../../.codex-build/reticulum-directory/venv/bin/python -m unittest test_directory_sync test_directory_transport test_publication_receipt test_snapshot_retention test_query_release
+      - name: Verify shipped global administrative catalog
+        run: .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_world_regions tools.tracks.test_region_catalog tools.tracks.test_region_application
       - name: Verify native Geocaching publication and offline replica recovery
         run: |
           .codex-build/reticulum-directory/venv/bin/python tools/geocaching/test_directory_network.py acceptance --work .codex-build/hostlink-codec/geocaching-network/state

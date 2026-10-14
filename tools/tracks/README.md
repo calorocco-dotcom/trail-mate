@@ -14,13 +14,51 @@ exchange still bind the discovered directory's public key and epoch. A seed
 requests discovery; it grants no trust to content. The handler accepts signed
 path responses so a new service can find directories that started earlier.
 
-## Global country/region selection
+## Global country/region and administrative selection
 
 `data/country-regions.json` adapts the 242 country/region boundaries already
 shipped with the Geocaching page. It adds no province/city/county database.
 The directory serves these as one selectable level through its existing region
 operations; compatible operator catalogs may provide additional levels.
 This dataset does not claim complete worldwide first-level administration.
+
+`data/world-regions.json` adds one administrative selection level using pinned
+Natural Earth Admin 1 data: 251 country/region parents and 4,596 administrative
+units. It retains the existing 242 country boundaries and adds nine parents
+needed by the administrative source. The file is 7,963,790 bytes, within the
+existing 8 MiB reader limit. Use it with the same directory protocol:
+
+```sh
+python -m tools.tracks.directory_service --state /private/tracks --rns-config /private/reticulum --regions-file tools/tracks/data/world-regions.json --regions-namespace world
+```
+
+The global hierarchy has only country/region and one administrative level.
+It adds no city/county database, country-specific hierarchy or firmware data.
+Native names are provided for the 11 Web locales where the source supplies them;
+missing names use the region's base name. The first-level polygons use
+topology-preserving 0.025-degree simplification and five-decimal coordinates.
+This is approximate discovery geometry, not a current legal boundary service.
+The source may classify departments, territories and unnamed areas as Admin 1;
+its administrative units can differ from current national subdivisions.
+Map-extent search remains available near simplified boundaries.
+
+Natural Earth is public domain. Source documentation:
+[Admin 1](https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/)
+and [terms](https://www.naturalearthdata.com/about/terms-of-use/).
+The generator pins revision `ca96624a56bd078437bca8184e78163e5039ad19` and verifies
+both input SHA-256 values. Download the two GeoJSON inputs from that revision's
+`geojson/` directory and run with build-time Shapely 2.1.2 and the existing
+directory Python dependencies installed:
+
+```sh
+python -m tools.tracks.build_world_regions --countries-source ne_10m_admin_0_countries.geojson --admin-source ne_10m_admin_1_states_provinces.geojson --output tools/tracks/data/world-regions.json
+```
+
+Generation uses the existing country catalog and Node locale registry. Runtime
+loading requires neither Shapely nor Node. Regenerating administrative data
+changes the catalog version, so connected browsers must refresh their selected
+directory catalog. Directory identity, published routes and author keys remain
+in the existing service state.
 
 ```sh
 python -m tools.tracks.directory_service --state /private/tracks --rns-config /private/reticulum --regions-file tools/tracks/data/country-regions.json --regions-namespace world
