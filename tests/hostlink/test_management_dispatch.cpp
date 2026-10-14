@@ -50,10 +50,12 @@ WebReadResult queueWebConfirmation(const uint8_t* transfer, const uint8_t*, cons
     ++local_signature_queues;
     return WebReadResult::Ready;
 }
-WebReadResult readWebConfirmation(const uint8_t*, const uint8_t*, uint8_t* output, size_t, size_t& written)
+WebReadResult readWebConfirmation(const uint8_t* transfer, const uint8_t*, uint8_t* output, size_t capacity, size_t& written)
 {
-    output[0] = 0x90;
-    written = 1;
+    ::geocaching::protocol::CmpWriter writer(output, capacity);
+    assert(writer.array(8) && writer.binary({transfer, 16}) && writer.binary({local_signature_hash.data(), 32}) &&
+           writer.unsignedInteger(7) && writer.unsignedInteger(0) && writer.nil() && writer.nil() && writer.nil() && writer.nil());
+    written = writer.size();
     return WebReadResult::Ready;
 }
 WebReadResult releaseWebConfirmation(const uint8_t*, const uint8_t*) { return WebReadResult::Ready; }
