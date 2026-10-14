@@ -838,3 +838,10 @@ Route position ambiguous	Routepositie is dubbelzinnig
 Route end (estimated)	Route-einde (geschat)
 Route %u%% | %s left	Route %u%% | nog %s
 Matching route...	Route vergelijken…
+Distance %.0f m	Afstand %.0f m
+Distance %.1f km	Afstand %.1f km
+Position unknown	Positie onbekend
+Region unknown	Administratief gebied onbekend
+Location loading...	Locatie zoeken…
+Distance unknown	Afstand onbekend
+My position unknown	Eigen positie onbekend

@@ -4,6 +4,11 @@
 #include "ui/widgets/top_bar.h"
 #include <string>
 
+namespace ui::support
+{
+struct CardLocation;
+}
+
 namespace tracker
 {
 namespace ui
@@ -32,6 +37,9 @@ struct TrackerPageState
     lv_obj_t* card_name = nullptr;
     lv_obj_t* card_format = nullptr;
     lv_obj_t* card_location = nullptr;
+    lv_obj_t* card_distance = nullptr;
+    ::ui::support::CardLocation* card_location_model = nullptr;
+    lv_timer_t* card_timer = nullptr;
     lv_obj_t* card_counter = nullptr;
     lv_obj_t* card_previous = nullptr;
     lv_obj_t* card_next = nullptr;

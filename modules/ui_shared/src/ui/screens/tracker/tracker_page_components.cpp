@@ -15,6 +15,8 @@
 #include "ui/screens/tracker/tracker_page_input.h"
 #include "ui/screens/tracker/tracker_page_layout.h"
 #include "ui/screens/tracker/tracker_state.h"
+#include "ui/support/card_file_location.h"
+#include "ui/support/card_location.h"
 #include "ui/support/disconnected_route_line.h"
 #include "ui/support/kml_route_projection.h"
 #include "ui/support/lvgl_fs_utils.h"
@@ -3127,6 +3129,21 @@ std::string format_list_name(const std::string& name)
 
 void update_item_card();
 
+void update_card_location()
+{
+    auto& state = g_tracker_state;
+    if (!state.item_card || !state.card_location_model || is_any_modal_open()) return;
+    auto& location = *state.card_location_model;
+    if (!location.valid && state.mode == TrackerPageState::Mode::Record && platform::ui::tracker::is_recording())
+    {
+        double latitude = 0, longitude = 0;
+        if (::ui::support::readCardFileLocation(location.file.c_str(), latitude, longitude))
+            ::ui::support::updateCardLocation(state.card_location_model, true, latitude, longitude, state.card_location, state.card_distance);
+    }
+    ::ui::support::updateCardLocation(state.card_location_model, location.valid, location.latitude, location.longitude,
+                                      state.card_location, state.card_distance);
+}
+
 void step_item_card(int direction)
 {
     auto& state = g_tracker_state;
@@ -3178,9 +3195,13 @@ void update_item_card()
             return result;
         };
         state.card_name = label(0xF6E6C8, false);
-        state.card_format = label(0xE4EFEB, false);
-        state.card_location = label(0xEEEDE7, true);
+        state.card_distance = label(0xE4EFEB, false);
+        state.card_location = label(0xE4EFEB, true);
         lv_label_set_long_mode(state.card_location, LV_LABEL_LONG_SCROLL);
+        state.card_format = label(0xEEEDE7, true);
+        state.card_timer = lv_timer_create([](lv_timer_t*)
+                                           { update_card_location(); },
+                                           500, nullptr);
         lv_obj_add_event_cb(card, on_list_item_clicked, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(
             card, [](lv_event_t*)
@@ -3235,7 +3256,7 @@ void update_item_card()
         lv_obj_add_state(state.item_card, LV_STATE_DISABLED);
         ::ui::i18n::set_content_label_text_raw(state.card_name, (recording ? s_record_empty_text : s_route_empty_text).c_str());
         ::ui::i18n::set_label_text(state.card_format, recording ? "Tracks" : "Routes");
-        lv_label_set_text(state.card_location, recording ? platform::ui::tracker::track_dir() : platform::ui::route_storage::route_dir());
+        ::ui::support::updateCardLocation(state.card_location_model, false, 0, 0, state.card_location, state.card_distance);
     }
     else
     {
@@ -3256,7 +3277,17 @@ void update_item_card()
         if (!recording && state.active_route == selected)
             ::ui::i18n::set_content_label_text_raw(state.card_format, ::ui::i18n::format("Active: %s", format.c_str()).c_str());
         else lv_label_set_text_fmt(state.card_format, "%s | %s", format.c_str(), status);
-        lv_label_set_text_fmt(state.card_location, "%s/%s", recording ? platform::ui::tracker::track_dir() : platform::ui::route_storage::route_dir(), selected.c_str());
+        const auto path = std::string(recording ? platform::ui::tracker::track_dir() : platform::ui::route_storage::route_dir()) + "/" + selected;
+        if (!state.card_location_model) state.card_location_model = ::platform::memory::createPsram<::ui::support::CardLocation>();
+        if (state.card_location_model && state.card_location_model->file != path)
+        {
+            state.card_location_model->file = path;
+            double latitude = 0, longitude = 0;
+            const bool has_position = ::ui::support::readCardFileLocation(path.c_str(), latitude, longitude);
+            ::ui::support::updateCardLocation(state.card_location_model, has_position, latitude, longitude, state.card_location, state.card_distance);
+        }
+        else if (!state.card_location_model) ::ui::support::updateCardLocation(state.card_location_model, false, 0, 0, state.card_location, state.card_distance);
+        else update_card_location();
     }
     lv_label_set_text_fmt(state.card_counter, "%u / %u", index < 0 ? 0 : static_cast<unsigned>(index + 1), static_cast<unsigned>(names.size()));
     if (index <= 0) lv_obj_add_state(state.card_previous, LV_STATE_DISABLED);
@@ -4075,6 +4106,7 @@ void open_delete_confirm_modal()
 
 void refresh_page()
 {
+    if (g_tracker_state.card_location_model) g_tracker_state.card_location_model->file.clear();
     sync_active_route_from_config();
     update_mode_buttons();
     update_record_status();
@@ -4163,6 +4195,13 @@ void init_page(lv_obj_t* parent)
 void cleanup_page()
 {
     auto& state = g_tracker_state;
+    if (state.card_timer)
+    {
+        lv_timer_del(state.card_timer);
+        state.card_timer = nullptr;
+    }
+    ::platform::memory::destroyPsram(state.card_location_model);
+    state.card_location_model = nullptr;
     cancel_deferred_record_list_refresh();
     if (state.action_menu_modal)
     {

@@ -117,6 +117,7 @@ target_include_directories(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_chat/include"
   "${REPO_ROOT}/modules/core_gps/include"
   "${REPO_ROOT}/modules/core_track_sharing/include"
+  "${REPO_ROOT}/modules/core_geocaching/include"
   "${REPO_ROOT}/third_party/yxml"
   "${REPO_ROOT}/platform/esp/arduino_common/include")
 target_compile_features(${PREVIEW_TARGET} PRIVATE cxx_std_17)

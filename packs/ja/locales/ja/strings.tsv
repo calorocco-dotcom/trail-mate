@@ -838,3 +838,10 @@ Route position ambiguous	ルート位置に複数の候補
 Route end (estimated)	ルート終点（推定）
 Route %u%% | %s left	ルート %u%% | 残り %s
 Matching route...	ルートを照合中…
+Distance %.0f m	距離 %.0f m
+Distance %.1f km	距離 %.1f km
+Position unknown	位置不明
+Region unknown	行政区域不明
+Location loading...	位置を検索中…
+Distance unknown	距離不明
+My position unknown	現在地不明

@@ -838,3 +838,10 @@ Route position ambiguous	Положение неоднозначно
 Route end (estimated)	Конец маршрута (оценка)
 Route %u%% | %s left	Маршрут %u%% | осталось %s
 Matching route...	Сопоставление маршрута…
+Distance %.0f m	Расстояние %.0f м
+Distance %.1f km	Расстояние %.1f км
+Position unknown	Положение неизвестно
+Region unknown	Административный район неизвестен
+Location loading...	Поиск местоположения…
+Distance unknown	Расстояние неизвестно
+My position unknown	Моё положение неизвестно

@@ -838,3 +838,10 @@ Route position ambiguous	Position sur l’itinéraire ambiguë
 Route end (estimated)	Fin d’itinéraire (estimée)
 Route %u%% | %s left	Itinéraire %u%% | reste %s
 Matching route...	Correspondance de l’itinéraire…
+Distance %.0f m	Distance %.0f m
+Distance %.1f km	Distance %.1f km
+Position unknown	Position inconnue
+Region unknown	Région administrative inconnue
+Location loading...	Recherche de localisation…
+Distance unknown	Distance inconnue
+My position unknown	Ma position est inconnue

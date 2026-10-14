@@ -5,6 +5,7 @@
 #include "ui/components/two_pane_styles.h"
 #include "ui/page/page_profile.h"
 #include "ui/screens/gps/gps_page_runtime.h"
+#include "ui/support/card_location.h"
 #include "ui/widgets/top_bar.h"
 #include "ui_lvgl_ux_packs/common/touch_text_editor.h"
 #include "ui_presentation/geocaching/local_map_overlay.h"
@@ -41,6 +42,7 @@ struct Editor
 struct PageState
 {
     ::platform::ui::PsramUiLease memory_lease;
+    ::ui::support::CardLocation* location = nullptr;
     Editor* editor = nullptr;
     ::ui::geocaching::Snapshot snapshot;
     ::ui::widgets::TopBar topbar;
@@ -480,6 +482,9 @@ void refreshView()
     if (p.valid && p.rendered_source == source && p.rendered_section == p.section &&
         p.rendered_offset == p.offset && old_generation == p.snapshot.generation && old_count == p.snapshot.count)
     {
+        if (p.row_count && p.location)
+            ::ui::support::updateCardLocation(p.location, p.location->valid, p.location->latitude, p.location->longitude,
+                                              lv_obj_get_child(p.rows[0], 2), lv_obj_get_child(p.rows[0], 1));
         if (controls_changed) updateListControls(p);
         return;
     }
@@ -526,6 +531,8 @@ void refreshView()
             lv_obj_set_style_bg_opa(summary, LV_OPA_COVER, 0);
             lv_obj_set_style_radius(summary, 5, 0);
             lv_obj_set_style_pad_all(summary, 4, 0);
+            if (i == 0) lv_obj_set_style_text_font(summary, ::ui::page_profile::resolve_title_font(), 0);
+            if (i == 1) lv_label_set_long_mode(summary, LV_LABEL_LONG_SCROLL);
         }
         lv_obj_add_event_cb(
             row, [](lv_event_t*)
@@ -560,10 +567,8 @@ void refreshView()
             p.row_ids[0] = item.id;
             auto* card = p.rows[0];
             lv_label_set_text(lv_obj_get_child(card, 0), item.name.data());
-            lv_label_set_text(lv_obj_get_child(card, 1), item.detail.data());
-            if (item.has_coordinates)
-                lv_label_set_text_fmt(lv_obj_get_child(card, 2), "%.5f, %.5f", item.latitude_e7 / 10000000.0, item.longitude_e7 / 10000000.0);
-            else lv_label_set_text(lv_obj_get_child(card, 2), "No location selected");
+            ::ui::support::updateCardLocation(p.location, item.has_coordinates, item.latitude_e7 / 10000000.0, item.longitude_e7 / 10000000.0,
+                                              lv_obj_get_child(card, 2), lv_obj_get_child(card, 1));
             auto* status = lv_obj_get_child(card, 3);
             if (item.is_draft && item.publication_revision)
                 lv_label_set_text_fmt(status, "v%lu | %s", static_cast<unsigned long>(item.publication_revision),
@@ -808,6 +813,8 @@ void closeEditor()
     if (page->editor->loading && source) source->cancelDraftRead(page->editor->input.id);
     ::platform::memory::destroyPsram(page->editor);
     page->editor = nullptr;
+    ::platform::memory::destroyPsram(page->location);
+    page->location = nullptr;
     for (auto* tab : page->tabs) setEnabled(tab, true);
     lv_obj_set_width(page->previous, ::ui::page_profile::current().control_button_height);
     lv_label_set_text(lv_obj_get_child(page->previous, 0), LV_SYMBOL_LEFT);
@@ -1326,6 +1333,8 @@ void exit(void*, lv_obj_t*)
     if (page->editor && page->editor->loading && source) source->cancelDraftRead(page->editor->input.id);
     ::platform::memory::destroyPsram(page->editor);
     page->editor = nullptr;
+    ::platform::memory::destroyPsram(page->location);
+    page->location = nullptr;
     if (map_visit)
     {
         lv_async_call_cancel(returnFromMap, nullptr);

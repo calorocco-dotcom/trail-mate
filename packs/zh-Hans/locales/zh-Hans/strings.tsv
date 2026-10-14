@@ -838,3 +838,10 @@ Route position ambiguous	线路位置有多解
 Route end (estimated)	估计到达线路终点
 Route %u%% | %s left	线路 %u%% | 剩余 %s
 Matching route...	正在匹配线路…
+Distance %.0f m	距离 %.0f 米
+Distance %.1f km	距离 %.1f 公里
+Position unknown	位置未知
+Region unknown	行政区未知
+Location loading...	正在查询位置…
+Distance unknown	距离未知
+My position unknown	本机位置未知

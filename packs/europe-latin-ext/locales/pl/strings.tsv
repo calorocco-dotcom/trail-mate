@@ -838,3 +838,10 @@ Route position ambiguous	Pozycja na trasie niejednoznaczna
 Route end (estimated)	Koniec trasy (szacowany)
 Route %u%% | %s left	Trasa %u%% | zostało %s
 Matching route...	Dopasowywanie trasy…
+Distance %.0f m	Odległość %.0f m
+Distance %.1f km	Odległość %.1f km
+Position unknown	Pozycja nieznana
+Region unknown	Region administracyjny nieznany
+Location loading...	Wyszukiwanie lokalizacji…
+Distance unknown	Odległość nieznana
+My position unknown	Moja pozycja jest nieznana

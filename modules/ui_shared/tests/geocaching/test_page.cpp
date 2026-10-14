@@ -1,8 +1,11 @@
+#include "platform/ui/gps_runtime.h"
+#include "platform/ui/map_search_runtime.h"
 #include "platform/ui/psram_ui_lease.h"
 #include "ui/components/two_pane_styles.h"
 #include "ui/page/page_profile.h"
 #include "ui/screens/geocaching/geocaching_page_shell.h"
 #include "ui/screens/gps/gps_page_runtime.h"
+#include "ui/support/card_file_location.h"
 #include "ui/widgets/top_bar_power_presenter.h"
 #include "ui_presentation/map/map_location_request.h"
 #include <cstdio>
@@ -11,6 +14,81 @@
 #include <fstream>
 #include <string>
 #include <vector>
+
+namespace
+{
+std::string card_file;
+size_t card_file_offset = 0;
+bool testCardFileLocations()
+{
+    lv_fs_drv_t driver;
+    lv_fs_drv_init(&driver);
+    driver.letter = 'R';
+    driver.open_cb = [](lv_fs_drv_t*, const char*, lv_fs_mode_t) -> void*
+    { card_file_offset = 0; return &card_file; };
+    driver.close_cb = [](lv_fs_drv_t*, void*)
+    { return LV_FS_RES_OK; };
+    driver.read_cb = [](lv_fs_drv_t*, void*, void* buffer, uint32_t bytes, uint32_t* count)
+    {
+        *count = static_cast<uint32_t>(std::min<size_t>(bytes, card_file.size() - card_file_offset));
+        std::memcpy(buffer, card_file.data() + card_file_offset, *count);
+        card_file_offset += *count;
+        return LV_FS_RES_OK;
+    };
+    lv_fs_drv_register(&driver);
+    double latitude = 0, longitude = 0;
+    card_file = "<kml xmlns=\"http://www.opengis.net/kml/2.2\"><Placemark><LineString><coordinates>120.5,30.5,10 120.6,30.6,20</coordinates></LineString></Placemark></kml>";
+    if (!ui::support::readCardFileLocation("R:/route.kml", latitude, longitude) || latitude != 30.5 || longitude != 120.5)
+    {
+        std::printf("KML first point failed: %.7f %.7f, read=%u\n", latitude, longitude, unsigned(card_file_offset));
+        return false;
+    }
+    card_file = "<gpx><trk><trkseg><trkpt lat=\"30.5\" lon=\"120.5\"><ele>10</ele></trkpt><trkpt lat=\"30.6\" lon=\"120.6\"/></trkseg></trk></gpx>";
+    if (!ui::support::readCardFileLocation("R:/track.gpx", latitude, longitude) || latitude != 30.5 || longitude != 120.5)
+    {
+        std::puts("GPX first point failed");
+        return false;
+    }
+    card_file = "lat,lon,timestamp,satellites\n30.5,120.5,100,7\n30.6,120.6,101,7\n";
+    if (!ui::support::readCardFileLocation("R:/track.csv", latitude, longitude) || latitude != 30.5 || longitude != 120.5)
+    {
+        std::puts("Firmware CSV first point failed");
+        return false;
+    }
+    card_file = "epoch_s,lat,lon,alt_m,speed_mps,course_deg\n100,30.5,120.5,10,1,2\n";
+    if (!ui::support::readCardFileLocation("R:/track.csv", latitude, longitude) || latitude != 30.5 || longitude != 120.5)
+    {
+        std::printf("Desktop CSV first point failed: %.7f %.7f\n", latitude, longitude);
+        return false;
+    }
+    card_file = "<gpx><trk><trkseg/></trk></gpx>";
+    if (ui::support::readCardFileLocation("R:/empty.gpx", latitude, longitude)) return false;
+    return true;
+}
+} // namespace
+
+namespace platform::ui::gps
+{
+GpsState test_position;
+GpsState get_data() { return test_position; }
+} // namespace platform::ui::gps
+namespace platform::ui::map_search
+{
+uint32_t test_request = 0;
+unsigned test_submissions = 0;
+uint32_t submitRegion(double, double)
+{
+    ++test_submissions;
+    return ++test_request;
+}
+bool pollRegion(uint32_t request, RegionResult& output)
+{
+    if (request != test_request) return false;
+    output.status = Status::Ready;
+    std::snprintf(output.path, sizeof(output.path), "Sample country / Woodland district");
+    return true;
+}
+} // namespace platform::ui::map_search
 
 namespace gps::ui::runtime
 {
@@ -261,6 +339,7 @@ int main(int argc, char** argv)
     if (argc != 4) return 1;
     const int width = std::atoi(argv[1]), height = std::atoi(argv[2]);
     lv_init();
+    if (!testCardFileLocations()) return 91;
     auto* display = lv_display_create(width, height);
     std::vector<uint8_t> pixels(width * 32 * 4);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_XRGB8888);
@@ -296,6 +375,18 @@ int main(int argc, char** argv)
     if (visible != 1 || source.reads != 1 || source.requested_count != 1) return 4;
     if (!save(std::string(argv[3]) + "-list.ppm", screen)) return 5;
     auto* first_row = lv_obj_get_child(list, 0);
+    if (std::strcmp(lv_label_get_text(lv_obj_get_child(first_row, 1)), "My position unknown") ||
+        !std::strstr(lv_label_get_text(lv_obj_get_child(first_row, 2)), "~ Sample country") ||
+        platform::ui::map_search::test_submissions != 1) return 88;
+    platform::ui::gps::test_position.valid = true;
+    platform::ui::gps::test_position.lat = 30.5005;
+    platform::ui::gps::test_position.lng = 120.5005;
+    lv_tick_inc(600);
+    lv_timer_handler();
+    if (!std::strstr(lv_label_get_text(lv_obj_get_child(first_row, 1)), "Distance ") ||
+        !std::strstr(lv_label_get_text(lv_obj_get_child(first_row, 1)), " m") ||
+        platform::ui::map_search::test_submissions != 1) return 89;
+    if (!save(std::string(argv[3]) + "-location-card.ppm", screen)) return 90;
     // Flipping a large directory hydrates one item and reuses every card widget.
     const auto card_children = lv_obj_get_child_count(first_row);
     const auto reads_before_flip = source.reads;

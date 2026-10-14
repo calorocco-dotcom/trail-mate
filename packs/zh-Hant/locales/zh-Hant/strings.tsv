@@ -838,3 +838,10 @@ Route position ambiguous	路線位置有多解
 Route end (estimated)	估計抵達路線終點
 Route %u%% | %s left	路線 %u%% | 剩餘 %s
 Matching route...	正在比對路線…
+Distance %.0f m	距離 %.0f 公尺
+Distance %.1f km	距離 %.1f 公里
+Position unknown	位置未知
+Region unknown	行政區未知
+Location loading...	正在查詢位置…
+Distance unknown	距離未知
+My position unknown	本機位置未知

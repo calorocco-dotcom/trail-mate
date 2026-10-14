@@ -121,7 +121,10 @@ try{
  });
  await page.goto(`http://127.0.0.1:${server.address().port}/tracks/?lang=zh-Hans&id=${id}`);
  await page.evaluate(()=>{window.mockSerial=navigator.serial;Object.defineProperty(navigator,'serial',{configurable:true,value:undefined});});
- const ipText=trackIPText('zh-Hans');await page.getByLabel(ipText.endpoint,{exact:true}).fill('wss://test.invalid/');await page.getByRole('button',{name:ipText.connect,exact:true}).click();
+ const ipText=trackIPText('zh-Hans');
+ await page.getByRole('button',{name:ipText.disconnect,exact:true}).click();
+ await page.getByText(ipText.advanced,{exact:true}).click();
+ await page.getByLabel(ipText.endpoint,{exact:true}).fill('wss://test.invalid/');await page.getByRole('button',{name:ipText.connect,exact:true}).click();
  await page.getByLabel(ipText.directory,{exact:true}).selectOption('test');
  const endpointStyle=await page.getByLabel(ipText.endpoint,{exact:true}).evaluate(element=>({box:getComputedStyle(element).boxSizing,radius:getComputedStyle(element).borderRadius,width:element.getBoundingClientRect().width,parent:element.parentElement.getBoundingClientRect().width}));
  assert.equal(endpointStyle.box,'border-box');assert.equal(endpointStyle.radius,'12px');assert.ok(Math.abs(endpointStyle.width-endpointStyle.parent)<1);

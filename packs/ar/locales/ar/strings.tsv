@@ -838,3 +838,10 @@ Route position ambiguous	موضع المسار متعدد الاحتمالات
 Route end (estimated)	نهاية المسار (تقدير)
 Route %u%% | %s left	المسار %u%% | المتبقي %s
 Matching route...	جارٍ مطابقة المسار…
+Distance %.0f m	المسافة %.0f م
+Distance %.1f km	المسافة %.1f كم
+Position unknown	الموقع غير معروف
+Region unknown	المنطقة الإدارية غير معروفة
+Location loading...	جارٍ البحث عن الموقع…
+Distance unknown	المسافة غير معروفة
+My position unknown	موقعي غير معروف
