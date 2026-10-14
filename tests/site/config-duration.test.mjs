@@ -11,7 +11,7 @@ test('duration parsing uses exact decimal arithmetic and rejects precision loss,
 });
 test('localized decimal separators and Arabic digits remain exact',()=>{
  for(const {id} of locales){const separator=new Intl.NumberFormat(id).formatToParts(1.1).find(part=>part.type==='decimal').value;assert.equal(parseDurationInput('1'+separator+'5',60000,id),90000);assert.equal(parseDurationInput('1.5',60000,id),90000);const text=configDurationText(id);assert.ok(Object.values(text).every(value=>value.trim()));}
- assert.equal(parseDurationInput('١٫٥',60000,'ar'),90000);assert.equal(parseDurationInput('۱٫۵',60000,'ar'),90000);assert.equal(parseDurationInput('１.５',60000),90000);
+ for(const locale of ['ar','ar-u-nu-latn']){assert.equal(parseDurationInput('١٫٥',60000,locale),90000);assert.equal(parseDurationInput('۱٫۵',60000,locale),90000);assert.throws(()=>parseDurationInput('١٬٥',60000,locale),{code:'DURATION_FORMAT'});}assert.equal(parseDurationInput('１.５',60000),90000);
 });
 test('display distinguishes approximate fractions without changing any native value',()=>{
  assert.deepEqual(durationDisplay(60000,60000),{text:'1',approximate:false});assert.deepEqual(durationDisplay(1,1000),{text:'0.001',approximate:false});assert.equal(durationDisplay(1,60000).approximate,true);

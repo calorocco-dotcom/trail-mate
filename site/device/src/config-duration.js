@@ -19,7 +19,8 @@ export function durationDisplay(value,factor){
 export function parseDurationInput(raw,factor,locale='en'){
  const reject=code=>{throw Object.assign(Error(code),{code,params:{durationFactor:factor}});};
  if(!factors.has(factor)||typeof raw!=='string'||raw.length>64)reject('DURATION_FORMAT');
- let text=raw.normalize('NFKC').trim().replace(/[٠-٩]/g,ch=>String(ch.charCodeAt(0)-0x660)).replace(/[۰-۹]/g,ch=>String(ch.charCodeAt(0)-0x6f0));
+ // Arabic input remains valid when the locale's ICU default uses Latin digits.
+ let text=raw.normalize('NFKC').trim().replace(/[٠-٩]/g,ch=>String(ch.charCodeAt(0)-0x660)).replace(/[۰-۹]/g,ch=>String(ch.charCodeAt(0)-0x6f0)).replaceAll('٫','.');
  const decimal=new Intl.NumberFormat(locale).formatToParts(1.1).find(part=>part.type==='decimal')?.value;
  if(decimal&&decimal!=='.')text=text.replaceAll(decimal,'.');
  if(!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text))reject('DURATION_FORMAT');
