@@ -1201,6 +1201,13 @@ int checkPublishPort(const char* record_path, const char* response_path)
             storage::PublicationRecoveryFilter filter;
             storage::PublicationRecoveryView selected;
             if (store.readPublicationRecovery(filter, selected) != DraftReadResult::NotFound) return 240;
+            const auto stopped_sequence = store.committedSequence();
+            filter.has_operation = filter.include_terminal = true;
+            filter.operation = request.bytes;
+            // This legacy fixture uses an independent task ID, so the same
+            // request ID cannot be claimed as a browser operation ID.
+            if (store.readPublicationRecovery(filter, selected) != DraftReadResult::Invalid ||
+                store.committedSequence() != stopped_sequence) return 243;
             continue;
         }
         if (attempt.phase() != PublishAttemptPhase::Waiting) return 216;

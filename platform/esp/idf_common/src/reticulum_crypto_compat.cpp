@@ -97,6 +97,15 @@ bool multiply_x25519(const std::uint8_t scalar[kX25519KeySize],
 
 ReticulumRngCompat RNG{};
 
+bool Curve25519::eval(std::uint8_t output[32], const std::uint8_t private_key[32], const std::uint8_t point[32])
+{
+    static constexpr std::uint8_t base_point[kX25519KeySize] = {9};
+    if (!output || !private_key) return false;
+    const bool ok = multiply_x25519(private_key, point ? point : base_point, output) && !all_zero(output, kX25519KeySize);
+    if (!ok) std::memset(output, 0, kX25519KeySize);
+    return ok;
+}
+
 void ReticulumRngCompat::begin(const char*) const
 {
     // ESP-IDF entropy is provided directly by esp_fill_random().

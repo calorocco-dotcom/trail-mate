@@ -1678,6 +1678,14 @@ bool lv_external_font_load_fs_was_busy()
 namespace
 {
 constexpr size_t kLvglLargeAllocThresholdBytes = 2048;
+#if defined(ARDUINO_WIO_TRACKER_L2)
+// Wio L2 has 8 MiB PSRAM. Its many small persistent UI objects must not
+// compete with task stacks, radio and DMA for the internal heap. Display DMA
+// buffers are allocated separately in beginLvglHelper with explicit caps.
+constexpr bool kLvglPreferPsramForSmallAllocations = true;
+#else
+constexpr bool kLvglPreferPsramForSmallAllocations = false;
+#endif
 
 bool lvgl_has_psram()
 {
@@ -1700,7 +1708,7 @@ bool lvgl_external_font_load_uses_strict_psram()
 
 uint32_t lvgl_primary_caps(size_t size)
 {
-    if (lvgl_has_psram() && size >= kLvglLargeAllocThresholdBytes)
+    if (lvgl_has_psram() && (kLvglPreferPsramForSmallAllocations || size >= kLvglLargeAllocThresholdBytes))
     {
         return MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     }
@@ -1709,7 +1717,7 @@ uint32_t lvgl_primary_caps(size_t size)
 
 uint32_t lvgl_secondary_caps(size_t size)
 {
-    if (lvgl_has_psram() && size >= kLvglLargeAllocThresholdBytes)
+    if (lvgl_has_psram() && (kLvglPreferPsramForSmallAllocations || size >= kLvglLargeAllocThresholdBytes))
     {
         return MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     }

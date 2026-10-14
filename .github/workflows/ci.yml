@@ -8,6 +8,164 @@ on:
   pull_request:
 
 jobs:
+  hostlink_management:
+    name: USB Device Management and Author Proof
+    runs-on: ubuntu-latest
+    env:
+      TRAIL_MATE_TRACK_PYTHON: .codex-build/reticulum-directory/venv/bin/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install website dependencies
+        working-directory: site
+        run: npm ci --ignore-scripts
+      - name: Install pinned track receipt interoperability dependencies
+        run: |
+          python3 -m venv .codex-build/reticulum-directory/venv
+          .codex-build/reticulum-directory/venv/bin/python -m pip install -r tools/geocaching/interop-requirements.txt -r tools/geocaching/bridge-requirements.txt
+      - name: Install pinned native identity crypto source without building firmware
+        run: |
+          python3 -m pip install platformio==6.1.19
+          mkdir -p .codex-build/hostlink-codec/library-deps
+          pio pkg install --global --storage-dir .codex-build/hostlink-codec/library-deps --library "rweather/Crypto@0.4.0" --skip-dependencies
+          pio pkg install --global --storage-dir .codex-build/hostlink-codec/library-deps --library "nanopb/Nanopb@0.4.92" --skip-dependencies
+      - name: Verify packet bridge pacing and origin boundaries
+        working-directory: tools/geocaching
+        run: ../../.codex-build/reticulum-directory/venv/bin/python -m unittest test_packet_bridge test_packet_bridge_pacing
+      - name: Verify native protocol, storage policy and cryptographic vectors
+        run: |
+          cmake -S tests/hostlink -B .codex-build/hostlink-codec/native -DCMAKE_BUILD_TYPE=Debug -DTRAIL_MATE_ARDUINO_CRYPTO_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Crypto" -DTRAIL_MATE_MODULE_NANOPB_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Nanopb" -DTRAIL_MATE_REQUIRE_RADIO_IDENTITY_TESTS=ON
+          cmake --build .codex-build/hostlink-codec/native --parallel 2
+          ctest --test-dir .codex-build/hostlink-codec/native --output-on-failure
+          cmake -S tests/tracker_recording -B .codex-build/tracker-recording -DCMAKE_BUILD_TYPE=Debug
+          cmake --build .codex-build/tracker-recording --parallel 2
+          ctest --test-dir .codex-build/tracker-recording --output-on-failure
+          node --test tests/site/author-*.test.mjs tests/site/hostlink-serial.test.mjs tests/site/management-protocol.test.mjs tests/site/config-*.test.mjs tests/site/object-transfer.test.mjs tests/site/tms-document.test.mjs tests/site/track-shared-id.test.mjs tests/site/track-recording-convert.test.mjs tests/site/track-device-snapshot.test.mjs
+          python3 scripts/check_esp_stack_hygiene.py
+          node scripts/audit_app_config_preferences.mjs --check
+          node --test tests/site/track-snapshot-native-interop.test.mjs
+          node --test tests/site/track-device-catalog.test.mjs
+          node --test tests/site/track-device-snapshot-build.test.mjs
+          node --test tests/site/track-device-upload.test.mjs
+          node --test tests/site/track-manifest.test.mjs
+          node --test tests/site/track-editor-metadata.test.mjs
+          node --test tests/site/track-metadata-query.test.mjs tests/site/track-metadata-query-python.test.mjs
+          node --test tests/site/track-query-continuation.test.mjs tests/site/track-shared-viewport.test.mjs tests/site/track-shared-query.test.mjs tests/site/track-region-client.test.mjs
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_metadata_query
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_replication_inventory
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_replication
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_storage_recovery
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_bulk_transfer
+          node --test tests/site/track-replication-inventory.test.mjs
+          node --test tests/site/track-conflict.test.mjs tests/site/track-ip-read-session.test.mjs
+          node --test tests/site/track-storage-error.test.mjs
+          node --test tests/site/track-version-history.test.mjs
+          node --test tests/site/track-multidirectory.test.mjs
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.geocaching.test_reply_queue
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_reply_pacing
+          .codex-build/reticulum-directory/venv/bin/python -m unittest discover -s tests/deployment -p test_directory_image.py
+          node --test tests/site/track-network-config.test.mjs
+          node --test tests/site/track-manifest-geometry.test.mjs
+          node --test tests/site/track-datetime-native.test.mjs
+          node --test tests/site/track-manifest-native.test.mjs
+          node --test tests/site/track-upload-native.test.mjs
+          node --test tests/site/track-manifest-sign-native.test.mjs
+          node --test tests/site/track-device-ip-confirmation.test.mjs tests/site/track-device-sync.test.mjs
+          node --test tests/site/track-shared-package.test.mjs tests/site/track-package-publication.test.mjs
+          node --test tests/site/package-archive.test.mjs tests/site/track-kml-archive.test.mjs tests/site/track-draft-backup.test.mjs tests/site/kml-original-labels.test.mjs tests/site/recording-original.test.mjs
+          node --test tests/site/track-bulk-transfer.test.mjs
+            node --test tests/site/track-transport.test.mjs tests/site/track-transfer-labels.test.mjs
+          node --test tests/site/radio-identity.test.mjs tests/site/radio-identity-native-interop.test.mjs
+      - name: Verify native Geocaching replication and signature admission
+        working-directory: tools/geocaching
+        run: ../../.codex-build/reticulum-directory/venv/bin/python -m unittest test_directory_sync test_directory_transport test_publication_receipt test_snapshot_retention test_query_release
+      - name: Verify native Geocaching publication and offline replica recovery
+        run: |
+          .codex-build/reticulum-directory/venv/bin/python tools/geocaching/test_directory_network.py acceptance --work .codex-build/hostlink-codec/geocaching-network/state
+          .codex-build/reticulum-directory/venv/bin/python tools/geocaching/test_directory_replication_network.py acceptance --origin .codex-build/hostlink-codec/geocaching-network/state --work .codex-build/hostlink-codec/geocaching-network/replica
+      - name: Build device page and install Chromium
+        working-directory: site
+        run: |
+          npm run build:device
+          npm run build:geocaching
+            npm run build:tracks
+          npx playwright install --with-deps chromium
+      - name: Verify actual device page and KML parser in Chromium
+        run: |
+          mkdir -p docs/locales/zh-Hans/web-outdoor-management/assets docs/locales/zh-Hans/web-outdoor-management/images
+          node tests/site/device-page.browser.mjs
+          node tests/site/device-page.browser.mjs --normal-flow
+          node tests/site/radio-identity.browser.mjs
+          node tests/site/track-kml.browser.mjs
+            node tests/site/track-kml-edit.browser.mjs
+            node tests/site/track-kml-style.browser.mjs
+            node tests/site/track-workspace.browser.mjs
+            node tests/site/track-attachments.browser.mjs
+            node tests/site/track-metadata.browser.mjs
+            node tests/site/track-search-metadata.browser.mjs
+            node tests/site/track-shared-package.browser.mjs
+            node tests/site/package-install.browser.mjs
+            node tests/site/package-archive.browser.mjs
+            node tests/site/track-kmz-import.browser.mjs
+            node tests/site/track-draft-backup.browser.mjs
+            node tests/site/kml-original.browser.mjs
+            node tests/site/recording-original.browser.mjs
+            node tests/site/original-format-migration.browser.mjs
+            node tests/site/track-map-icons.browser.mjs
+            node --test tests/site/track-ground-overlays.test.mjs
+            node tests/site/track-ground-overlays.browser.mjs
+            node --test tests/site/track-time-filter.test.mjs tests/site/track-time-editor.test.mjs
+            node tests/site/track-time-filter.browser.mjs
+            node tests/site/track-time-editor.browser.mjs
+            node --test tests/site/track-region-preview.test.mjs
+            node tests/site/track-region-preview.browser.mjs
+            node --test tests/site/track-region-editor.test.mjs
+            node tests/site/track-region-editor.browser.mjs
+            node --test tests/site/track-kml-crop.test.mjs
+            node tests/site/track-kml-crop.browser.mjs
+            node tests/site/track-overlay-editor.browser.mjs
+            node --test tests/site/track-overlay-input.test.mjs
+            node --test tests/site/track-style-editor-labels.test.mjs
+            node tests/site/track-style-editor.browser.mjs
+            node --test tests/site/kml-balloon-labels.test.mjs
+            node tests/site/kml-balloon.browser.mjs
+            node --test tests/site/kml-list-style-labels.test.mjs
+            node tests/site/kml-list-style.browser.mjs
+            node --test tests/site/kml-screen-layout.test.mjs
+            node tests/site/kml-screen.browser.mjs
+            node tests/site/kml-photo.browser.mjs
+            node --test tests/site/track-style-map-labels.test.mjs
+            node tests/site/track-style-map-editor.browser.mjs
+            node --test tests/site/track-style-inline-labels.test.mjs
+            node tests/site/track-style-inline-editor.browser.mjs
+            node --test tests/site/track-style-identity-labels.test.mjs
+            node tests/site/track-style-identity-editor.browser.mjs
+            node tests/site/track-gpx.browser.mjs
+            node tests/site/track-device-catalog.browser.mjs
+          node tests/site/track-device-upload.browser.mjs
+          node tests/site/geocaching-maintenance.browser.mjs
+          node tests/site/geocaching-save-recovery.browser.mjs
+          node tests/site/geocaching-signature-recovery.browser.mjs
+          node tests/site/geocaching-network-maintenance.browser.mjs
+          node tests/site/geocaching-query-snapshots.browser.mjs
+          node tests/site/track-ip-publication.browser.mjs
+          node tests/site/track-ip-publication.browser.mjs --normal-flow
+          node tests/site/track-network.browser.mjs
+          node tests/site/track-ip-connection.browser.mjs
+            node tests/site/track-transport.browser.mjs
+            node tests/site/track-refresh-network.browser.mjs
+          node tests/site/track-conflict.browser.mjs
+          node tests/site/track-version-history.browser.mjs
+          node tests/site/track-multidirectory.browser.mjs
+          .codex-build/reticulum-directory/venv/bin/python -m unittest discover -s tests/deployment -p test_shared_directory_network.py
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_replication_network
+          .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_storage_network
+          node tests/site/track-device-sync.browser.mjs
+
   geocaching_web:
     name: Geocaching Live Web Map
     runs-on: ubuntu-latest

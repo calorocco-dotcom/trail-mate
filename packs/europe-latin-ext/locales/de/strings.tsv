@@ -828,3 +828,13 @@ No saved waypoints	Keine gespeicherten Wegpunkte
 Saved waypoint	Gespeicherter Wegpunkt
 Waypoint unavailable	Wegpunkt nicht verfügbar
 Reticulum	Reticulum
+Image memory unavailable	Bildspeicher nicht verfügbar
+Image cache needs checking. Download again.	Bildcache muss geprüft werden. Bilder erneut herunterladen.
+Off route %.0fm	Abseits der Route %.0fm
+Route position unavailable	Routenposition nicht verfügbar
+Route storage unavailable	Routenspeicher nicht verfügbar
+Route: waiting for GPS	Route: GPS wird erwartet
+Route position ambiguous	Routenposition mehrdeutig
+Route end (estimated)	Routenende (geschätzt)
+Route %u%% | %s left	Route %u%% | noch %s
+Matching route...	Route wird abgeglichen…

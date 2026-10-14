@@ -828,3 +828,13 @@ No saved waypoints	Aucun point enregistré
 Saved waypoint	Point enregistré
 Waypoint unavailable	Point indisponible
 Reticulum	Reticulum
+Image memory unavailable	Mémoire insuffisante pour les images
+Image cache needs checking. Download again.	Le cache des images doit être vérifié. Téléchargez-les à nouveau.
+Off route %.0fm	Hors itinéraire %.0fm
+Route position unavailable	Position sur l’itinéraire indisponible
+Route storage unavailable	Stockage de l’itinéraire indisponible
+Route: waiting for GPS	Itinéraire : attente GPS
+Route position ambiguous	Position sur l’itinéraire ambiguë
+Route end (estimated)	Fin d’itinéraire (estimée)
+Route %u%% | %s left	Itinéraire %u%% | reste %s
+Matching route...	Correspondance de l’itinéraire…

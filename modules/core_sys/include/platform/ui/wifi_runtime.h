@@ -75,6 +75,11 @@ bool visit_saved_profiles(bool* enabled,
                           std::size_t* count,
                           SavedProfileVisitor visitor,
                           void* context);
+// ESP configuration projection: strict persistent reads, caller-owned staging
+// of at least kMaxSavedProfileCount. Failure clears staging and output metadata.
+// Does not modify connection caches or migrate legacy credential keys.
+bool read_saved_profiles_into(bool* enabled, std::size_t* count,
+                              Config* profiles, std::size_t capacity);
 bool replace_saved_profiles(bool enabled, const Config* profiles, std::size_t count);
 bool apply_enabled(bool enabled);
 bool suspend_for_external_storage(ExternalStorageSuspension* out_suspension);

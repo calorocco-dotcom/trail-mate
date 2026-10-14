@@ -28,11 +28,13 @@
 #include "freertos/task.h"
 #include "mbedtls/chachapoly.h"
 #include "mbedtls/sha256.h"
+#include "platform/esp/arduino_common/app_config_sd_tms_runtime.h"
 #include "platform/esp/arduino_common/app_tasks.h"
 #include "platform/esp/arduino_common/chat/infra/mesh_adapter_router.h"
 #include "platform/esp/arduino_common/chat/infra/meshcore/meshcore_adapter.h"
 #include "platform/esp/arduino_common/chat/infra/reticulum/reticulum_adapter.h"
 #include "platform/esp/arduino_common/chat/infra/store/sd_store.h"
+#include "platform/esp/arduino_common/geocaching/browse_runtime.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/esp/idf_common/bsp_runtime.h"
@@ -158,6 +160,12 @@ bool idfSupportsMeshProtocol(chat::MeshProtocol protocol)
 
 void syncReticulumGroupConfig(app::AppConfig& config)
 {
+    // Current TMS documents contain groups. The legacy TSV is read only while
+    // establishing the migration baseline, never over a bound working config.
+    if (app::sd_tms::workingConfigIsBound())
+    {
+        return;
+    }
     if (!chat::infra::isReticulumMeshProtocol(
             chat::infra::normalizeMeshProtocol(config.mesh_protocol)))
     {
@@ -1042,13 +1050,47 @@ class IdfAppFacadeRuntime final : public app::IAppFacade
 
         board_ = &board;
         lora_board_ = lora_board;
-        if (!loadIdfAppConfig(config_))
+        (void)platform::esp::idf_common::bsp_runtime::ensure_sdcard_ready();
+        const auto working = app::sd_tms::loadWorkingConfig(config_);
+        if (working == app::sd_tms::LoadResult::Invalid)
+        {
+            ESP_LOGE(kIdfConfigTag, "working TMS requires repair; refusing stale NVS fallback");
+            return false;
+        }
+        if (working != app::sd_tms::LoadResult::Applied && !loadIdfAppConfig(config_))
         {
             config_ = app::AppConfig{};
             normalizeIdfAppConfig(config_);
             ESP_LOGI(kIdfConfigTag, "using default app config");
         }
-        syncReticulumGroupConfig(config_);
+        // The existing blob scratch is needed only for migration/no-SD NVS
+        // operations. Do not retain a second AppConfig for web management.
+        if (s_config_blob_scratch)
+        {
+            s_config_blob_scratch->~IdfPersistedAppConfig();
+            heap_caps_free(s_config_blob_scratch);
+            s_config_blob_scratch = nullptr;
+        }
+        if (working != app::sd_tms::LoadResult::Applied)
+        {
+            syncReticulumGroupConfig(config_);
+            if (working == app::sd_tms::LoadResult::Legacy &&
+                !app::sd_tms::applyLegacyWorkingConfig(config_))
+            {
+                app::sd_tms::requireWorkingConfigRepair();
+                return false;
+            }
+        }
+        if (working != app::sd_tms::LoadResult::Unavailable)
+        {
+            if (working != app::sd_tms::LoadResult::Applied &&
+                !app::sd_tms::syncWorkingConfig(config_))
+            {
+                ESP_LOGE(kIdfConfigTag, "cannot persist canonical TMS migration");
+                return false;
+            }
+            app::sd_tms::bindWorkingConfig(config_);
+        }
 
         mesh_peer_directory_.setAutoSaveEnabled(false);
         const chat::MeshPeerDirectoryStatus peer_directory_status =
@@ -1108,6 +1150,10 @@ class IdfAppFacadeRuntime final : public app::IAppFacade
         initTeamServices();
         restoreTeamKeysFromSnapshot();
         setTeamModeActive(team_service_ && team_service_->hasKeys());
+        if (lora_board_)
+        {
+            platform::esp::arduino_common::geocaching::browse_runtime::configure(mesh_router_, *lora_board_);
+        }
         initialized_ = true;
         ESP_LOGI(kIdfConfigTag,
                  "app facade ready stack_high_water=%u",
@@ -1191,6 +1237,12 @@ class IdfAppFacadeRuntime final : public app::IAppFacade
         if (chat_service_)
         {
             chat_service_->setActiveProtocol(config_.mesh_protocol);
+        }
+
+        if (app::sd_tms::workingConfigIsBound())
+        {
+            app::sd_tms::requestWorkingConfigSync();
+            return;
         }
 
         const uint32_t now_ms = persistenceNowMs();
@@ -1833,7 +1885,16 @@ class IdfAppFacadeRuntime final : public app::IAppFacade
             return;
         }
 
-        const bool ok = saveIdfAppConfig(config_);
+        const bool ok = app::sd_tms::workingConfigIsBound()
+                            ? app::sd_tms::syncPendingWorkingConfig() ==
+                                  app::sd_tms::WorkingConfigSyncResult::Synchronized
+                            : saveIdfAppConfig(config_);
+        if (s_config_blob_scratch)
+        {
+            s_config_blob_scratch->~IdfPersistedAppConfig();
+            heap_caps_free(s_config_blob_scratch);
+            s_config_blob_scratch = nullptr;
+        }
         config_persistence_runtime_.complete(
             work.generation,
             ok ? app::ConfigPersistenceResultKind::Completed

@@ -828,3 +828,13 @@ No saved waypoints	保存済みのウェイポイントはありません
 Saved waypoint	保存済みウェイポイント
 Waypoint unavailable	ウェイポイントを利用できません
 Reticulum	Reticulum
+Image memory unavailable	画像用メモリが不足しています
+Image cache needs checking. Download again.	画像キャッシュの確認が必要です。再ダウンロードしてください。
+Off route %.0fm	ルート外 %.0fm
+Route position unavailable	ルート位置を取得できません
+Route storage unavailable	ルート保存領域が使用できません
+Route: waiting for GPS	ルート：GPS待機中
+Route position ambiguous	ルート位置に複数の候補
+Route end (estimated)	ルート終点（推定）
+Route %u%% | %s left	ルート %u%% | 残り %s
+Matching route...	ルートを照合中…

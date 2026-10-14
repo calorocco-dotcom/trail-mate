@@ -1,4 +1,6 @@
 #include "ui/widgets/route_elevation_profile.h"
+#include "ui/support/disconnected_route_line.h"
+#include "ui/support/route_segment_sampling.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,27 +33,6 @@ void set_label_text(lv_obj_t* label, const char* text)
         return;
     }
     lv_label_set_text(label, text ? text : "");
-}
-
-const Sample* altitude_sample_at_ordinal(const Sample* samples,
-                                         std::size_t sample_count,
-                                         std::size_t target_ordinal)
-{
-    std::size_t ordinal = 0;
-    for (std::size_t index = 0; index < sample_count; ++index)
-    {
-        const auto& sample = samples[index];
-        if (!sample.has_altitude || !std::isfinite(sample.altitude_m))
-        {
-            continue;
-        }
-        if (ordinal == target_ordinal)
-        {
-            return &sample;
-        }
-        ++ordinal;
-    }
-    return nullptr;
 }
 
 } // namespace
@@ -98,9 +79,15 @@ void create(lv_obj_t* parent, Widget& widget, const Config& config)
 
     widget.line = lv_line_create(widget.panel);
     lv_obj_set_pos(widget.line, 0, 0);
+    lv_obj_set_size(widget.line, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_line_color(widget.line, lv_color_hex(0x7FD8BE), 0);
     lv_obj_set_style_line_width(widget.line, 2, 0);
     lv_obj_set_style_line_rounded(widget.line, true, 0);
+    lv_obj_add_event_cb(
+        widget.line, [](lv_event_t* event)
+        { const auto* state = static_cast<const Widget*>(lv_event_get_user_data(event));
+                         if (state) ::ui::support::drawDisconnectedRouteLine(event, state->points.data(), state->points.size()); },
+        LV_EVENT_DRAW_MAIN, &widget);
 }
 
 void set_hidden(Widget& widget, bool hidden)
@@ -189,42 +176,37 @@ bool update(Widget& widget,
     const double range = std::max(1.0, metrics.max_altitude_m - metrics.min_altitude_m);
 
     const std::size_t draw_count =
-        std::max<std::size_t>(2, std::min<std::size_t>(config.max_points, altitude_count));
+        std::max<std::size_t>(2, std::min<std::size_t>({96, config.max_points, altitude_count}));
     widget.points.clear();
-    widget.points.reserve(draw_count);
     const double total_distance =
         std::max(1.0, std::isfinite(metrics.distance_m) ? metrics.distance_m : 0.0);
-    for (std::size_t index = 0; index < draw_count; ++index)
-    {
-        const std::size_t src_ordinal =
-            draw_count <= 1 ? 0 : (index * (altitude_count - 1)) / (draw_count - 1);
-        const Sample* sample = altitude_sample_at_ordinal(samples, sample_count, src_ordinal);
-        if (!sample)
+    bool admitted = true;
+    ::ui::support::sampleRouteSegments(
+        samples, sample_count, draw_count,
+        [](const Sample& sample)
+        { return sample.has_altitude && std::isfinite(sample.altitude_m) && std::isfinite(sample.distance_m); },
+        [&](const Sample& sample, bool connect)
         {
-            continue;
-        }
-        double x_ratio = sample->distance_m / total_distance;
-        if (!std::isfinite(x_ratio))
-        {
-            x_ratio = 0.0;
-        }
-        x_ratio = std::max(0.0, std::min(1.0, x_ratio));
-        const double y_ratio = (metrics.max_altitude_m - sample->altitude_m) / range;
-        lv_point_precise_t point{};
-        point.x = static_cast<float>(config.plot_pad + std::lround(x_ratio * plot_width));
-        point.y = static_cast<float>(config.plot_top + std::lround(y_ratio * plot_height));
-        widget.points.push_back(point);
-    }
+            double x_ratio = sample.distance_m / total_distance;
+            x_ratio = std::max(0.0, std::min(1.0, x_ratio));
+            const double y_ratio = (metrics.max_altitude_m - sample.altitude_m) / range;
+            if (!connect && !widget.points.empty()) admitted = widget.points.push_back(::ui::support::routeLineBreak());
+            if (admitted)
+            {
+                lv_point_precise_t point{};
+                point.x = static_cast<float>(config.plot_pad + std::lround(x_ratio * plot_width));
+                point.y = static_cast<float>(config.plot_top + std::lround(y_ratio * plot_height));
+                admitted = widget.points.push_back(std::move(point));
+            }
+            return admitted;
+        });
 
-    if (widget.points.size() < 2)
+    if (!admitted || widget.points.size() < 2)
     {
+        widget.points.clear();
         set_hidden(widget, true);
         return false;
     }
-
-    lv_line_set_points(widget.line,
-                       widget.points.data(),
-                       static_cast<std::uint16_t>(widget.points.size()));
     set_hidden(widget, false);
     lv_obj_move_foreground(widget.panel);
     return true;

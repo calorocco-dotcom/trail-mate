@@ -40,7 +40,7 @@ class MeshCoreIdentity
     bool importPrivateKey(const uint8_t in_priv[kPrivKeySize]);
 
   private:
-    bool loadFromPrefs();
+    bool loadFromPrefs(bool& absent);
     bool saveToPrefs() const;
     bool generateAndPersist();
     static bool isValidPublicHash(uint8_t hash);

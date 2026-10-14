@@ -1,0 +1,9 @@
+{
+  "name": "trailmate-yxml",
+  "version": "0.0.0",
+  "build": {
+    "includeDir": ".",
+    "srcDir": ".",
+    "srcFilter": ["+<yxml.c>"]
+  }
+}

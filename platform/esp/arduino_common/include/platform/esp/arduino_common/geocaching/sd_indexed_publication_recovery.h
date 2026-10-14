@@ -17,7 +17,17 @@ class SdIndexedPublicationRecovery
     bool begin(const ::geocaching::storage::IndexRootView& root, const ::geocaching::storage::PublicationRecoveryFilter& filter,
                uint8_t* frame, size_t capacity)
     {
-        if (result_ != IndexGetStep::Idle) return false;
+        if (result_ != IndexGetStep::Idle || (filter.include_terminal && !filter.has_operation)) return false;
+        root_ = root;
+        filter_ = filter;
+        frame_ = frame;
+        capacity_ = capacity;
+        result_ = IndexGetStep::Working;
+        if (filter.has_operation)
+        {
+            task_key_ = filter.operation;
+            return startGet(10, {task_key_.data(), task_key_.size()}) == IndexGetStep::Working;
+        }
         scan_.reset(::platform::memory::createPsram<SdIndexScan>(volume_));
         if (!scan_)
         {
@@ -25,11 +35,6 @@ class SdIndexedPublicationRecovery
             return false;
         }
         if (!scan_->begin(root, 5, frame, capacity)) return false;
-        root_ = root;
-        filter_ = filter;
-        frame_ = frame;
-        capacity_ = capacity;
-        result_ = IndexGetStep::Working;
         return true;
     }
     bool matches(const ::geocaching::storage::PublicationRecoveryFilter& filter) const { return filter_.same(filter); }
@@ -49,12 +54,58 @@ class SdIndexedPublicationRecovery
         {
             const auto status = get_->step();
             if (status == IndexGetStep::Working) return status;
+            if (filter_.has_operation)
+            {
+                if (status != IndexGetStep::Ready)
+                    return result_ = status == IndexGetStep::NotFound && reading_selected_ ? IndexGetStep::Invalid : status;
+                if (!reading_selected_)
+                {
+                    TaskView task;
+                    if (!decodeTask({task_key_.data(), task_key_.size()}, get_->value(), task) || task.kind != 1 ||
+                        task.cache_id.size != 32 || task.revision_hash.size != 32) return result_ = IndexGetStep::Invalid;
+                    if ((filter_.has_cache && std::memcmp(task.cache_id.data, filter_.cache.bytes.data(), 32)) ||
+                        (filter_.has_hash && std::memcmp(task.revision_hash.data, filter_.hash.bytes.data(), 32))) return result_ = IndexGetStep::NotFound;
+                    bool matched = false;
+                    for (size_t i = 0; i < task.request_count; ++i)
+                    {
+                        if (!filter_.matchesRequest(task.requests[i])) continue;
+                        // One web operation names one destination. An ambiguous
+                        // group cannot be projected as one confirmed directory.
+                        if (matched) return result_ = IndexGetStep::Invalid;
+                        std::memcpy(selected_.key.data(), task.requests[i].data, selected_.key.size());
+                        matched = true;
+                    }
+                    if (!matched) return result_ = IndexGetStep::NotFound;
+                    selected_.task = task_key_;
+                    std::memcpy(selected_.cache.bytes.data(), task.cache_id.data, 32);
+                    std::memcpy(selected_.hash.bytes.data(), task.revision_hash.data, 32);
+                    selected_.task_state = task.state;
+                    selected_.continue_intent = task.continue_intent;
+                    reading_selected_ = true;
+                    return startGet(5, {selected_.key.data(), selected_.key.size()});
+                }
+                OutgoingView outgoing;
+                if (!decodeOutgoing({selected_.key.data(), selected_.key.size()}, get_->value(), outgoing) ||
+                    std::memcmp(outgoing.task_id.data, selected_.task.data(), 16)) return result_ = IndexGetStep::Invalid;
+                if (!publicationRecoveryRequestEligible(filter_, outgoing) ||
+                    (!filter_.include_terminal && outgoing.state < 4 &&
+                     (!selected_.continue_intent || selected_.task_state == 3 || selected_.task_state == 5)))
+                    return result_ = IndexGetStep::NotFound;
+                selected_.outgoing_state = outgoing.state;
+                selected_.confirmed = outgoing.state == 4;
+                selected_.continue_intent &= outgoing.continue_intent;
+                selected_.created = outgoing.created;
+                selected_.request = outgoing.request;
+                selected_.response = selected_.confirmed ? outgoing.terminal_data : ByteView{};
+                return result_ = IndexGetStep::Ready;
+            }
             if (status != IndexGetStep::Ready) return result_ = status == IndexGetStep::NotFound ? IndexGetStep::Invalid : status;
             if (reading_selected_)
             {
                 OutgoingView outgoing;
                 if (!decodeOutgoing({selected_.key.data(), selected_.key.size()}, get_->value(), outgoing) ||
-                    std::memcmp(outgoing.task_id.data, selected_.task.data(), 16) || (outgoing.state == 4) != selected_.confirmed)
+                    std::memcmp(outgoing.task_id.data, selected_.task.data(), 16) || outgoing.state != selected_.outgoing_state ||
+                    (outgoing.state == 4) != selected_.confirmed)
                     return result_ = IndexGetStep::Invalid;
                 selected_.request = outgoing.request;
                 selected_.response = selected_.confirmed ? outgoing.terminal_data : ByteView{};

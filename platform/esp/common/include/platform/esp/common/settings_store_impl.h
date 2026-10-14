@@ -52,6 +52,13 @@ constexpr StorageKeyAlias kStorageKeyAliases[] = {
     {"timezone_profile", "timezone_prof"},
     {"gauge_design_mah", "gauge_dsgn"},
     {"wifi_profile_count", "wifi_prof_count"},
+    {"espnow_team_discovery", "en_team_disc"},
+    {"espnow_beacon_interval_ms", "en_beacon_ms"},
+    {"wifi_sta_enabled", "wifi_sta_en"},
+    {"wifi_sta_channel", "wifi_sta_ch"},
+    {"wifi_persist_credentials", "wifi_keep_cred"},
+    {"wifi_sta_password", "wifi_sta_pwd"},
+    {"wifi_ap_password", "wifi_ap_pwd"},
 };
 
 inline const char* safe_label(const char* value)
@@ -698,6 +705,130 @@ bool get_string_into(const char* ns,
          safe_label(storage_key),
          static_cast<unsigned long>(stored_size - 1U));
     return true;
+}
+
+// Strict scalar reads use the caller's storage, not a retained settings cache.
+namespace
+{
+template <typename Value, typename Reader>
+ScalarReadResult read_scalar_into(const char* ns, const char* key, Value* out, Reader reader)
+{
+    using namespace ::platform::esp::common::settings_store_detail;
+    if (!out) return ScalarReadResult::Invalid;
+    *out = Value{};
+    if (!ns || !key) return ScalarReadResult::Invalid;
+    const char* storage_key = resolve_storage_key(key);
+    if (!validate_storage_key("READ", ns, key, storage_key)) return ScalarReadResult::Invalid;
+    nvs_handle_t handle = 0;
+    const auto opened = nvs_open(ns, NVS_READONLY, &handle);
+    if (opened == ESP_ERR_NVS_NOT_FOUND) return ScalarReadResult::Missing;
+    if (opened != ESP_OK) return ScalarReadResult::Unavailable;
+    const auto result = reader(handle, storage_key, out);
+    nvs_close(handle);
+    if (result == ESP_OK) return ScalarReadResult::Ok;
+    *out = Value{};
+    return result == ESP_ERR_NVS_NOT_FOUND ? ScalarReadResult::Missing : result == ESP_ERR_NVS_TYPE_MISMATCH ? ScalarReadResult::Invalid
+                                                                                                             : ScalarReadResult::Unavailable;
+}
+} // namespace
+
+ScalarReadResult read_int_into(const char* ns, const char* key, int32_t* out)
+{
+    return read_scalar_into(ns, key, out, nvs_get_i32);
+}
+
+ScalarReadResult read_uint_into(const char* ns, const char* key, uint32_t* out)
+{
+    return read_scalar_into(ns, key, out, nvs_get_u32);
+}
+
+ScalarReadResult read_u8_into(const char* ns, const char* key, uint8_t* out)
+{
+    return read_scalar_into(ns, key, out, nvs_get_u8);
+}
+
+ScalarReadResult read_bool_into(const char* ns, const char* key, bool* out)
+{
+    if (!out) return ScalarReadResult::Invalid;
+    *out = false;
+    uint8_t value = 0;
+    const auto result = read_scalar_into(ns, key, &value, nvs_get_u8);
+    if (result != ScalarReadResult::Ok) return result;
+    if (value > 1U) return ScalarReadResult::Invalid;
+    *out = value != 0;
+    return ScalarReadResult::Ok;
+}
+
+StringReadResult read_string_into(const char* ns, const char* key, char* out,
+                                  std::size_t capacity, std::size_t* out_len)
+{
+    using namespace ::platform::esp::common::settings_store_detail;
+    if (out_len) *out_len = 0;
+    if (!ns || !key || !out || !capacity) return StringReadResult::Invalid;
+    out[0] = '\0';
+    const char* storage_key = resolve_storage_key(key);
+    if (!validate_storage_key("READ", ns, key, storage_key)) return StringReadResult::Invalid;
+    nvs_handle_t handle = 0;
+    const auto opened = nvs_open(ns, NVS_READONLY, &handle);
+    if (opened == ESP_ERR_NVS_NOT_FOUND) return StringReadResult::Missing;
+    if (opened != ESP_OK) return StringReadResult::Unavailable;
+    std::size_t size = 0;
+    const auto measured = nvs_get_str(handle, storage_key, nullptr, &size);
+    if (measured != ESP_OK || !size || size > capacity)
+    {
+        nvs_close(handle);
+        return measured == ESP_ERR_NVS_NOT_FOUND ? StringReadResult::Missing : measured == ESP_OK || measured == ESP_ERR_NVS_TYPE_MISMATCH ? StringReadResult::Invalid
+                                                                                                                                           : StringReadResult::Unavailable;
+    }
+    std::size_t actual = size;
+    const auto read = nvs_get_str(handle, storage_key, out, &actual);
+    nvs_close(handle);
+    if (read != ESP_OK || actual != size || out[size - 1] || std::strlen(out) != size - 1)
+    {
+        out[0] = '\0';
+        return read == ESP_OK ? StringReadResult::Invalid : StringReadResult::Unavailable;
+    }
+    if (out_len) *out_len = size - 1;
+    return StringReadResult::Ok;
+}
+
+BlobReadResult read_blob_into(const char* ns, const char* key, void* out,
+                              std::size_t capacity, std::size_t* out_len)
+{
+    using namespace ::platform::esp::common::settings_store_detail;
+    if (out_len) *out_len = 0;
+    if (!ns || !key || (!out && capacity != 0)) return BlobReadResult::Invalid;
+    const char* storage_key = resolve_storage_key(key);
+    if (!validate_storage_key("READ", ns, key, storage_key)) return BlobReadResult::Invalid;
+    nvs_handle_t handle = 0;
+    const auto opened = nvs_open(ns, NVS_READONLY, &handle);
+    if (opened == ESP_ERR_NVS_NOT_FOUND) return BlobReadResult::Missing;
+    if (opened != ESP_OK) return BlobReadResult::Unavailable;
+    std::size_t size = 0;
+    const auto measured = nvs_get_blob(handle, storage_key, nullptr, &size);
+    if (measured != ESP_OK || size > capacity)
+    {
+        nvs_close(handle);
+        return measured == ESP_ERR_NVS_NOT_FOUND ? BlobReadResult::Missing : measured == ESP_OK || measured == ESP_ERR_NVS_TYPE_MISMATCH ? BlobReadResult::Invalid
+                                                                                                                                         : BlobReadResult::Unavailable;
+    }
+    if (size == 0)
+    {
+        nvs_close(handle);
+        return BlobReadResult::Ok;
+    }
+    std::size_t actual = size;
+    const auto read = nvs_get_blob(handle, storage_key, out, &actual);
+    nvs_close(handle);
+    if (read != ESP_OK || actual != size)
+    {
+        std::memset(out, 0, size);
+        return read == ESP_OK || read == ESP_ERR_NVS_TYPE_MISMATCH || read == ESP_ERR_NVS_INVALID_LENGTH
+                   ? BlobReadResult::Invalid
+                   : BlobReadResult::Unavailable;
+    }
+    if (out_len) *out_len = size;
+    return BlobReadResult::Ok;
 }
 
 bool get_blob(const char* ns, const char* key, std::vector<uint8_t>& out)

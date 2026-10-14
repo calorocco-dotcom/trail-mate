@@ -37,6 +37,10 @@ HostlinkFrameDecision route_frame(const Frame& frame, bool ready)
 
     switch (static_cast<FrameType>(frame.type))
     {
+    case FrameType::ManagementRequest:
+        return make_decision(HostlinkFrameDecisionType::DispatchCommand,
+                             HostlinkCommandId::Management,
+                             ErrorCode::Ok);
     case FrameType::CmdTxMsg:
         return make_decision(HostlinkFrameDecisionType::DispatchCommand,
                              HostlinkCommandId::TxMsg,

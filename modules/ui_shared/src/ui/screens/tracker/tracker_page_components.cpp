@@ -1,10 +1,12 @@
 #include "ui/screens/tracker/tracker_page_components.h"
 #include "app/app_config.h"
 #include "app/app_facade_access.h"
+#include "gps/kml/image_sources.h"
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/route_storage.h"
 #include "platform/ui/tracker_runtime.h"
 #include "platform/ui/wifi_runtime.h"
+#include "track_sharing/installed_package_path.h"
 #include "ui/app_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
 #include "ui/localization.h"
@@ -13,7 +15,13 @@
 #include "ui/screens/tracker/tracker_page_input.h"
 #include "ui/screens/tracker/tracker_page_layout.h"
 #include "ui/screens/tracker/tracker_state.h"
+#include "ui/support/disconnected_route_line.h"
+#include "ui/support/kml_route_projection.h"
 #include "ui/support/lvgl_fs_utils.h"
+#include "ui/support/route_image_kml_reader.h"
+#include "ui/support/route_image_memory.h"
+#include "ui/support/route_image_source_state.h"
+#include "ui/support/route_segment_sampling.h"
 #include "ui/ui_common.h"
 #include "ui/widgets/map/map_viewport.h"
 #include "ui/widgets/route_elevation_profile.h"
@@ -71,10 +79,15 @@ struct RoutePreviewPoint
     double lon = 0.0;
     double altitude_m = 0.0;
     bool has_altitude = false;
+    bool break_before = true;
 };
+
+static_assert(sizeof(RoutePreviewPoint) <= 32, "Segment flag must fit existing point padding");
 
 struct RoutePreviewImage
 {
+    uint8_t source_hash[32]{};
+    bool source_hash_valid = false;
     std::string url{};
     std::string local_path{};
     std::string preview_path{};
@@ -105,10 +118,10 @@ enum class RoutePreviewDownloadState : uint8_t
     Failed,
 };
 
-std::vector<RoutePreviewPoint> s_preview_route_points;
-std::vector<RoutePreviewImage> s_preview_images;
-std::vector<lv_point_precise_t> s_preview_map_line_points;
-std::vector<::ui::widgets::route_elevation_profile::Sample> s_preview_elevation_samples;
+::ui::support::RouteImageVector<RoutePreviewPoint, 96> s_preview_route_points;
+::ui::support::RouteImageVector<RoutePreviewImage> s_preview_images;
+::ui::support::RouteImageVector<lv_point_precise_t, 192> s_preview_map_line_points;
+::ui::support::RouteImageVector<::ui::widgets::route_elevation_profile::Sample, 96> s_preview_elevation_samples;
 ::ui::widgets::route_elevation_profile::Widget s_preview_elevation_profile;
 ::ui::widgets::route_image_strip::Widget s_preview_image_strip;
 std::vector<::ui::widgets::route_image_strip::Item> s_preview_image_strip_items;
@@ -178,6 +191,7 @@ void close_route_preview_page();
 void render_route_preview_page();
 void refresh_route_preview_map();
 void update_route_preview_status();
+void show_route_preview_notice(const char* message, uint32_t duration_ms);
 void update_route_preview_load_button();
 void update_route_preview_buttons();
 bool preview_selected_route_is_active();
@@ -594,6 +608,7 @@ bool repair_degraded_active_route_from_list()
 
 std::string route_asset_id_for_name(const std::string& route_name)
 {
+    if (route_name.size() == 70 && route_name.substr(66) == ".kml" && track_sharing::isInstalledPackageAssetId(std::string_view(route_name).substr(0, 66))) return route_name.substr(0, 66);
     std::uint32_t hash = 2166136261U;
     for (unsigned char ch : route_name)
     {
@@ -644,79 +659,13 @@ std::size_t find_case_insensitive(const std::string& text,
     return std::string::npos;
 }
 
-std::string html_decode_attr(std::string value)
-{
-    auto replace_all = [&value](const char* from, const char* to)
-    {
-        std::size_t pos = 0;
-        const std::size_t from_len = std::strlen(from);
-        while ((pos = value.find(from, pos)) != std::string::npos)
-        {
-            value.replace(pos, from_len, to);
-            pos += std::strlen(to);
-        }
-    };
-    replace_all("&amp;", "&");
-    replace_all("&quot;", "\"");
-    replace_all("&#34;", "\"");
-    replace_all("&#38;", "&");
-    return value;
-}
-
 void extract_img_srcs(const std::string& text, std::vector<std::string>& out_urls)
 {
-    std::size_t pos = 0;
-    while (out_urls.size() < kPreviewMaxImages)
-    {
-        const std::size_t img_pos = find_case_insensitive(text, "<img", pos);
-        if (img_pos == std::string::npos)
-        {
-            break;
-        }
-        const std::size_t tag_end = text.find('>', img_pos);
-        const std::size_t tag_len =
-            (tag_end == std::string::npos) ? (text.size() - img_pos) : (tag_end - img_pos + 1);
-        const std::string tag = text.substr(img_pos, tag_len);
-        const std::size_t src_pos = find_case_insensitive(tag, "src");
-        if (src_pos != std::string::npos)
-        {
-            std::size_t eq_pos = tag.find('=', src_pos + 3);
-            if (eq_pos != std::string::npos)
-            {
-                ++eq_pos;
-                while (eq_pos < tag.size() &&
-                       std::isspace(static_cast<unsigned char>(tag[eq_pos])))
-                {
-                    ++eq_pos;
-                }
-                if (eq_pos < tag.size())
-                {
-                    const char quote = (tag[eq_pos] == '\'' || tag[eq_pos] == '"') ? tag[eq_pos] : '\0';
-                    const std::size_t value_start = quote ? eq_pos + 1 : eq_pos;
-                    std::size_t value_end = value_start;
-                    while (value_end < tag.size())
-                    {
-                        const char ch = tag[value_end];
-                        if ((quote && ch == quote) ||
-                            (!quote && (std::isspace(static_cast<unsigned char>(ch)) || ch == '>')))
-                        {
-                            break;
-                        }
-                        ++value_end;
-                    }
-                    if (value_end > value_start)
-                    {
-                        out_urls.push_back(html_decode_attr(tag.substr(value_start, value_end - value_start)));
-                    }
-                }
-            }
-        }
-        if (tag_end == std::string::npos)
-        {
-            break;
-        }
-        pos = tag_end + 1;
-    }
+    if (out_urls.size() >= kPreviewMaxImages) return;
+    gps::kml::forEachImageSource(text, [&](std::string_view source)
+                                 {
+                                   out_urls.push_back(gps::kml::decodeImageSource(source));
+                                   return out_urls.size() < kPreviewMaxImages; });
 }
 
 bool extract_tag_text(const std::string& line, const char* tag, std::string& out_text)
@@ -818,7 +767,7 @@ bool parse_space_coordinate_text(const std::string& text,
     return true;
 }
 
-void append_preview_route_point(double lat, double lon, double altitude_m, bool has_altitude)
+void append_preview_route_point(double lat, double lon, double altitude_m, bool has_altitude, bool break_before)
 {
     if (!std::isfinite(lat) || !std::isfinite(lon))
     {
@@ -829,31 +778,24 @@ void append_preview_route_point(double lat, double lon, double altitude_m, bool 
     point.lon = lon;
     point.altitude_m = altitude_m;
     point.has_altitude = has_altitude && std::isfinite(altitude_m);
+    point.break_before = break_before;
     s_preview_route_points.push_back(point);
 }
 
-void append_pending_images(const std::vector<std::string>& urls,
+bool append_pending_images(std::string url,
                            double lat,
                            double lon,
                            bool has_position)
 {
-    for (const auto& url : urls)
-    {
-        if (s_preview_images.size() >= kPreviewMaxImages)
-        {
-            return;
-        }
-        if (url.empty())
-        {
-            continue;
-        }
-        RoutePreviewImage image{};
-        image.url = url;
-        image.lat = lat;
-        image.lon = lon;
-        image.has_position = has_position && std::isfinite(lat) && std::isfinite(lon);
-        s_preview_images.push_back(image);
-    }
+    if (s_preview_images.size() >= kPreviewMaxImages) return false;
+    if (url.empty()) return true;
+    RoutePreviewImage image{};
+    image.source_hash_valid = platform::ui::route_storage::route_image_reference_hash(url, image.source_hash);
+    image.url = std::move(url);
+    image.lat = lat;
+    image.lon = lon;
+    image.has_position = has_position && std::isfinite(lat) && std::isfinite(lon);
+    return s_preview_images.push_back(std::move(image));
 }
 
 double preview_degrees_to_radians(double degrees)
@@ -884,6 +826,7 @@ void refresh_preview_metrics()
     const RoutePreviewPoint* previous_point = nullptr;
     for (const auto& point : s_preview_route_points)
     {
+        if (point.break_before) previous_point = nullptr, have_previous = false;
         if (previous_point)
         {
             const double distance = preview_distance_m(*previous_point, point);
@@ -896,6 +839,7 @@ void refresh_preview_metrics()
 
         if (!point.has_altitude || !std::isfinite(point.altitude_m))
         {
+            have_previous = false;
             continue;
         }
         if (!have_altitude)
@@ -957,16 +901,12 @@ void refresh_preview_saved_image_count_hint()
         return;
     }
 
-    std::size_t saved_count = 0;
-    if (platform::ui::route_storage::count_route_saved_images(
-            s_preview_asset_id,
-            s_preview_images.size(),
-            saved_count))
+    for (auto& image : s_preview_images)
     {
-        s_preview_saved_image_count_hint =
-            std::min<std::size_t>(saved_count, s_preview_images.size());
-        s_preview_image_saved_state_known = true;
+        ::ui::support::refreshRouteImageSourceState(image, false);
+        if (image.downloaded) ++s_preview_saved_image_count_hint;
     }
+    s_preview_image_saved_state_known = true;
 }
 
 void refresh_preview_image_storage_state(bool include_cache_state)
@@ -975,21 +915,10 @@ void refresh_preview_image_storage_state(bool include_cache_state)
     std::size_t saved_count = 0;
     for (RoutePreviewImage& image : s_preview_images)
     {
-        image.downloaded =
-            platform::ui::route_storage::route_asset_file_exists(image.local_path);
+        ::ui::support::refreshRouteImageSourceState(image, include_cache_state);
         if (image.downloaded)
         {
             ++saved_count;
-        }
-        if (include_cache_state)
-        {
-            image.preview_ready =
-                image.downloaded &&
-                platform::ui::route_storage::route_asset_file_exists(image.preview_path);
-        }
-        else
-        {
-            image.preview_ready = false;
         }
         image.view_ready = false;
     }
@@ -1016,58 +945,10 @@ bool apply_route_preview_download_status_to_images(
         return true;
     }
 
-    bool changed = false;
-    if (status.busy &&
-        status.phase == platform::ui::route_storage::RouteImageDownloadPhase::Downloading &&
-        status.failed == 0 &&
-        status.saved > 0)
-    {
-        const std::size_t confirmed =
-            std::min<std::size_t>(status.saved, s_preview_images.size());
-        for (std::size_t index = 0; index < confirmed; ++index)
-        {
-            if (!s_preview_images[index].downloaded)
-            {
-                s_preview_images[index].downloaded = true;
-                changed = true;
-            }
-        }
-    }
-    else if (status.busy &&
-             status.phase == platform::ui::route_storage::RouteImageDownloadPhase::Caching &&
-             status.failed == 0 &&
-             status.saved > 0)
-    {
-        const std::size_t confirmed =
-            std::min<std::size_t>(status.saved, s_preview_images.size());
-        for (std::size_t index = 0; index < confirmed; ++index)
-        {
-            RoutePreviewImage& image = s_preview_images[index];
-            if (!image.downloaded)
-            {
-                image.downloaded = true;
-                changed = true;
-            }
-            if (!image.preview_ready)
-            {
-                image.preview_ready = true;
-                changed = true;
-            }
-        }
-    }
-    if (changed || (status.busy && status.saved > 0))
-    {
-        s_preview_saved_image_count_hint = 0;
-        for (const RoutePreviewImage& image : s_preview_images)
-        {
-            if (image.downloaded)
-            {
-                ++s_preview_saved_image_count_hint;
-            }
-        }
-        s_preview_image_saved_state_known = true;
-    }
-    return changed;
+    // A batch may contain only missing images. Its first N successes are not
+    // the first N global image slots, and counters are not source proofs.
+    // Keep progress display separate; inspect actual records at termination.
+    return false;
 }
 
 void clear_preview_model()
@@ -1094,126 +975,49 @@ void clear_preview_model()
 bool load_route_preview_model(const std::string& route_name)
 {
     clear_preview_model();
-    if (route_name.empty())
-    {
-        return false;
-    }
-
+    if (route_name.empty()) return false;
     s_preview_route_name = route_name;
     s_preview_asset_id = route_asset_id_for_name(route_name);
-    std::vector<RoutePreviewPoint> fallback_line_points;
-    std::vector<std::string> pending_image_urls;
-    bool in_line_string = false;
-
     const std::string path = route_path_for_name(route_name);
-    const bool read_ok = ::ui::fs::read_text_file_lines(
-        path.c_str(),
-        [&](std::string& line)
-        {
-            if (find_case_insensitive(line, "<Placemark") != std::string::npos)
-            {
-                pending_image_urls.clear();
-            }
-            if (find_case_insensitive(line, "<LineString") != std::string::npos)
-            {
-                in_line_string = true;
-            }
-
-            extract_img_srcs(line, pending_image_urls);
-
-            std::string text;
-            if (extract_tag_text(line, "gx:coord", text))
-            {
-                double lat = 0.0;
-                double lon = 0.0;
-                double altitude_m = 0.0;
-                bool has_altitude = false;
-                if (parse_space_coordinate_text(text, lat, lon, altitude_m, has_altitude))
-                {
-                    append_preview_route_point(lat, lon, altitude_m, has_altitude);
-                }
-            }
-
-            if (extract_tag_text(line, "coordinates", text))
-            {
-                std::size_t token_start = 0;
-                bool first_token = true;
-                while (token_start < text.size())
-                {
-                    while (token_start < text.size() &&
-                           std::isspace(static_cast<unsigned char>(text[token_start])))
-                    {
-                        ++token_start;
-                    }
-                    if (token_start >= text.size())
-                    {
-                        break;
-                    }
-                    std::size_t token_end = token_start;
-                    while (token_end < text.size() &&
-                           !std::isspace(static_cast<unsigned char>(text[token_end])))
-                    {
-                        ++token_end;
-                    }
-                    const std::string token = text.substr(token_start, token_end - token_start);
-                    double lat = 0.0;
-                    double lon = 0.0;
-                    double altitude_m = 0.0;
-                    bool has_altitude = false;
-                    if (parse_comma_coordinate_token(token, lat, lon, altitude_m, has_altitude))
-                    {
-                        if (first_token && !pending_image_urls.empty())
-                        {
-                            append_pending_images(pending_image_urls, lat, lon, true);
-                            pending_image_urls.clear();
-                        }
-                        if (in_line_string)
-                        {
-                            RoutePreviewPoint point{};
-                            point.lat = lat;
-                            point.lon = lon;
-                            point.altitude_m = altitude_m;
-                            point.has_altitude = has_altitude;
-                            fallback_line_points.push_back(point);
-                        }
-                    }
-                    first_token = false;
-                    token_start = token_end;
-                }
-            }
-
-            if (find_case_insensitive(line, "</LineString") != std::string::npos)
-            {
-                in_line_string = false;
-            }
-            if (find_case_insensitive(line, "</Placemark") != std::string::npos)
-            {
-                if (!pending_image_urls.empty())
-                {
-                    append_pending_images(pending_image_urls, 0.0, 0.0, false);
-                    pending_image_urls.clear();
-                }
-            }
-            return true;
-        },
-        8192);
-
-    if (!read_ok)
+    ::ui::support::KmlElevationMetrics metrics;
+    if (!::ui::support::projectKmlRoute(path.c_str(), s_preview_route_points, s_preview_elevation_samples, metrics, 96))
     {
         clear_preview_model();
         return false;
     }
-    if (s_preview_route_points.empty())
+    size_t feature_start = 0;
+    const track_sharing::KmlImageCallbacks callbacks{
+        &feature_start,
+        [](void* p)
+        { *static_cast<size_t*>(p) = s_preview_images.size(); },
+        [](void*, std::string_view source)
+        {
+            if (s_preview_images.size() >= kPreviewMaxImages || s_preview_images.failed()) return false;
+            return append_pending_images(gps::kml::decodeImageSource(source), 0, 0, false);
+        },
+        [](void* p, bool located, double lat, double lon)
+        {
+            for (size_t i = *static_cast<size_t*>(p); i < s_preview_images.size(); ++i)
+            {
+                s_preview_images[i].has_position = located;
+                s_preview_images[i].lat = lat;
+                s_preview_images[i].lon = lon;
+            }
+        }};
+    if (!::ui::support::readRouteImageKml(path.c_str(), callbacks))
     {
-        s_preview_route_points = fallback_line_points;
+        clear_preview_model();
+        return false;
     }
-    refresh_preview_metrics();
+    s_preview_metrics.altitude_count = metrics.altitude_count;
+    s_preview_metrics.min_altitude_m = metrics.min_altitude_m;
+    s_preview_metrics.max_altitude_m = metrics.max_altitude_m;
+    s_preview_metrics.ascent_m = metrics.ascent_m;
+    s_preview_metrics.descent_m = metrics.descent_m;
+    s_preview_metrics.distance_m = s_preview_elevation_samples.empty() ? 0 : s_preview_elevation_samples.back().distance_m;
     assign_preview_image_paths();
     refresh_preview_saved_image_count_hint();
-    if (!s_preview_images.empty())
-    {
-        s_preview_selected_image = 0;
-    }
+    if (!s_preview_images.empty()) s_preview_selected_image = 0;
     return !s_preview_route_points.empty() || !s_preview_images.empty();
 }
 
@@ -1333,6 +1137,39 @@ bool preview_model_fits_bounds(lv_obj_t* viewport_root,
     return model;
 }
 
+bool build_preview_map_line_points()
+{
+    s_preview_map_line_points.clear();
+    bool disconnected = true;
+    bool admitted = true;
+    ::ui::support::sampleRouteSegments(
+        s_preview_route_points.data(), s_preview_route_points.size(), kPreviewMaxDrawPoints,
+        [](const RoutePreviewPoint& point)
+        { return std::isfinite(point.lat) && std::isfinite(point.lon); },
+        [&](const RoutePreviewPoint& point, bool connect)
+        {
+            lv_point_t projected{};
+            if (!::ui::widgets::map::project_point(s_preview_map_runtime, {true, point.lat, point.lon}, projected))
+            {
+                disconnected = true;
+                return true;
+            }
+            if ((!connect || disconnected) && !s_preview_map_line_points.empty())
+                admitted = s_preview_map_line_points.push_back(::ui::support::routeLineBreak());
+            if (admitted)
+            {
+                lv_point_precise_t precise{};
+                precise.x = static_cast<float>(projected.x);
+                precise.y = static_cast<float>(projected.y);
+                admitted = s_preview_map_line_points.push_back(std::move(precise));
+            }
+            disconnected = false;
+            return admitted;
+        });
+    if (!admitted) s_preview_map_line_points.clear();
+    return s_preview_map_line_points.size() >= 2;
+}
+
 void draw_preview_map_overlay()
 {
     const auto& widgets = ::ui::widgets::map::widgets(s_preview_map_runtime);
@@ -1342,40 +1179,17 @@ void draw_preview_map_overlay()
     }
     lv_obj_clean(widgets.overlay_layer);
 
-    if (!s_preview_route_points.empty())
+    if (build_preview_map_line_points())
     {
-        const std::size_t draw_count =
-            std::min<std::size_t>(kPreviewMaxDrawPoints, s_preview_route_points.size());
-        s_preview_map_line_points.clear();
-        s_preview_map_line_points.reserve(draw_count);
-        for (std::size_t index = 0; index < draw_count; ++index)
-        {
-            const std::size_t src_index = draw_count <= 1
-                                              ? 0
-                                              : (index * (s_preview_route_points.size() - 1)) / (draw_count - 1);
-            const auto& point = s_preview_route_points[src_index];
-            lv_point_t projected{};
-            if (::ui::widgets::map::project_point(
-                    s_preview_map_runtime,
-                    {true, point.lat, point.lon},
-                    projected))
-            {
-                lv_point_precise_t precise{};
-                precise.x = static_cast<float>(projected.x);
-                precise.y = static_cast<float>(projected.y);
-                s_preview_map_line_points.push_back(precise);
-            }
-        }
-        if (s_preview_map_line_points.size() >= 2)
-        {
-            lv_obj_t* line = lv_line_create(widgets.overlay_layer);
-            lv_line_set_points(line,
-                               s_preview_map_line_points.data(),
-                               static_cast<std::uint16_t>(s_preview_map_line_points.size()));
-            lv_obj_set_style_line_width(line, 3, LV_PART_MAIN);
-            lv_obj_set_style_line_color(line, lv_color_hex(0xE94F2E), LV_PART_MAIN);
-            lv_obj_set_style_line_rounded(line, true, LV_PART_MAIN);
-        }
+        lv_obj_t* line = lv_line_create(widgets.overlay_layer);
+        lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_line_width(line, 3, LV_PART_MAIN);
+        lv_obj_set_style_line_color(line, lv_color_hex(0xE94F2E), LV_PART_MAIN);
+        lv_obj_set_style_line_rounded(line, true, LV_PART_MAIN);
+        lv_obj_add_event_cb(
+            line, [](lv_event_t* event)
+            { ::ui::support::drawDisconnectedRouteLine(event, s_preview_map_line_points.data(), s_preview_map_line_points.size()); },
+            LV_EVENT_DRAW_MAIN, nullptr);
     }
 
     for (std::size_t index = 0; index < s_preview_images.size(); ++index)
@@ -1607,7 +1421,7 @@ void toggle_route_preview_image_strip()
     assign_preview_image_paths();
     if (s_preview_images.empty())
     {
-        s_preview_status_text = "No route images";
+        s_preview_status_text = s_preview_images.failed() ? ::ui::i18n::tr("Image memory unavailable") : "No route images";
         s_preview_image_strip_visible = false;
         sync_route_preview_image_strip();
         update_route_preview_status();
@@ -1620,6 +1434,8 @@ void toggle_route_preview_image_strip()
     if (s_preview_image_strip_visible)
     {
         ensure_route_preview_image_cache_build();
+        if (::ui::support::routeImagesNeedSourceReview(s_preview_images))
+            show_route_preview_notice(::ui::i18n::tr("Image cache needs checking. Download again."), 2200);
     }
     sync_route_preview_image_strip();
     update_route_preview_status();
@@ -1677,9 +1493,10 @@ std::vector<platform::ui::route_storage::RouteImageCacheItem> route_preview_cach
 {
     std::vector<platform::ui::route_storage::RouteImageCacheItem> items;
     items.reserve(s_preview_images.size());
+    const bool package = track_sharing::isInstalledPackageRoute(route_path_for_name(s_preview_route_name));
     for (const auto& image : s_preview_images)
     {
-        if (!image.downloaded)
+        if (!image.downloaded && !package)
         {
             continue;
         }
@@ -1687,6 +1504,8 @@ std::vector<platform::ui::route_storage::RouteImageCacheItem> route_preview_cach
         item.source_path = image.local_path;
         item.preview_path = image.preview_path;
         item.view_path = image.view_path;
+        std::memcpy(item.source_hash, image.source_hash, 32);
+        item.source_hash_valid = image.source_hash_valid;
         items.push_back(std::move(item));
     }
     return items;
@@ -1923,12 +1742,14 @@ void pause_route_preview_download_poll_timer()
 
 void ensure_route_preview_image_cache_build(bool refresh_state)
 {
+    const auto path = route_path_for_name(s_preview_route_name);
+    const bool package = track_sharing::isInstalledPackageRoute(path);
     if (refresh_state)
     {
         refresh_preview_image_storage_state(true);
     }
     if (s_preview_images.empty() ||
-        !route_preview_all_images_saved() ||
+        (!route_preview_all_images_saved() && !package) ||
         route_preview_all_image_caches_ready())
     {
         return;
@@ -1970,9 +1791,10 @@ void ensure_route_preview_image_cache_build(bool refresh_state)
     std::string error;
     if (!platform::ui::route_storage::start_route_image_cache_build(
             s_preview_asset_id,
-            items,
+            std::move(items),
             error,
-            platform::ui::route_storage::RouteImageTaskPresentation::UserVisible))
+            platform::ui::route_storage::RouteImageTaskPresentation::UserVisible,
+            package ? path : std::string{}))
     {
         s_preview_download_state = RoutePreviewDownloadState::Failed;
         s_preview_status_text = error.empty() ? "Start cache failed" : error;
@@ -2190,13 +2012,14 @@ void ensure_route_preview_elevation_profile()
 
 void rebuild_preview_elevation_samples()
 {
+    if (!s_preview_elevation_samples.empty()) return; // full-stream distances already projected at load
     s_preview_elevation_samples.clear();
-    s_preview_elevation_samples.reserve(s_preview_route_points.size());
+    if (!s_preview_elevation_samples.reserve(s_preview_route_points.size())) return;
     double distance_m = 0.0;
     const RoutePreviewPoint* previous = nullptr;
     for (const auto& point : s_preview_route_points)
     {
-        if (previous)
+        if (previous && !point.break_before)
         {
             const double step = preview_distance_m(*previous, point);
             if (std::isfinite(step))
@@ -2209,6 +2032,7 @@ void rebuild_preview_elevation_samples()
         sample.altitude_m = point.altitude_m;
         sample.distance_m = distance_m;
         sample.has_altitude = point.has_altitude;
+        sample.break_before = point.break_before;
         s_preview_elevation_samples.push_back(sample);
     }
 }
@@ -2659,6 +2483,11 @@ void on_route_preview_download_clicked(lv_event_t*)
         return;
     }
 
+    if (track_sharing::isInstalledPackageRoute(route_path_for_name(s_preview_route_name)))
+    {
+        ensure_route_preview_image_cache_build(false);
+        return;
+    }
     const auto wifi = platform::ui::wifi::status();
     if (!wifi.supported || !wifi.connected)
     {

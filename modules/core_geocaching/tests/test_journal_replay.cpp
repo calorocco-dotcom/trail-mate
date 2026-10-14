@@ -3,6 +3,7 @@
 #include "geocaching/protocol/query_request.h"
 #include "geocaching/protocol/record_encoder.h"
 #include "geocaching/storage/draft_record.h"
+#include "geocaching/storage/publication_history_job.h"
 #include "geocaching/storage/queued_request.h"
 #include "platform/esp/arduino_common/geocaching/indexed_dispatch_store.h"
 #include "platform/esp/arduino_common/geocaching/indexed_download_store.h"
@@ -3258,7 +3259,7 @@ int checkIndexedAuthorReservation(const char* path)
     remote.bytes.fill(0x42);
     wrong_source.bytes.fill(0x43);
     std::array<uint8_t, 16> task{};
-    task.fill(0x44);
+    task = id.bytes;
     SdPublishPort publish_port(store, crypto, local, verified.id, verified.hash, task, issued);
     PublishAttempt publication(publish_port, crypto);
     if (!publication.begin(remote, id, reply.signed_cache, signing, sizeof(signing))) return 24;
@@ -3334,8 +3335,65 @@ int checkIndexedAuthorReservation(const char* path)
             std::memcmp(selected.key.data() + 32, id.bytes.data(), 16) || !recovered_owner.heldBy(&restored_store)) return false;
         std::vector<uint8_t> response_copy;
         if (selected.response.size) response_copy.assign(selected.response.data, selected.response.data + selected.response.size);
+        uint8_t job_output[192];
+        size_t job_size = 0;
+        protocol::VerifiedRecordView job_verified;
+        const ByteView operation{task.data(), task.size()};
+        if (encodePublicationHistoryJob(selected, operation, record.author_public_key, crypto, signing, sizeof(signing),
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Ready) return false;
+        protocol::CmpReader job_reader({job_output, job_size});
+        size_t job_fields = 0;
+        ByteView job_id;
+        uint64_t job_phase = 0;
+        if (!job_reader.array(job_fields, 8) || job_fields != 8 || !job_reader.binary(job_id, 16) ||
+            !job_reader.unsignedInteger(job_phase) || job_phase != (confirmed ? 3 : 2)) return false;
+        auto incorrect = selected;
+        incorrect.hash.bytes[0] ^= 1;
+        if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid || job_size) return false;
+        auto wrong_author = std::array<uint8_t, 64>{};
+        if (encodePublicationHistoryJob(selected, operation, {wrong_author.data(), wrong_author.size()}, crypto, signing, sizeof(signing),
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Forbidden || job_size) return false;
+        crypto.available = false;
+        const auto unavailable_job = encodePublicationHistoryJob(selected, operation, record.author_public_key, crypto, signing, sizeof(signing),
+                                                                 job_verified, job_output, sizeof(job_output), job_size);
+        crypto.available = true;
+        if (unavailable_job != PublicationHistoryJobResult::Unavailable || job_size) return false;
+        if (!confirmed)
+        {
+            for (unsigned fault = 0; fault < 2; ++fault)
+            {
+                incorrect = selected;
+                if (fault) incorrect.task_state = 4;
+                else incorrect.outgoing_state = 5;
+                if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
+                                                job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Ready) return false;
+                protocol::CmpReader failed({job_output, job_size});
+                size_t count = 0;
+                uint64_t phase = 0, revision = 0, durable = 0;
+                ByteView bytes;
+                std::string_view failure;
+                if (!failed.array(count, 8) || !failed.binary(bytes, 16) || !failed.unsignedInteger(phase) || phase != 5 ||
+                    !failed.binary(bytes, 32) || !failed.binary(bytes, 32) || !failed.unsignedInteger(revision) ||
+                    !failed.unsignedInteger(durable) || durable != 1 || !failed.nil() || !failed.text(failure, 128) ||
+                    failure != (fault ? "Publication task is blocked" : "Local publication storage failed") || !failed.finished()) return false;
+            }
+        }
         std::vector<uint8_t> corrupt_request(selected.request.data, selected.request.data + selected.request.size);
         corrupt_request.back() ^= 1;
+        incorrect = selected;
+        incorrect.request = {corrupt_request.data(), corrupt_request.size()};
+        if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
+                                        job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid || job_size) return false;
+        if (confirmed)
+        {
+            auto invalid_response = response_copy;
+            invalid_response.back() ^= 1;
+            incorrect = selected;
+            incorrect.response = {invalid_response.data(), invalid_response.size()};
+            if (encodePublicationHistoryJob(incorrect, operation, record.author_public_key, crypto, signing, sizeof(signing),
+                                            job_verified, job_output, sizeof(job_output), job_size) != PublicationHistoryJobResult::Invalid || job_size) return false;
+        }
         SdPublishPort invalid_port(restored_store, crypto, local, selected.cache, selected.hash, selected.task, selected.created);
         PublishAttempt invalid_attempt(invalid_port, crypto);
         if (!invalid_port.attachRestoredRequest(remote, id) ||
@@ -3626,9 +3684,11 @@ int checkIndexedAuthorReservation(const char* path)
     another_directory.bytes.fill(0x62);
     std::array<uint8_t, 16> another_task;
     another_task.fill(0x63);
+    RequestId another_request;
+    another_request.bytes = another_task;
     SdPublishPort another_port(store, crypto, local, verified.id, verified.hash, another_task, issued);
     PublishAttempt another_publication(another_port, crypto);
-    if (!another_publication.begin(another_directory, id, reply.signed_cache, signing, sizeof(signing))) return 106;
+    if (!another_publication.begin(another_directory, another_request, reply.signed_cache, signing, sizeof(signing))) return 106;
     for (unsigned i = 0; i < 32768 && another_publication.phase() == PublishAttemptPhase::Submitting; ++i) another_publication.advance();
     if (another_publication.phase() != PublishAttemptPhase::Waiting || select_publication(recovery_filter) != DraftReadResult::Ready ||
         recovered_publication.task != another_task || std::memcmp(recovered_publication.key.data() + 16, another_directory.bytes.data(), 16)) return 107;
@@ -3642,6 +3702,44 @@ int checkIndexedAuthorReservation(const char* path)
     if (!another_publication.cancel()) return 110;
     for (unsigned i = 0; i < 32768 && another_publication.phase() == PublishAttemptPhase::Cancelling; ++i) another_publication.advance();
     if (another_publication.phase() != PublishAttemptPhase::Cancelled || select_publication(recovery_filter) != DraftReadResult::NotFound) return 111;
+    auto operation_history = recovery_filter;
+    operation_history.has_operation = operation_history.include_terminal = true;
+    operation_history.operation = another_task;
+    const auto before_operation_read = files;
+    read_bytes.clear();
+    if (select_publication(operation_history) != DraftReadResult::Ready || recovered_publication.confirmed ||
+        recovered_publication.task != another_task || recovered_publication.outgoing_state != 0 ||
+        recovered_publication.task_state != 5 || recovered_publication.continue_intent || !recovered_publication.request.size ||
+        recovered_publication.response.size || files != before_operation_read) return 130;
+    std::array<uint8_t, 48> operation_request_key;
+    std::memcpy(operation_request_key.data(), local.bytes.data(), 16);
+    std::memcpy(operation_request_key.data() + 16, another_directory.bytes.data(), 16);
+    std::memcpy(operation_request_key.data() + 32, another_task.data(), 16);
+    char expected_request_shard[8];
+    std::snprintf(expected_request_shard, sizeof(expected_request_shard), "/05/%02x", static_cast<unsigned>(static_cast<uint8_t>(::sys::crc32(operation_request_key.data(), operation_request_key.size()))));
+    for (const auto& entry : read_bytes)
+        if (entry.second && entry.first.find("/05/") != std::string::npos && entry.first.find(expected_request_shard) == std::string::npos) return 135;
+    uint8_t stopped_output[192];
+    size_t stopped_size = 0;
+    protocol::VerifiedRecordView stopped_verified;
+    if (encodePublicationHistoryJob(recovered_publication, {another_task.data(), another_task.size()}, record.author_public_key,
+                                    crypto, signing, sizeof(signing), stopped_verified, stopped_output, sizeof(stopped_output), stopped_size) !=
+        PublicationHistoryJobResult::Ready || files != before_operation_read) return 133;
+    protocol::CmpReader stopped_reader({stopped_output, stopped_size});
+    size_t stopped_fields = 0;
+    uint64_t stopped_phase = 0, stopped_revision = 0, stopped_durable = 0;
+    ByteView stopped_id, stopped_cache, stopped_hash;
+    if (!stopped_reader.array(stopped_fields, 8) || stopped_fields != 8 || !stopped_reader.binary(stopped_id, 16) ||
+        !stopped_reader.unsignedInteger(stopped_phase) || stopped_phase != 4 || !stopped_reader.binary(stopped_cache, 32) ||
+        !stopped_reader.binary(stopped_hash, 32) || !stopped_reader.unsignedInteger(stopped_revision) || stopped_revision != record.revision ||
+        !stopped_reader.unsignedInteger(stopped_durable) || stopped_durable != 1 || !stopped_reader.nil() || !stopped_reader.nil() ||
+        !stopped_reader.finished()) return 134;
+    store.releaseDraftRead();
+    operation_history.operation[0] ^= 1;
+    if (select_publication(operation_history) != DraftReadResult::NotFound || owner.holder() || files != before_operation_read) return 131;
+    operation_history.operation = another_task;
+    operation_history.include_terminal = false;
+    if (select_publication(operation_history) != DraftReadResult::NotFound || owner.holder()) return 132;
     // Commit unrelated saved-cache metadata through the same live root. It
     // must not invalidate a loaded draft/publication projection.
     const auto publication_generation = store.catalogGeneration();

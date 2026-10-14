@@ -22,6 +22,7 @@ class SdRuntimeFile
   public:
     bool open(const char*, const char*, uint32_t);
     bool is_open() const;
+    void close() { session_ = 0; }
     uint64_t size() const { return 16; }
     bool seek(uint64_t) { return is_open(); }
     int read(void*, std::size_t bytes) { return is_open() ? static_cast<int>(bytes) : 0; }

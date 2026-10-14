@@ -35,6 +35,7 @@ void requireWorkingConfigRepair();
 // Binds the one live AppConfig instance.  Independent Settings owners use the
 // observer only to schedule a repository write; it never makes NVS authoritative.
 void bindWorkingConfig(const AppConfig& config);
+bool workingConfigIsBound();
 void requestWorkingConfigSync();
 void serviceWorkingConfig();
 
@@ -60,6 +61,17 @@ bool syncWorkingConfig(const AppConfig& config);
 // the next boot, so no second AppConfig instance is needed.
 bool backupWorkingConfig(const AppConfig& config);
 bool restoreWorkingConfig();
+
+// Web editing stages the existing canonical format on device storage without
+// an AppConfig clone. These APIs must run on the application command consumer.
+const char* webWorkingCandidatePath();
+bool validateWebWorkingCandidate();
+// Successful promotion is durable; the regular service tick restarts the
+// device after allowing the USB reply to drain. No old-state sync may replace it.
+bool commitWebWorkingCandidate();
+bool webConfigurationRestartPending();
+// Reuse the existing USB reply drain delay for an identity maintenance reboot.
+void scheduleWebManagementRestart();
 
 void beginWorkingConfigReset();
 void endWorkingConfigReset();

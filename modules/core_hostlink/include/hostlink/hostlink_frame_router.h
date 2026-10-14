@@ -15,6 +15,7 @@ enum class HostlinkCommandId : uint8_t
     SetTime,
     GetGps,
     TxAppData,
+    Management,
 };
 
 enum class HostlinkFrameDecisionType : uint8_t

@@ -34,6 +34,7 @@ set(TRAILMATE_ESP_IDF_CORE_HOSTLINK_SOURCES
 
 set(TRAILMATE_ESP_IDF_CORE_SYS_SOURCES
     "${TRAILMATE_ROOT}/modules/core_sys/src/app/app_facade_access.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/app/tms_config_codec.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/screen_power_state_machine.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/reticulum_call_runtime.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/sys/clock.cpp"
@@ -123,6 +124,7 @@ set(TRAILMATE_ESP_IDF_CORE_CHAT_SOURCES
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/channel.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/config.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/device_ui.pb.cpp"
+    "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/localonly.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/mesh.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/module_config.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/mqtt.pb.cpp"
@@ -456,6 +458,11 @@ set(TRAILMATE_ESP_IDF_UI_LVGL_UX_PACK_SOURCES
 set(TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/platform/esp/boards/src/board_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_tasks.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_config_sd_tms_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_config_tms_settings_extension.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_config_tms_ble_extension.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/geocaching/browse_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/geocaching/request_dispatcher.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/voice/vmp_control_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/voice/vmp_pager_audio.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/voice/vmp_pager_session.cpp"
@@ -490,6 +497,8 @@ set(TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_reticulum_group_config_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_reticulum_network_config_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_route_storage.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/route_png_cache.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/route_png_codec.c"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/ui/screens/team/team_ui_store.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_settings_store.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_sstv_runtime.cpp"
@@ -604,7 +613,8 @@ list(APPEND TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/third_party/bzip2/src/crctable.c"
     "${TRAILMATE_ROOT}/third_party/bzip2/src/decompress.c"
     "${TRAILMATE_ROOT}/third_party/bzip2/src/huffman.c"
-    "${TRAILMATE_ROOT}/third_party/bzip2/src/randtable.c")
+    "${TRAILMATE_ROOT}/third_party/bzip2/src/randtable.c"
+    "${TRAILMATE_ROOT}/third_party/yxml/yxml.c")
 
 set(TRAILMATE_ESP_IDF_TAB5_BOARD_SOURCES
     "${TRAILMATE_ROOT}/boards/tab5/src/codec_compat.cpp"
@@ -621,9 +631,11 @@ set(TRAILMATE_ESP_IDF_T_DISPLAY_P4_BOARD_SOURCES
     "${TRAILMATE_ROOT}/boards/t_display_p4/src/t_display_p4_board.cpp")
 
 set(TRAILMATE_ESP_IDF_FINAL_INCLUDE_DIRS
+    "${TRAILMATE_ROOT}/third_party/yxml"
     "${TRAILMATE_ROOT}/third_party/rweather_crypto"
     "${TRAILMATE_ROOT}/apps/esp32_lvgl/src"
     "${TRAILMATE_ROOT}/modules/core_hostlink/include"
+    "${TRAILMATE_ROOT}/modules/core_track_sharing/include"
     "${TRAILMATE_ROOT}/modules/core_sys/include"
     "${TRAILMATE_ROOT}/modules/core_chat/include"
     "${TRAILMATE_ROOT}/modules/core_chat/generated"

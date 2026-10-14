@@ -12,8 +12,8 @@ class SdAuthorIssuePort final : public ::geocaching::AuthorIssuePort
   public:
     SdAuthorIssuePort(Transport& transport, PublicationStore& store,
                       ::geocaching::protocol::RecordCrypto& crypto,
-                      const ::geocaching::storage::StoredTime& issued, ::geocaching::ByteView draft = {}, uint64_t generation = 0)
-        : store_(store), transport_(transport), crypto_(crypto), issued_(issued), draft_(draft), generation_(generation) {}
+                      const ::geocaching::storage::StoredTime& issued, ::geocaching::ByteView draft = {}, uint64_t generation = 0, bool web_author = false)
+        : store_(store), transport_(transport), crypto_(crypto), issued_(issued), draft_(draft), generation_(generation), web_author_(web_author) {}
 
     bool getAuthorKey(uint8_t out[64]) override { return transport_.getGeocachingAuthorKey(out); }
 
@@ -22,7 +22,8 @@ class SdAuthorIssuePort final : public ::geocaching::AuthorIssuePort
         using Result = ::geocaching::AuthorReservationResult;
         if (failed_) return Result::Failed;
         if (reserved_) return Result::Reserved;
-        const auto result = committing_ ? store_.stepCommit() : draft_.size ? store_.reserveDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_)
+        const auto result = committing_ ? store_.stepCommit() : draft_.size ? web_author_ ? store_.reserveWebDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_)
+                                                                                       : store_.reserveDraftUnsignedRecord(draft_, generation_, record, crypto_, workspace, capacity, issued_)
                                                                             : store_.reserveUnsignedRecord(record, crypto_, workspace, capacity, issued_);
         if (result == JournalWriteResult::Busy) return Result::Pending;
         if (result == JournalWriteResult::InProgress)
@@ -58,6 +59,6 @@ class SdAuthorIssuePort final : public ::geocaching::AuthorIssuePort
     ::geocaching::storage::StoredTime issued_;
     ::geocaching::ByteView draft_;
     uint64_t generation_ = 0;
-    bool committing_ = false, reserved_ = false, failed_ = false;
+    bool committing_ = false, reserved_ = false, failed_ = false, web_author_ = false;
 };
 } // namespace platform::esp::arduino_common::geocaching

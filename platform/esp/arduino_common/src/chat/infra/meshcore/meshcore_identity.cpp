@@ -4,8 +4,8 @@
  */
 
 #include "platform/esp/arduino_common/chat/infra/meshcore/meshcore_identity.h"
-#include "../../internal/blob_store_io.h"
 #include "chat/infra/meshcore/meshcore_identity_crypto.h"
+#include "platform/esp/common/radio_identity_work.h"
 
 #include "esp_random.h"
 
@@ -22,7 +22,6 @@ constexpr const char* kIdentityPrefsNs = "mc_ident";
 constexpr const char* kIdentityPrefsPriv = "priv64";
 constexpr const char* kIdentityPrefsPub = "pub32";
 constexpr const char* kIdentityPrefsVer = "ver";
-constexpr uint8_t kIdentityPrefsVersion = 1;
 
 void fillRandomBytes(uint8_t* out, size_t len)
 {
@@ -54,83 +53,78 @@ bool MeshCoreIdentity::init()
     {
         return true;
     }
-    if (loadFromPrefs())
+    bool absent = false;
+    if (loadFromPrefs(absent))
     {
         ready_ = true;
         return true;
     }
-    return generateAndPersist();
+    memset(priv_.data(), 0, priv_.size());
+    memset(pub_.data(), 0, pub_.size());
+    return absent && generateAndPersist();
 }
 
-bool MeshCoreIdentity::loadFromPrefs()
+bool MeshCoreIdentity::loadFromPrefs(bool& absent)
 {
-    std::vector<uint8_t> priv_blob;
-    chat::infra::PreferencesBlobMetadata meta;
-    if (!chat::infra::loadRawBlobFromPreferencesWithMetadata(kIdentityPrefsNs,
-                                                             kIdentityPrefsPriv,
-                                                             kIdentityPrefsVer,
-                                                             nullptr,
-                                                             priv_blob,
-                                                             &meta) ||
-        priv_blob.size() != priv_.size())
+    using namespace platform::esp::common;
+    absent = false;
+    RadioIdentityWork work;
+    if (!work.data()) return false;
+    const auto loaded = readRadioIdentityRecord(kIdentityPrefsNs, RadioIdentityKind::MeshCore, work.data(), work.size());
+    if (loaded == IdentityRecordResult::Ready)
     {
-        return false;
+        if (work.data()[5])
+        {
+            absent = true;
+            return false;
+        }
+        if (meshcoreIsZeroBytes(work.data() + 44, 32) || !meshcoreDerivePublicKey(work.data() + 44, work.data() + kRadioIdentityRecordBytes) ||
+            std::memcmp(work.data() + 12, work.data() + kRadioIdentityRecordBytes, 32)) return false;
+        std::memcpy(pub_.data(), work.data() + 12, pub_.size());
+        std::memcpy(priv_.data(), work.data() + 44, priv_.size());
+        return true;
     }
-
-    memcpy(priv_.data(), priv_blob.data(), priv_.size());
-
-    std::vector<uint8_t> pub_blob;
-    const bool have_pub_blob = chat::infra::loadRawBlobFromPreferences(kIdentityPrefsNs,
-                                                                       kIdentityPrefsPub,
-                                                                       pub_blob) &&
-                               (pub_blob.size() == pub_.size());
-    if (have_pub_blob)
-    {
-        memcpy(pub_.data(), pub_blob.data(), pub_.size());
-    }
+    if (loaded != IdentityRecordResult::Absent) return false;
+    const auto legacy = readLegacyRadioIdentity(kIdentityPrefsNs, kIdentityPrefsPub, kIdentityPrefsPriv,
+                                                RadioIdentityKind::MeshCore, work.data(), work.size(), kIdentityPrefsVer);
+    absent = legacy == IdentityRecordResult::Absent;
+    if (legacy != IdentityRecordResult::Ready) return false;
+    memcpy(priv_.data(), work.data() + 44, priv_.size());
+    memcpy(pub_.data(), work.data() + 12, pub_.size());
 
     uint8_t derived_pub[kPubKeySize] = {};
-    if (!meshcoreDerivePublicKey(priv_.data(), derived_pub))
+    if (meshcoreIsZeroBytes(priv_.data(), 32) || !meshcoreDerivePublicKey(priv_.data(), derived_pub))
     {
         memset(priv_.data(), 0, priv_.size());
         return false;
     }
 
-    bool needs_save = !have_pub_blob;
-    if (!needs_save && memcmp(pub_.data(), derived_pub, sizeof(derived_pub)) != 0)
-    {
-        needs_save = true;
-    }
+    const bool needs_save = memcmp(pub_.data(), derived_pub, sizeof(derived_pub)) != 0;
     memcpy(pub_.data(), derived_pub, sizeof(derived_pub));
 
     if (needs_save)
     {
-        saveToPrefs();
+        if (!saveToPrefs())
+        {
+            memset(priv_.data(), 0, priv_.size());
+            memset(pub_.data(), 0, pub_.size());
+            return false;
+        }
     }
     return true;
 }
 
 bool MeshCoreIdentity::saveToPrefs() const
 {
-    chat::infra::PreferencesBlobMetadata meta;
-    meta.len = priv_.size();
-    meta.has_version = true;
-    meta.version = kIdentityPrefsVersion;
-
-    const bool priv_ok = chat::infra::saveRawBlobToPreferencesWithMetadata(
-        kIdentityPrefsNs,
-        kIdentityPrefsPriv,
-        kIdentityPrefsVer,
-        nullptr,
-        priv_.data(),
-        priv_.size(),
-        &meta,
-        false);
-    const bool pub_ok = chat::infra::saveRawBlobToPreferences(kIdentityPrefsNs,
-                                                              kIdentityPrefsPub,
-                                                              pub_.data(),
-                                                              pub_.size());
-    return priv_ok && pub_ok;
+    using namespace platform::esp::common;
+    RadioIdentityWork work;
+    if (!work.data()) return false;
+    const auto prior = readRadioIdentityRecord(kIdentityPrefsNs, RadioIdentityKind::MeshCore, work.data(), work.size());
+    if (prior != IdentityRecordResult::Ready && prior != IdentityRecordResult::Absent) return false;
+    const auto generation = prior == IdentityRecordResult::Ready ? identityRecordU32(work.data() + 8) : 0;
+    return commitRadioIdentityRecord(kIdentityPrefsNs, RadioIdentityKind::MeshCore, generation, pub_.data(), priv_.data(), work.data(), work.size(),
+                                     [](const uint8_t* pub, const uint8_t* priv, uint8_t* scratch, size_t)
+                                     { return !meshcoreIsZeroBytes(priv, 32) && meshcoreDerivePublicKey(priv, scratch) && !std::memcmp(pub, scratch, 32); }) == IdentityRecordResult::Committed;
 }
 
 bool MeshCoreIdentity::generateAndPersist()
@@ -214,16 +208,35 @@ bool MeshCoreIdentity::importPrivateKey(const uint8_t in_priv[kPrivKeySize])
     }
 
     uint8_t derived_pub[kPubKeySize] = {};
-    if (!meshcoreDerivePublicKey(in_priv, derived_pub))
+    if (meshcoreIsZeroBytes(in_priv, 32) || !meshcoreDerivePublicKey(in_priv, derived_pub))
     {
         return false;
     }
 
+    using namespace platform::esp::common;
+    RadioIdentityWork work;
+    if (!work.data()) return false;
+    const auto prior = readRadioIdentityRecord(kIdentityPrefsNs, RadioIdentityKind::MeshCore, work.data(), work.size());
+    if (prior != IdentityRecordResult::Ready && prior != IdentityRecordResult::Absent) return false;
+    const auto generation = prior == IdentityRecordResult::Ready ? identityRecordU32(work.data() + 8) : 0;
+    const auto saved = commitRadioIdentityRecord(kIdentityPrefsNs, RadioIdentityKind::MeshCore, generation,
+                                                 derived_pub, in_priv, work.data(), work.size(),
+                                                 [](const uint8_t* pub, const uint8_t* priv, uint8_t* scratch, size_t)
+                                                 { return !meshcoreIsZeroBytes(priv, 32) && meshcoreDerivePublicKey(priv, scratch) && !std::memcmp(pub, scratch, 32); });
+    if (saved != IdentityRecordResult::Committed)
+    {
+        if (saved == IdentityRecordResult::Indeterminate)
+        {
+            ready_ = false;
+            memset(priv_.data(), 0, priv_.size());
+            memset(pub_.data(), 0, pub_.size());
+        }
+        return false;
+    }
     memcpy(priv_.data(), in_priv, priv_.size());
     memcpy(pub_.data(), derived_pub, sizeof(derived_pub));
     ready_ = true;
-
-    return saveToPrefs();
+    return true;
 }
 
 } // namespace meshcore

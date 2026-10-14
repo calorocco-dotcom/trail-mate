@@ -1,5 +1,7 @@
 #include "gps/gpx/track_writer.h"
 #include "platform/esp/arduino_common/gps/sd_gpx_output.h"
+#include "platform/esp/idf_common/tracker_snapshot_runtime.h"
+#include "platform/ui/tracker_access_gate.h"
 #include "platform/ui/tracker_runtime.h"
 
 #include "esp_timer.h"
@@ -22,6 +24,7 @@ constexpr const char* kTrackDir = "/trackers";
 constexpr uint32_t kDefaultIntervalSeconds = 5;
 constexpr double kDistanceOnlyThresholdMeters = 5.0;
 constexpr uint32_t kMinValidEpoch = 1577836800U;
+TrackerControlState tracker_control;
 
 struct TrackerRuntimeState
 {
@@ -295,6 +298,9 @@ bool is_recording()
 
 bool start_recording()
 {
+    TrackerGateScope access(tracker_control.access);
+    if (!access) return false;
+    if (tracker_control.stop_requested.load(std::memory_order_acquire)) return false;
     TrackerRuntimeState& runtime = state();
     if (runtime.recording)
     {
@@ -317,12 +323,17 @@ bool start_recording()
     runtime.last_sample_ms = 0;
     runtime.has_last_point = false;
     write_header(runtime);
+    access.release();
     poll();
     return true;
 }
 
 void stop_recording()
 {
+    tracker_control.stop_requested.store(true, std::memory_order_release);
+    TrackerGateScope access(tracker_control.access);
+    if (!access) return;
+    tracker_control.stop_requested.exchange(false, std::memory_order_acq_rel);
     TrackerRuntimeState& runtime = state();
     if (!runtime.recording)
     {
@@ -337,17 +348,27 @@ void stop_recording()
 
 void poll()
 {
+    TrackerGateScope access(tracker_control.access);
+    if (!access) return;
+    if (tracker_control.stop_requested.load(std::memory_order_acquire))
+    {
+        access.release();
+        stop_recording();
+        return;
+    }
     TrackerRuntimeState& runtime = state();
     if (!runtime.recording)
     {
         if (runtime.auto_recording)
         {
+            access.release();
             (void)start_recording();
         }
         return;
     }
     if (!runtime.file.is_open())
     {
+        access.release();
         stop_recording();
         return;
     }
@@ -430,6 +451,8 @@ bool list_tracks(std::vector<std::string>& out_tracks, std::size_t max_count)
 
 bool remove_track(const std::string& path)
 {
+    TrackerGateScope access(tracker_control.access);
+    if (!access) return false;
     if (!platform::esp::idf_common::bsp_runtime::ensure_sdcard_ready() || path.empty())
     {
         return false;
@@ -441,6 +464,34 @@ bool remove_track(const std::string& path)
 const char* track_dir()
 {
     return kTrackDir;
+}
+
+bool try_acquire_snapshot_read()
+{
+    if (!tracker_control.access.tryAcquire()) return false;
+    if (state().recording || tracker_control.stop_requested.load(std::memory_order_acquire))
+    {
+        tracker_control.access.release();
+        return false;
+    }
+    return true;
+}
+
+void release_snapshot_read()
+{
+    tracker_control.access.release();
+}
+
+bool try_acquire_catalog_read()
+{
+    return tracker_control.access.tryAcquire();
+}
+
+bool is_recording_filename(const char* filename)
+{
+    return filename && state().recording &&
+           state().current_rel_path.compare(0, 10, "/trackers/") == 0 &&
+           std::strcmp(state().current_rel_path.c_str() + 10, filename) == 0;
 }
 
 void set_auto_recording(bool enabled)

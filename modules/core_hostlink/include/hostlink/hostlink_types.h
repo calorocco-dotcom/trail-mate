@@ -25,6 +25,8 @@ enum class FrameType : uint8_t
     CmdSetTime = 0x13,
     CmdGetGps = 0x14,
     CmdTxAppData = 0x15,
+    ManagementRequest = 0x20,
+    ManagementResponse = 0x21,
 
     EvRxMsg = 0x80,
     EvTxResult = 0x81,
@@ -58,6 +60,12 @@ enum Capabilities : uint32_t
     CapTeamState = 1u << 7,
     CapAprsGateway = 1u << 8,
     CapTxAppData = 1u << 9,
+    CapManagement = 1u << 10,
+    // Firmware applies configured precision to its own Meshtastic position
+    // packets before radio encryption and MQTT mirroring; independent of mode.
+    CapChannelPositionPrecision = 1u << 11,
+    CapSharedSignatureRecovery = 1u << 12,
+    CapSharedConfirmationRecovery = 1u << 13,
 };
 
 enum class ConfigKey : uint8_t

@@ -4,15 +4,21 @@
 #include "platform/esp/arduino_common/app_config_tms_settings_extension.h"
 #include "platform/esp/arduino_common/chat/infra/store/fixed_slot_journal.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
+#include "platform/ui/device_runtime.h"
 #include "platform/ui/reticulum_group_config_runtime.h"
 #include "platform/ui/reticulum_network_config_runtime.h"
 #include "platform/ui/settings_store.h"
 
-#include <Arduino.h>
-#include <Preferences.h>
+#include "platform/esp/common/config_preferences.h"
+#include "platform/esp/common/reticulum_runtime_compat.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <new>
+#if defined(ESP_PLATFORM)
+#include <esp_heap_caps.h>
+#endif
 
 namespace app::sd_tms
 {
@@ -25,6 +31,7 @@ constexpr const char* kConfigDir = "/trailmate";
 constexpr const char* kConfigPath = "/trailmate/config.tms";
 constexpr const char* kConfigTempPath = "/trailmate/config.tms.new";
 constexpr const char* kConfigRecoveryPath = "/trailmate/config.tms.bak";
+constexpr const char* kWebCandidatePath = "/trailmate/config.web.tms";
 constexpr const char* kBackupDir = "/trailmate/backup";
 constexpr const char* kBackupPath = "/trailmate/backup/settings.tms";
 constexpr const char* kBackupTempPath = "/trailmate/backup/settings.tms.new";
@@ -37,7 +44,7 @@ constexpr const char* kResetPendingKey = "working";
 // without an SD card cannot be undone by inserting an old card later.
 bool reset_pending()
 {
-    Preferences preferences;
+    ::platform::esp::common::ConfigPreferences preferences;
     if (!preferences.begin(kResetNamespace, true))
     {
         return false;
@@ -49,7 +56,7 @@ bool reset_pending()
 
 bool set_reset_pending(bool pending)
 {
-    Preferences preferences;
+    ::platform::esp::common::ConfigPreferences preferences;
     if (!preferences.begin(kResetNamespace, false))
     {
         return false;
@@ -80,12 +87,50 @@ bool remove_if_present(const char* path)
            ::platform::esp::arduino_common::storage::sd_remove(path);
 }
 
-tms::LineScratch s_line_scratch{};
+// Operations are serialized by the application owner. Nested candidate
+// validation borrows the emission buffer; only the outer lease frees it.
+tms::LineScratch* s_line_scratch_storage = nullptr;
+class ScopedLineScratch
+{
+  public:
+    ScopedLineScratch()
+    {
+        if (s_line_scratch_storage) return;
+#if defined(ESP_PLATFORM)
+        void* raw = heap_caps_malloc(sizeof(tms::LineScratch), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+        void* raw = std::malloc(sizeof(tms::LineScratch));
+#endif
+        if (raw)
+        {
+            s_line_scratch_storage = new (raw) tms::LineScratch{};
+            owner_ = true;
+        }
+    }
+    ~ScopedLineScratch()
+    {
+        if (!owner_) return;
+#if defined(ESP_PLATFORM)
+        heap_caps_free(s_line_scratch_storage);
+#else
+        std::free(s_line_scratch_storage);
+#endif
+        s_line_scratch_storage = nullptr;
+    }
+    ScopedLineScratch(const ScopedLineScratch&) = delete;
+    ScopedLineScratch& operator=(const ScopedLineScratch&) = delete;
+    bool ready() const { return s_line_scratch_storage != nullptr; }
+
+  private:
+    bool owner_ = false;
+};
+#define s_line_scratch (*s_line_scratch_storage)
 const AppConfig* s_working_config = nullptr;
 bool s_sync_pending = false;
 bool s_reset_in_progress = false;
 bool s_repair_required = false;
 uint32_t s_next_sync_attempt_ms = 0U;
+uint32_t s_web_restart_at = 0U;
 
 bool tracks_working_settings(const char* ns)
 {
@@ -103,7 +148,7 @@ void on_settings_store_changed(void*, const char* ns, const char*)
 
 bool consume_physical_line(tms::Decoder& decoder, std::size_t length)
 {
-    if (length >= sizeof(s_line_scratch.bytes))
+    if (!s_line_scratch_storage || length >= sizeof(s_line_scratch.bytes))
     {
         return false;
     }
@@ -147,6 +192,8 @@ bool read_document(const char* path,
         return false;
     }
 
+    ScopedLineScratch scratch;
+    if (!scratch.ready()) return false;
     settings_extension::beginRead(target != nullptr);
     tms::Decoder decoder(target,
                          kind,
@@ -217,6 +264,8 @@ bool write_document_candidate(const AppConfig& config,
                               const char* directory,
                               const char* temporary_path)
 {
+    ScopedLineScratch scratch;
+    if (!scratch.ready()) return false;
     if (!ensure_directory(directory) || !remove_if_present(temporary_path))
     {
         return false;
@@ -276,6 +325,8 @@ bool recover_transaction(const char* final_path,
 
 bool copy_backup_as_working_candidate()
 {
+    ScopedLineScratch scratch;
+    if (!scratch.ready()) return false;
     SdRuntimeFile source;
     SdRuntimeFile destination;
     if (!source.open(kBackupPath, "r") ||
@@ -459,6 +510,11 @@ void bindWorkingConfig(const AppConfig& config)
                                                         nullptr);
 }
 
+bool workingConfigIsBound()
+{
+    return s_working_config != nullptr;
+}
+
 void requestWorkingConfigSync()
 {
     if (!s_reset_in_progress)
@@ -470,6 +526,10 @@ void requestWorkingConfigSync()
 
 WorkingConfigSyncResult syncPendingWorkingConfig()
 {
+    if (s_web_restart_at != 0U || !s_working_config || s_repair_required)
+    {
+        return WorkingConfigSyncResult::Failed;
+    }
     if (!s_sync_pending)
     {
         return WorkingConfigSyncResult::Synchronized;
@@ -494,6 +554,14 @@ WorkingConfigSyncResult syncPendingWorkingConfig()
 
 void serviceWorkingConfig()
 {
+    if (s_web_restart_at != 0U)
+    {
+        if (static_cast<int32_t>(millis() - s_web_restart_at) >= 0)
+        {
+            ::platform::ui::device::restart();
+        }
+        return;
+    }
     if (!s_sync_pending || !s_working_config || s_repair_required)
     {
         return;
@@ -513,7 +581,7 @@ void serviceWorkingConfig()
 
 bool syncWorkingConfig(const AppConfig& config)
 {
-    if (s_repair_required || !sd_available() ||
+    if (s_web_restart_at != 0U || s_repair_required || !sd_available() ||
         !write_document_candidate(config,
                                   tms::DocumentKind::Working,
                                   kConfigDir,
@@ -539,7 +607,7 @@ bool backupWorkingConfig(const AppConfig& config)
 
 bool restoreWorkingConfig()
 {
-    if (!sd_available() ||
+    if (s_web_restart_at != 0U || !sd_available() ||
         !recover_transaction(kBackupPath, kBackupTempPath, kBackupRecoveryPath) ||
         !::platform::esp::arduino_common::storage::sd_exists(kBackupPath))
     {
@@ -577,8 +645,46 @@ void endWorkingConfigReset()
     s_next_sync_attempt_ms = 0U;
 }
 
+const char* webWorkingCandidatePath()
+{
+    return kWebCandidatePath;
+}
+
+bool webConfigurationRestartPending()
+{
+    return s_web_restart_at != 0U;
+}
+void scheduleWebManagementRestart()
+{
+    s_sync_pending = false;
+    if (s_web_restart_at != 0U) return;
+    s_web_restart_at = millis() + 2000U;
+    if (s_web_restart_at == 0U) s_web_restart_at = 1U;
+}
+
+bool validateWebWorkingCandidate()
+{
+    if (s_web_restart_at != 0U || s_repair_required || !sd_available()) return false;
+    uint16_t schema = 0;
+    tms::DocumentInfo info{};
+    return read_document(kWebCandidatePath, tms::DocumentKind::Working, nullptr,
+                         &schema, &info) &&
+           schema == tms::kSchemaVersion;
+}
+
+bool commitWebWorkingCandidate()
+{
+    if (!validateWebWorkingCandidate() ||
+        !promote_candidate(kWebCandidatePath, kConfigPath, kConfigRecoveryPath)) return false;
+    s_sync_pending = false;
+    s_web_restart_at = millis() + 2000U;
+    if (s_web_restart_at == 0U) s_web_restart_at = 1U;
+    return true;
+}
+
 bool resetWorkingConfig()
 {
+    if (s_web_restart_at != 0U) return false;
     s_sync_pending = false;
     s_next_sync_attempt_ms = 0U;
     s_repair_required = false;
@@ -610,4 +716,5 @@ const char* loadResultName(LoadResult result)
     return "unknown";
 }
 
+#undef s_line_scratch
 } // namespace app::sd_tms

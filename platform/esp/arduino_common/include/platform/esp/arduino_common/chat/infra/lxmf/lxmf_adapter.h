@@ -9,6 +9,7 @@
 #include "chat/infra/lxmf/lxmf_wire.h"
 #include "chat/infra/mesh_incoming_queue.h"
 #include "chat/ports/i_geocaching_transport.h"
+#include "chat/ports/track_delivery_binding.h"
 #include "chat/ports/i_mesh_adapter.h"
 #include "chat/ports/i_mesh_peer_directory.h"
 #include "platform/esp/arduino_common/chat/infra/lxmf/geocaching_discovery_budget.h"
@@ -59,6 +60,14 @@ class LxmfAdapter : public IMeshAdapter, private runtime::IPeerProjectionSink
     static void operator delete(void* ptr, std::size_t size) noexcept;
 
     MeshCapabilities getCapabilities() const override;
+    DeviceAuthorResult readDeviceAuthorKey(uint8_t* public_key, uint32_t& generation) const override;
+    DeviceAuthorResult exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const override;
+    DeviceIdentityRestoreResult restoreDeviceIdentity(const hostlink::management::IdentityRestoreView& request, uint8_t* work, size_t capacity) override;
+    DeviceAuthorResult signTrackManifest(const uint8_t* raw, size_t size, uint32_t generation, track_sharing::ManifestView& view,
+                                         uint8_t* workspace, size_t capacity, uint8_t* signature, size_t signature_capacity) const override;
+    DeviceAuthorResult proveDeviceAuthor(const uint8_t* session, const uint8_t* challenge, uint32_t expected_generation,
+                                         uint8_t* workspace, size_t capacity, uint8_t* public_key,
+                                         uint32_t& generation, uint8_t* signature) const override;
     bool getGeocachingAuthorKey(uint8_t out[64]) const;
     bool signGeocachingRecord(ByteSpan record, uint8_t* workspace, size_t workspace_capacity,
                               uint8_t* output, size_t output_capacity, size_t& written);
@@ -74,6 +83,8 @@ class LxmfAdapter : public IMeshAdapter, private runtime::IPeerProjectionSink
         geocaching_handler_ = handler;
         geocaching_handler_context_ = context;
     }
+    void setTrackDeliveryBinding(const TrackDeliveryBinding* binding) { track_delivery_binding_ = binding; }
+    bool requestTrackDirectoryPath(const uint8_t* destination);
     MeshSendResult sendCustomDataToDestination(const uint8_t destination_hash[16],
                                                const char* custom_type, ByteSpan data,
                                                bool response, std::array<uint8_t, 32>* accepted_lxmf_hash = nullptr);
@@ -130,6 +141,7 @@ class LxmfAdapter : public IMeshAdapter, private runtime::IPeerProjectionSink
     void processSendQueue() override;
 
   private:
+    const TrackDeliveryBinding* track_delivery_binding_ = nullptr;
     CustomDeliveryHandler geocaching_handler_ = nullptr;
     GeocachingAnnouncementHandler geocaching_announcement_handler_ = nullptr;
     void* geocaching_announcement_context_ = nullptr;

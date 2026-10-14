@@ -1,9 +1,17 @@
 #include "geocaching/protocol/get_response.h"
+#include "geocaching/protocol/get_request.h"
 #include "geocaching/protocol/publish_request.h"
 #include "geocaching/protocol/query_response.h"
 #include "platform/esp/arduino_common/geocaching/browse_runtime.h"
 #include "platform/esp/arduino_common/geocaching/sd_indexed_commit.h"
+#include "platform/esp/arduino_common/geocaching/sd_indexed_draft_catalog.h"
+#include "platform/esp/arduino_common/geocaching/sd_indexed_new_task.h"
+#include "platform/esp/arduino_common/geocaching/sd_index_initialize.h"
+#include "platform/esp/arduino_common/geocaching/sd_indexed_author_reservation.h"
+#include "platform/esp/arduino_common/geocaching/web_confirmation_job.h"
+#include "platform/esp/arduino_common/geocaching/indexed_publication_store.h"
 #include "runtime_environment.h"
+#include "geocaching/protocol/record_encoder.h"
 #include "storage_owner.h"
 #include "ui_presentation/geocaching/local_map_overlay.h"
 #include <cstdio>
@@ -250,15 +258,318 @@ DetailText detailText(const ui::geocaching::Item& item)
     require(!test::ui_io, "detail UI callback touched SD");
     return result;
 }
+void checkMissingConfirmationHistory(const std::vector<uint8_t>& signed_record,
+                                    const geocaching::protocol::VerifiedRecordView& content,
+                                    geocaching::ByteView proof, geocaching::protocol::RecordCrypto& crypto)
+{
+    namespace sd = platform::esp::arduino_common::geocaching;
+    namespace gc = geocaching::storage;
+    // A distinct, genuinely initialized empty volume; restore the caller's
+    // simulated card afterwards so its runtime leases remain unchanged.
+    struct RestoreCard
+    {
+        decltype(test::files) files = std::move(test::files);
+        decltype(test::directories) directories = std::move(test::directories);
+        ~RestoreCard() { test::files = std::move(files); test::directories = std::move(directories); }
+    } original;
+    test::files.clear(); test::directories.clear(); test::directories.insert("/");
+    gc::VolumeInstance volume{},confirmed; volume.fill(71);
+    require(sd::createNewSdVolume(volume,confirmed)==sd::SdVolumeResult::Ready&&confirmed==volume,"fresh confirmation volume initialization failed");
+    std::array<gc::IndexRootBytes,2> roots;
+    sd::SdIndexInitialize initialize(volume);
+    require(initialize.begin(roots[0]),"fresh confirmation index initialization rejected");
+    auto initialized=sd::IndexRootWriteStep::Working;
+    for(unsigned i=0;i<100000&&initialized==sd::IndexRootWriteStep::Working;++i)initialized=initialize.step();
+    require(initialized==sd::IndexRootWriteStep::Verified,"fresh confirmation index initialization failed");
+    roots[1]=roots[0];gc::IndexRootView root;
+    require(gc::decodeIndexRoot({roots[0].data(),roots[0].size()},volume,root),"fresh confirmation root invalid");
+    unsigned copy=0;std::array<uint8_t,8192> frame{},verification{};
+    std::vector<uint8_t> outgoing(signed_record.size()+4096),request_bytes(signed_record.size()+64);
+    gc::QueuedRequestWorkspace workspace(outgoing.data(),outgoing.size());
+    geocaching::RequestId request;request.bytes.fill(42);geocaching::Destination local{},remote{};
+    gc::PublicationConfirmationView decoded_proof;size_t count=0;
+    require(gc::decodePublicationConfirmation(proof,decoded_proof),"fresh confirmation proof envelope invalid");
+    geocaching::protocol::CmpReader receipt(decoded_proof.raw);uint64_t version=0;geocaching::ByteView delivery;
+    require(receipt.array(count,8)&&receipt.unsignedInteger(version)&&receipt.binary(delivery,16)&&delivery.size==16,"fresh confirmation directory missing");
+    std::memcpy(remote.bytes.data(),delivery.data,16);
+    size_t request_size=0;
+    require(geocaching::protocol::encodePublishRequest(request,content.record.encoded,content.signature,8192,request_bytes.data(),request_bytes.size(),request_size),"fresh confirmation request encoding failed");
+    const auto empty_files=test::files;
+    std::vector<uint8_t> bad_proof(proof.data,proof.data+proof.size);bad_proof.back()^=1;
+    sd::SdIndexedNewTask invalid(volume);
+    require(!invalid.beginConfirmed(root,copy,local,remote,request,request.bytes,{request_bytes.data(),request_size},{bad_proof.data(),bad_proof.size()},{},workspace,frame.data(),frame.size(),roots[1-copy],crypto,verification.data(),verification.size())&&test::files==empty_files,"invalid history proof reached fresh storage");
+    std::array<uint8_t,48> request_key{};std::memcpy(request_key.data()+16,remote.bytes.data(),16);std::memcpy(request_key.data()+32,request.bytes.data(),16);
+    gc::OutgoingView completed;completed.request={request_bytes.data(),request_size};completed.state=4;completed.task_id={request.bytes.data(),16};completed.terminal_data=proof;
+    size_t compact_size=0;
+    require(gc::encodeOutgoing({request_key.data(),request_key.size()},completed,outgoing.data(),outgoing.size(),compact_size),"compact confirmation fixture encode failed");
+    gc::QueuedRequestWorkspace compact(outgoing.data(),compact_size);sd::SdIndexedNewTask bounded(volume);
+    require(bounded.beginConfirmed(root,copy,local,remote,request,request.bytes,{request_bytes.data(),request_size},proof,{},compact,frame.data(),frame.size(),roots[1-copy],crypto,verification.data(),verification.size()),"compact confirmation admission failed before recovery");
+    auto bounded_status=sd::IndexedCommitStep::Working;
+    for(unsigned i=0;i<100000&&bounded_status==sd::IndexedCommitStep::Working;++i)bounded_status=bounded.step();
+    require(bounded_status==sd::IndexedCommitStep::Invalid&&test::files==empty_files,"insufficient recovery workspace wrote partial history");
+    // An authentic network head must not introduce contradictory origin
+    // metadata into an existing local author history. No task or draft writes.
+    const auto empty_roots=roots;
+    for(unsigned conflict=0;conflict<3;++conflict)
+    {
+        if(conflict==1&&content.record.revision==1)continue;
+        std::array<uint8_t,36> prior_key{};
+        std::memcpy(prior_key.data(),content.id.bytes.data(),32);
+        const uint32_t prior_revision=conflict==1?1:2;
+        for(unsigned i=0;i<4;++i)prior_key[32+i]=static_cast<uint8_t>(prior_revision>>((3-i)*8));
+        std::array<uint8_t,64> prior_author;
+        std::memcpy(prior_author.data(),content.record.author_public_key.data,64);
+        if(conflict==2)prior_author[0]^=1;
+        gc::StoredTime prior_time;prior_time.has_utc=true;prior_time.utc_seconds=content.record.created_at+(conflict==2?0:1);
+        geocaching::RevisionHash prior_hash;prior_hash.bytes.fill(71);
+        std::array<uint8_t,192> prior_bytes{};size_t prior_size=0;
+        const uint64_t origin=conflict==1?UINT64_MAX:content.record.created_at+(conflict==0?1:0);
+        require(gc::encodeAuthorIssued(prior_hash,{prior_author.data(),prior_author.size()},prior_time,prior_bytes.data(),prior_bytes.size(),prior_size,origin),"conflicting origin fixture encoding failed");
+        gc::MutationView mutation{3,{prior_key.data(),prior_key.size()},{prior_bytes.data(),prior_size},false};
+        sd::SdIndexedCommit seed(volume);
+        require(seed.begin(root,copy,&mutation,1,frame.data(),frame.size(),roots[1-copy],false,1),"conflicting origin fixture commit rejected");
+        auto seeded=sd::IndexedCommitStep::Working;
+        for(unsigned i=0;i<100000&&seeded==sd::IndexedCommitStep::Working;++i)seeded=seed.step();
+        require(seeded==sd::IndexedCommitStep::Verified&&seed.committed(root),"conflicting origin fixture commit failed");
+        copy=1-copy;
+        const auto before_rejection=test::files;
+        sd::SdIndexedNewTask blocked(volume);
+        require(blocked.beginConfirmed(root,copy,local,remote,request,request.bytes,{request_bytes.data(),request_size},proof,{},workspace,frame.data(),frame.size(),roots[1-copy],crypto,verification.data(),verification.size()),"origin conflict should be checked by incremental storage reads");
+        auto rejected=sd::IndexedCommitStep::Working;
+        for(unsigned i=0;i<100000&&rejected==sd::IndexedCommitStep::Working;++i)rejected=blocked.step();
+        require(rejected==sd::IndexedCommitStep::Invalid&&test::files==before_rejection,"conflicting local origin admitted partial recovered history");
+        test::files=empty_files;roots=empty_roots;copy=0;
+        require(gc::decodeIndexRoot({roots[0].data(),roots[0].size()},volume,root),"empty root restoration failed after conflict test");
+    }
+    const auto restore=[&] {
+        sd::SdIndexedNewTask job(volume);
+        require(job.beginConfirmed(root,copy,local,remote,request,request.bytes,{request_bytes.data(),request_size},proof,{},workspace,frame.data(),frame.size(),roots[1-copy],crypto,verification.data(),verification.size()),"fresh confirmation admission rejected");
+        auto status=sd::IndexedCommitStep::Working;
+        for(unsigned i=0;i<100000&&status==sd::IndexedCommitStep::Working;++i)status=job.step();
+        const auto revision=root.revision;
+        require(status==sd::IndexedCommitStep::Verified&&job.committed(root),"fresh confirmation restoration failed");
+        if(root.revision!=revision)copy=1-copy;
+    };
+    restore();const auto restored_files=test::files;restore();
+    require(test::files==restored_files,"fresh confirmation retry wrote duplicate history");
+    gc::DraftCatalogPage catalog_page;sd::SdIndexedDraftCatalog catalog(volume,crypto,verification.data(),verification.size());
+    require(catalog.begin(root,0,catalog_page,frame.data(),frame.size()),"restored history catalog read rejected");
+    auto catalog_status=sd::IndexGetStep::Working;
+    for(unsigned i=0;i<100000&&catalog_status==sd::IndexGetStep::Working;++i)catalog_status=catalog.step();
+    require(catalog_status==sd::IndexGetStep::Ready&&catalog_page.count==1&&catalog_page.rows[0].publication.confirmed_revision==content.record.revision,
+            "restored history does not project its directory-confirmed version");
+    gc::PublicationHistory device_history;
+    sd::SdIndexedPublicationHistory history_reader(volume,crypto,verification.data(),verification.size());
+    require(history_reader.begin(root,content.record.creation_nonce,1,content.id,content.record.author_public_key,device_history,frame.data(),frame.size()),"restored device publication history read rejected");
+    auto history_status=sd::IndexGetStep::Working;
+    for(unsigned i=0;i<100000&&history_status==sd::IndexGetStep::Working;++i)history_status=history_reader.step();
+    require(history_status==sd::IndexGetStep::Ready&&device_history.latest_revision==content.record.revision&&device_history.confirmed_revision==content.record.revision&&
+            device_history.created_at==content.record.created_at&&device_history.latest_hash.bytes==content.hash.bytes,"restored device UI history cannot continue its signed head");
+    std::array<uint8_t,36> issued_key{};std::memcpy(issued_key.data(),content.id.bytes.data(),32);
+    for(unsigned i=0;i<4;++i)issued_key[32+i]=static_cast<uint8_t>(content.record.revision>>((3-i)*8));
+    sd::SdIndexGet issued_read(volume);require(issued_read.begin(root,3,{issued_key.data(),issued_key.size()},frame.data(),frame.size()),"restored issuance read rejected");
+    auto read_status=sd::IndexGetStep::Working;
+    for(unsigned i=0;i<100000&&read_status==sd::IndexGetStep::Working;++i)read_status=issued_read.step();
+    gc::AuthorIssuedView issued;
+    require(read_status==sd::IndexGetStep::Ready&&gc::decodeAuthorIssued({issued_key.data(),issued_key.size()},issued_read.value(),issued)&&
+            !std::memcmp(issued.revision_hash.data,content.hash.bytes.data(),32)&&issued.has_recovered_creation&&issued.recovered_created_at==content.record.created_at,"fresh restoration omitted signed history");
+    sd::SdIndexGet draft_read(volume);require(draft_read.begin(root,4,content.record.creation_nonce,frame.data(),frame.size()),"restored draft read rejected");
+    read_status=sd::IndexGetStep::Working;
+    for(unsigned i=0;i<100000&&read_status==sd::IndexGetStep::Working;++i)read_status=draft_read.step();
+    gc::DraftView draft;
+    require(read_status==sd::IndexGetStep::Ready&&gc::decodeDraft(content.record.creation_nonce,draft_read.value(),draft)&&draft.generation==1&&
+            draft.author.size==64&&!std::memcmp(draft.author.data,content.record.author_public_key.data,64)&&draft.base_hash.size==32&&
+            !std::memcmp(draft.base_hash.data,content.hash.bytes.data(),32)&&draft.name==content.record.name,"fresh restoration omitted editable predecessor");
+    auto successor=content.record;successor.revision++;successor.previous_hash={content.hash.bytes.data(),32};successor.updated_at++;
+    std::vector<uint8_t> successor_bytes(content.record.encoded.size+64);size_t successor_size=0;
+    require(geocaching::protocol::encodeGeocacheRecord(successor,successor_bytes.data(),successor_bytes.size(),successor_size),"restored successor encoding failed");
+    gc::StoredTime issued_time;issued_time.has_utc=true;issued_time.utc_seconds=successor.updated_at;
+    sd::SdIndexedAuthorReservation reservation(volume,crypto);
+    require(reservation.beginReserve(root,copy,{successor_bytes.data(),successor_size},issued_time,outgoing.data(),outgoing.size(),frame.data(),frame.size(),roots[1-copy],content.record.creation_nonce,1,true),"restored successor reservation rejected");
+    auto reserved=sd::IndexedCommitStep::Working;
+    for(unsigned i=0;i<100000&&reserved==sd::IndexedCommitStep::Working;++i)reserved=reservation.step();
+    if(reserved!=sd::IndexedCommitStep::Verified)std::fprintf(stderr,"Restored predecessor revision=%u next reservation status=%u\n",content.record.revision,static_cast<unsigned>(reserved));
+    require(reserved==sd::IndexedCommitStep::Verified&&reservation.committed(root),"restored history cannot maintain its next version");
+    copy=1-copy;
+    sd::SdIndexGet advanced_draft(volume);require(advanced_draft.begin(root,4,content.record.creation_nonce,frame.data(),frame.size()),"advanced restored draft read rejected");
+    read_status=sd::IndexGetStep::Working;
+    for(unsigned i=0;i<100000&&read_status==sd::IndexGetStep::Working;++i)read_status=advanced_draft.step();
+    require(read_status==sd::IndexGetStep::Ready,"advanced restored draft missing");
+    const std::vector<uint8_t> preserved_draft(advanced_draft.value().data,advanced_draft.value().data+advanced_draft.value().size);
+    request.bytes.fill(43);
+    require(geocaching::protocol::encodePublishRequest(request,content.record.encoded,content.signature,8192,request_bytes.data(),request_bytes.size(),request_size),"repeat historical confirmation encoding failed");
+    restore();
+    sd::SdIndexGet retained_draft(volume);require(retained_draft.begin(root,4,content.record.creation_nonce,frame.data(),frame.size()),"retained restored draft read rejected");
+    read_status=sd::IndexGetStep::Working;
+    for(unsigned i=0;i<100000&&read_status==sd::IndexGetStep::Working;++i)read_status=retained_draft.step();
+    require(read_status==sd::IndexGetStep::Ready&&retained_draft.value().size==preserved_draft.size()&&
+            !std::memcmp(retained_draft.value().data,preserved_draft.data(),preserved_draft.size()),"historical confirmation overwrote later draft work");
+}
+void checkExternalConfirmationProjection(const std::vector<uint8_t>& signed_record, const geocaching::protocol::VerifiedRecordView& content, uint32_t generation)
+{
+    namespace sd = platform::esp::arduino_common::geocaching;
+    namespace gc = geocaching::storage;
+    using namespace geocaching;
+    test::in_ui = false;
+    gc::VolumeInstance volume;
+    require(sd::inspectSdVolume(volume) == sd::SdVolumeResult::Ready, "confirmation volume missing");
+    std::array<gc::IndexRootBytes,2> roots;
+    for(unsigned i=0;i<2;++i){const auto& bytes=test::files.at("/trailmate/geocaching/.state/index/root.h"+std::to_string(i));std::copy(bytes.begin(),bytes.end(),roots[i].begin());}
+    gc::IndexRootView a,b,root;
+    require(gc::decodeIndexRoot({roots[0].data(),roots[0].size()},volume,a)&&gc::decodeIndexRoot({roots[1].data(),roots[1].size()},volume,b)&&gc::selectIndexRoot(a,b,root),"confirmation root invalid");
+    unsigned copy=b.revision>a.revision?1:0;
+    platform::esp::common::EspGeocachingCrypto crypto;
+    chat::MeshAdapterRouter directory;
+    std::array<uint8_t,8192> frame{},verification{};
+    std::array<uint8_t,32> digest{};
+    std::array<uint8_t,16> delivery{},epoch{},operation{};epoch.fill(4);operation.fill(6);
+    crypto.sha256({directory.identity.public_key.data(),64},digest.data());std::memcpy(verification.data()+10,digest.data(),16);
+    constexpr char name[]="lxmf.delivery";
+    crypto.sha256({reinterpret_cast<const uint8_t*>(name),sizeof(name)-1},digest.data());std::memcpy(verification.data(),digest.data(),10);
+    crypto.sha256({verification.data(),26},digest.data());std::memcpy(delivery.data(),digest.data(),16);
+    std::array<uint8_t,192> proof_raw{};
+    protocol::CmpWriter proof_writer(proof_raw.data(),proof_raw.size());
+    require(proof_writer.array(8)&&proof_writer.unsignedInteger(1)&&proof_writer.binary({delivery.data(),16})&&proof_writer.binary({epoch.data(),16})&&
+            proof_writer.binary({content.id.bytes.data(),32})&&proof_writer.unsignedInteger(content.record.revision)&&proof_writer.binary({content.hash.bytes.data(),32})&&
+            proof_writer.unsignedInteger(static_cast<uint8_t>(content.record.state))&&proof_writer.unsignedInteger(1800000000),"confirmation proof encode failed");
+    constexpr char domain[]="trailmate.geocache/receipt/v1";
+    std::memcpy(verification.data(),domain,sizeof(domain));std::memcpy(verification.data()+sizeof(domain),proof_raw.data(),proof_writer.size());
+    std::array<uint8_t,64> signature{};directory.identity.sign(verification.data(),sizeof(domain)+proof_writer.size(),signature.data());
+    std::array<uint8_t,384> proof{};size_t proof_size=0;
+    require(gc::encodePublicationConfirmation({{proof_raw.data(),proof_writer.size()},{signature.data(),64},{directory.identity.public_key.data(),64}},proof.data(),proof.size(),proof_size),"stored proof encode failed");
+    test::files["/trailmate/cache.confirm.upload"]=signed_record;
+    std::array<uint8_t,32> upload_hash{};require(crypto.sha256({signed_record.data(),signed_record.size()},upload_hash.data()),"confirmation upload hash failed");
+    std::array<uint8_t,16> upload_id{},upload_owner{};upload_id.fill(8);upload_owner.fill(9);
+    until([&]{return rt::queueWebConfirmation(upload_id.data(),upload_owner.data(),upload_hash.data(),static_cast<uint32_t>(signed_record.size()),content.record.author_public_key.data,generation,proof.data(),proof_size)==rt::WebReadResult::Ready;},"runtime confirmation not admitted");
+    size_t status_size=0;
+    test::busy_author_reads = 3;
+    require(rt::readWebConfirmation(upload_id.data(),upload_owner.data(),verification.data(),verification.size(),status_size)==rt::WebReadResult::Pending,
+            "transient author lock reported stale confirmation identity");
+    until([&]{return test::busy_author_reads==0;},"confirmation did not retry the unavailable author lock");
+    until([&]{
+        if(rt::readWebConfirmation(upload_id.data(),upload_owner.data(),verification.data(),verification.size(),status_size)!=rt::WebReadResult::Ready)return false;
+        protocol::CmpReader status({verification.data(),status_size});size_t count=0;ByteView id,hash;uint64_t version=0,phase=0;
+        require(status.array(count,8)&&status.binary(id,16)&&status.binary(hash,32)&&status.unsignedInteger(version)&&status.unsignedInteger(phase),"runtime confirmation status invalid");
+        require(version==generation&&!std::memcmp(id.data,upload_id.data(),16)&&!std::memcmp(hash.data,upload_hash.data(),32),"runtime confirmation generation or upload binding changed");
+        require(phase!=2,"runtime confirmation failed");
+        if(phase!=1)return false;
+        ByteView cache,revision_hash;uint64_t revision=0,durable=0;
+        require(status.binary(cache,32)&&cache.size==32&&status.unsignedInteger(revision)&&status.binary(revision_hash,32)&&revision_hash.size==32&&status.unsignedInteger(durable)&&status.finished()&&
+                !std::memcmp(cache.data,content.id.bytes.data(),32)&&revision==content.record.revision&&
+                !std::memcmp(revision_hash.data,content.hash.bytes.data(),32)&&durable==1,"runtime confirmation is not the exact durable publication");
+        return true;
+    },"runtime confirmation not committed");
+    auto stranger=upload_owner;stranger[0]^=1;
+    require(rt::readWebConfirmation(upload_id.data(),stranger.data(),verification.data(),verification.size(),status_size)==rt::WebReadResult::Forbidden,"foreign session read confirmation result");
+    require(rt::releaseWebConfirmation(upload_owner.data(),upload_id.data())==rt::WebReadResult::Ready,"runtime confirmation release failed");
+    for(unsigned i=0;i<2;++i){const auto& bytes=test::files.at("/trailmate/geocaching/.state/index/root.h"+std::to_string(i));std::copy(bytes.begin(),bytes.end(),roots[i].begin());}
+    require(gc::decodeIndexRoot({roots[0].data(),roots[0].size()},volume,a)&&gc::decodeIndexRoot({roots[1].data(),roots[1].size()},volume,b)&&gc::selectIndexRoot(a,b,root),"runtime confirmation root invalid");
+    copy=b.revision>a.revision?1:0;
+    RequestId request;request.bytes=operation;
+    std::array<uint8_t,48> request_key{};std::memcpy(request_key.data()+16,delivery.data(),16);std::memcpy(request_key.data()+32,operation.data(),16);
+    std::vector<uint8_t> request_bytes(signed_record.size()+64),outgoing_bytes(signed_record.size()+1024);size_t request_size=0,outgoing_size=0,task_size=0;
+    require(protocol::encodePublishRequest(request,content.record.encoded,content.signature,8192,request_bytes.data(),request_bytes.size(),request_size),"confirmation request encode failed");
+    gc::OutgoingView outgoing;outgoing.request={request_bytes.data(),request_size};outgoing.state=4;outgoing.task_id={operation.data(),16};outgoing.terminal_data={proof.data(),proof_size};
+    std::array<uint8_t,256> task_bytes{};
+    gc::TaskView task;task.kind=1;task.state=3;task.cache_id={content.id.bytes.data(),32};task.revision_hash={content.hash.bytes.data(),32};task.requests[0]={request_key.data(),48};task.request_count=1;
+    require(gc::encodeTask({operation.data(),16},task,task_bytes.data(),task_bytes.size(),task_size),"confirmation task encode failed");
+    const auto commit=[&]{
+        require(gc::encodeOutgoing({request_key.data(),48},outgoing,outgoing_bytes.data(),outgoing_bytes.size(),outgoing_size),"confirmation outgoing encode failed");
+        const gc::MutationView rows[]={{5,{request_key.data(),48},{outgoing_bytes.data(),outgoing_size},false},{10,{operation.data(),16},{task_bytes.data(),task_size},false}};
+        sd::SdIndexedCommit write(volume);require(write.begin(root,copy,rows,2,frame.data(),frame.size(),roots[1-copy]),"confirmation transaction rejected");
+        auto status=sd::IndexedCommitStep::Working;for(unsigned i=0;i<100000&&status==sd::IndexedCommitStep::Working;++i)status=write.step();
+        require(status==sd::IndexedCommitStep::Verified&&write.committed(root),"confirmation transaction failed");copy=1-copy;
+    };
+    Destination local,remote;remote.bytes=delivery;
+    std::vector<uint8_t> encoded_workspace(8192);gc::QueuedRequestWorkspace workspace(encoded_workspace.data(),encoded_workspace.size());
+    const auto confirmed_commit=[&]{
+        sd::SdIndexedNewTask write(volume);
+        require(write.beginConfirmed(root,copy,local,remote,request,operation,{request_bytes.data(),request_size},{proof.data(),proof_size},{},workspace,
+                                     frame.data(),frame.size(),roots[1-copy],crypto,verification.data(),verification.size()),"verified confirmation admission failed");
+        auto status=sd::IndexedCommitStep::Working;for(unsigned i=0;i<100000&&status==sd::IndexedCommitStep::Working;++i)status=write.step();
+        const auto revision=root.revision;
+        require(status==sd::IndexedCommitStep::Verified&&write.committed(root),"verified confirmation commit failed");
+        if(root.revision!=revision)copy=1-copy;
+    };
+    confirmed_commit();
+    const auto original_files=test::files;confirmed_commit();require(test::files==original_files,"duplicate confirmation wrote another transaction");
+    sd::IndexWorkspaceOwner owner;std::array<uint8_t,512> response{};
+    sd::IndexedPublicationStore store(volume,root,copy,roots[0],roots[1],owner,workspace,frame.data(),frame.size(),response.data(),response.size(),verification.data(),verification.size(),crypto);
+    std::vector<uint8_t> job_work(std::max(size_t(320),signed_record.size()+128));auto job_operation=operation;job_operation.fill(7);
+    static_assert(sizeof(sd::WebConfirmationJob<sd::IndexedPublicationStore>)<=512,"Confirmation job owns metadata only");
+    const auto run_job=[&]{
+        sd::WebConfirmationJob<sd::IndexedPublicationStore> job(store,crypto);
+        require(job.begin(job_operation,{signed_record.data(),signed_record.size()},{proof.data(),proof_size},content.record.author_public_key,{},job_work.data(),job_work.size()),"confirmation job begin rejected");
+        for(unsigned i=0;i<100000&&job.phase()!=sd::WebConfirmationPhase::Confirmed&&job.phase()!=sd::WebConfirmationPhase::Failed;++i)job.advance();
+        require(job.phase()==sd::WebConfirmationPhase::Confirmed&&job.revision()==content.record.revision&&job.hash().bytes==content.hash.bytes,"confirmation job failed");
+        require(!owner.holder(),"confirmation job retained workspace lease");
+    };
+    run_job();const auto job_files=test::files;run_job();require(test::files==job_files,"confirmation job retry wrote another transaction");
+    const auto read=[&](bool valid){
+        gc::DraftCatalogPage page;sd::SdIndexedDraftCatalog catalog(volume,crypto,verification.data(),verification.size());
+        require(catalog.begin(root,0,page,frame.data(),frame.size()),"confirmation catalog begin failed");
+        auto status=sd::IndexGetStep::Working;for(unsigned i=0;i<100000&&status==sd::IndexGetStep::Working;++i)status=catalog.step();
+        if(valid)require(status==sd::IndexGetStep::Ready&&page.count==1&&page.rows[0].publication.confirmed_revision==content.record.revision,"signed directory proof did not project confirmed version");
+        else require(status==sd::IndexGetStep::Invalid,"tampered directory proof was trusted by catalog");
+    };
+    read(true);
+    checkMissingConfirmationHistory(signed_record,content,{proof.data(),proof_size},crypto);
+    // A later confirmed head must continue without reconstructing fake v1/v2
+    // hashes. Its original creation time comes from this signed record/proof.
+    auto later=content.record;later.revision=3;later.updated_at+=2;
+    std::array<uint8_t,32> unknown_parent{};unknown_parent.fill(21);later.previous_hash={unknown_parent.data(),unknown_parent.size()};
+    std::array<uint8_t,4096> later_raw{};size_t later_size=0;
+    require(protocol::encodeGeocacheRecord(later,later_raw.data(),later_raw.size(),later_size),"later recovery fixture encode failed");
+    constexpr char sign_domain[]="trailmate.geocache/sign/v1";
+    std::memcpy(verification.data(),sign_domain,sizeof(sign_domain));std::memcpy(verification.data()+sizeof(sign_domain),later_raw.data(),later_size);
+    std::array<uint8_t,64> later_signature{};
+    require(!std::memcmp(directory.identity.public_key.data(),later.author_public_key.data,64)&&directory.identity.sign(verification.data(),sizeof(sign_domain)+later_size,later_signature.data()),"later recovery fixture signer mismatch");
+    std::vector<uint8_t> later_signed(later_size+128);protocol::CmpWriter later_writer(later_signed.data(),later_signed.size());
+    require(later_writer.array(2)&&later_writer.binary({later_raw.data(),later_size})&&later_writer.binary({later_signature.data(),64}),"later signed fixture encode failed");later_signed.resize(later_writer.size());
+    protocol::VerifiedRecordView later_verified;
+    require(protocol::verifyGeocache({later_signed.data(),later_signed.size()},crypto,verification.data(),verification.size(),later_verified)==protocol::VerificationResult::Valid,"later recovery fixture signature invalid");
+    std::array<uint8_t,192> later_receipt{};protocol::CmpWriter later_proof(later_receipt.data(),later_receipt.size());
+    require(later_proof.array(8)&&later_proof.unsignedInteger(1)&&later_proof.binary({delivery.data(),16})&&later_proof.binary({epoch.data(),16})&&later_proof.binary({later_verified.id.bytes.data(),32})&&
+            later_proof.unsignedInteger(3)&&later_proof.binary({later_verified.hash.bytes.data(),32})&&later_proof.unsignedInteger(static_cast<uint8_t>(later.state))&&later_proof.unsignedInteger(1800000000),"later receipt fixture encode failed");
+    std::memcpy(verification.data(),domain,sizeof(domain));std::memcpy(verification.data()+sizeof(domain),later_receipt.data(),later_proof.size());
+    directory.identity.sign(verification.data(),sizeof(domain)+later_proof.size(),later_signature.data());
+    std::array<uint8_t,384> later_envelope{};size_t later_envelope_size=0;
+    require(gc::encodePublicationConfirmation({{later_receipt.data(),later_proof.size()},{later_signature.data(),64},{directory.identity.public_key.data(),64}},later_envelope.data(),later_envelope.size(),later_envelope_size),"later proof envelope encode failed");
+    checkMissingConfirmationHistory(later_signed,later_verified,{later_envelope.data(),later_envelope_size},crypto);
+    proof[proof_size-1]^=1;
+    sd::WebConfirmationJob<sd::IndexedPublicationStore> invalid_job(store,crypto);
+    require(invalid_job.begin(job_operation,{signed_record.data(),signed_record.size()},{proof.data(),proof_size},content.record.author_public_key,{},job_work.data(),job_work.size()),"invalid proof test admission failed");
+    invalid_job.advance();require(invalid_job.phase()==sd::WebConfirmationPhase::Failed&&test::files==job_files,"invalid proof job reached storage commit");
+    commit();read(false);
+}
 int main(int argc, char** argv)
 {
     require(argc == 2 || argc == 3, "expected fixture directory and optional runtime scenario");
     const bool close_on_save = argc == 3 && std::strcmp(argv[2], "save-close-detail") == 0;
+    const bool web_latest = argc == 3 && std::strcmp(argv[2], "web-latest") == 0;
+    const bool web_stop = argc == 3 && std::strcmp(argv[2], "web-stop") == 0;
+    const bool web_signed_stop = argc == 3 && std::strcmp(argv[2], "web-signed-stop") == 0;
     const bool bad_legacy_signature = argc == 3 && std::strcmp(argv[2], "legacy-saved-bad-signature") == 0;
     const bool legacy_projected = argc == 3 && std::strcmp(argv[2], "legacy-saved-projected-index") == 0;
     const bool legacy_object_only = argc == 3 && std::strcmp(argv[2], "legacy-saved-object-index") == 0;
     const bool legacy_projection = bad_legacy_signature || legacy_projected || legacy_object_only || (argc == 3 && std::strcmp(argv[2], "legacy-saved-projection") == 0);
     const std::string folder(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "external-confirmation") == 0)
+    {
+        // Public capture only: verify the real USB author and existing native
+        // directory receipt through the production indexed storage path.
+        const auto signed_cache = fixture(folder, "signed-cache-v1.bin");
+        const auto confirmation = fixture(folder, "publication-confirmation.bin");
+        platform::esp::common::EspGeocachingCrypto crypto;
+        std::vector<uint8_t> verification(8192);
+        geocaching::protocol::VerifiedRecordView content;
+        require(geocaching::protocol::verifyGeocache({signed_cache.data(), signed_cache.size()}, crypto,
+                    verification.data(), verification.size(), content) == geocaching::protocol::VerificationResult::Valid,
+                "captured USB signature invalid");
+        checkMissingConfirmationHistory(signed_cache, content, {confirmation.data(), confirmation.size()}, crypto);
+        std::fprintf(stderr, "Captured public signature/receipt: restore, duplicate, catalog and successor passed\n");
+        return 0;
+    }
     const auto encoded_record = fixture(folder, "record-v1.bin");
     geocaching::RecordView expected_record;
     require(geocaching::protocol::decodeGeocacheRecord({encoded_record.data(), encoded_record.size()}, expected_record), "detail record fixture invalid");
@@ -266,10 +577,169 @@ int main(int argc, char** argv)
     chat::MeshAdapterRouter router;
     LoraBoard board;
     rt::configure(router, board);
-    if (argc == 3 && !close_on_save && !legacy_projection)
+    require(test::mutex_creates == 0, "configuration allocated a Geocaching mutex before use");
+    if (argc == 3 && std::strcmp(argv[2], "signature-input-recovery") == 0)
+    {
+        unsigned calls = 0;
+        const auto action = +[](void* opaque){++*static_cast<unsigned*>(opaque);return true;};
+        test::mutex_available = false;
+        require(!rt::withSignatureInputRecovery(action, &calls) && calls == 0, "failed mutex allocation invoked recovery");
+        test::mutex_available = true;
+        require(rt::withSignatureInputRecovery(action, &calls) && calls == 1, "cold recovery requires a prior RF/SD session");
+        bool nested_idle = true;
+        require(rt::withSignatureInputRecovery(+[](void* opaque){*static_cast<bool*>(opaque)=rt::sharedSignatureUploadIdle()==rt::WebReadResult::Ready;return false;}, &nested_idle) && !nested_idle,
+                "recovery gate does not hold the production non-recursive mutex");
+        require(!rt::workPending() && test::io_operations == 0, "read-only gate started RF/storage work");
+        return 0;
+    }
+    if (argc == 3 && std::strcmp(argv[2], "lazy-mutex") == 0)
+    {
+        test::mutex_available = false;
+        test::source->activate(true);
+        require(test::mutex_creates == 1 && !rt::workPending(), "failed lock allocation started work");
+        ui::geocaching::Snapshot unavailable;
+        test::source->snapshot(Section::Published, unavailable);
+        require(std::strstr(unavailable.status.data(), "memory unavailable") != nullptr, "lock allocation failure was hidden");
+        test::mutex_available = true;
+        test::source->activate(true);
+        require(test::mutex_creates == 2 && rt::workPending(), "lock allocation did not recover on explicit reopen");
+        test::source->activate(true);
+        require(test::mutex_creates == 2, "repeated activation allocated a second lock");
+        test::source->activate(false);
+        require(!rt::workPending(), "unused closed source retained work demand");
+        return 0;
+    }
+    const bool restored_confirmation = argc == 3 && std::strcmp(argv[2], "web-signature-restored") == 0;
+    if (argc == 3 && (std::strcmp(argv[2], "web-signature") == 0 || std::strcmp(argv[2], "web-signature-bound") == 0 || std::strcmp(argv[2], "web-signature-stale") == 0 || restored_confirmation))
+    {
+        const bool stale_draft = std::strcmp(argv[2], "web-signature-stale") == 0;
+        const bool bound_draft = stale_draft || restored_confirmation || std::strcmp(argv[2], "web-signature-bound") == 0;
+        router.ready = false;
+        require(rt::webLease(true, true), "local signature storage lease unavailable");
+        std::array<uint8_t, 16> operation{}, owner{}, transfer{}, nonce{};
+        operation.fill(1); owner.fill(2); transfer.fill(3); nonce.fill(55);
+        expected_record.author_public_key = {router.identity.public_key.data(), 64};
+        expected_record.creation_nonce = {nonce.data(), 16};
+        expected_record.revision = 1; expected_record.previous_hash = {};
+        if (bound_draft)
+        {
+            test::source->activate(true);
+            until([&]{ return snapshot(Section::Published).can_create; }, "bound signature draft storage unavailable");
+            ui::geocaching::DraftInput draft;
+            draft.id = nonce; draft.name = expected_record.name; draft.description = expected_record.description; draft.hint = expected_record.hint;
+            draft.has_coordinates = true; draft.latitude_e7 = expected_record.latitude_e7; draft.longitude_e7 = expected_record.longitude_e7;
+            draft.state = static_cast<uint8_t>(expected_record.state); draft.difficulty_x2 = expected_record.difficulty_x2;
+            draft.terrain_x2 = expected_record.terrain_x2; draft.container_size = static_cast<uint8_t>(expected_record.container_size);
+            require(test::source->saveDraft(draft), "bound signature draft save rejected");
+            until([&]{ return test::source->draftSaveStatus(nonce, 0) == ui::geocaching::DraftSaveStatus::Saved; }, "bound signature draft not saved");
+            test::source->activate(false);
+        }
+        std::array<uint8_t, 4096> record{}, scratch{}; size_t size = 0;
+        require(geocaching::protocol::encodeGeocacheRecord(expected_record, record.data(), record.size(), size), "local signature record encoding failed");
+        std::array<uint8_t, 32> hash{};
+        platform::esp::common::EspGeocachingCrypto crypto;
+        require(crypto.sha256({record.data(), size}, hash.data()), "local signature hash failed");
+        test::files["/trailmate/cache.sign.upload"] = std::vector<uint8_t>(record.data(), record.data() + size);
+        const auto sends = router.sends;
+        rt::WebReadResult admitted = rt::WebReadResult::Pending;
+        until([&]{ admitted = rt::queueWebSignature(operation.data(), owner.data(), transfer.data(), hash.data(), static_cast<uint32_t>(size),
+                                                   router.identity.public_key.data(), router.author_generation, bound_draft ? nonce.data() : nullptr, bound_draft ? (stale_draft ? 2 : 1) : 0); return admitted != rt::WebReadResult::Pending; },
+              "local signature admission never completed");
+        require(admitted == rt::WebReadResult::Ready, "local signature admission rejected");
+        require(rt::sharedSignatureUploadIdle() == rt::WebReadResult::Pending, "recovery exposed an active signature input");
+        unsigned recovery_calls = 0;
+        const auto recovery_action = +[](void* opaque){++*static_cast<unsigned*>(opaque);return true;};
+        require(!rt::withSignatureInputRecovery(recovery_action, &recovery_calls) && recovery_calls == 0,
+                "protected recovery invoked a callback while signing");
+        size_t written = 0, total = 0;
+        until([&]{
+            if (rt::readWebSignature(operation.data(), owner.data(), true, 0, 0, scratch.data(), scratch.size(), written) != rt::WebReadResult::Ready) return false;
+            geocaching::protocol::CmpReader reader({scratch.data(), written}); size_t fields = 0; geocaching::ByteView id, bound;
+            uint64_t generation = 0, phase = 0, bytes = 0;
+            require(reader.array(fields, 5) && reader.binary(id, 16) && reader.binary(bound, 32) && reader.unsignedInteger(generation) && reader.unsignedInteger(phase) && reader.unsignedInteger(bytes), "local signature receipt invalid");
+            if (stale_draft) { require(phase != 1, "stale draft unexpectedly signed"); total = static_cast<size_t>(bytes); return phase == 2; }
+            require(phase != 2, "local signature failed"); total = static_cast<size_t>(bytes); return phase == 1;
+        }, "local signature never became ready");
+        if (stale_draft)
+        {
+            require(router.sends == sends && router.identity.signs == 0 && total == 0, "rejected draft produced a signature or network traffic");
+            require(rt::releaseWebSignature(owner.data(), operation.data()) == rt::WebReadResult::Ready, "rejected draft task release failed");
+            std::puts("Stale draft generation cannot enter IP signature issuance"); return 0;
+        }
+        std::vector<uint8_t> signed_record;
+        while (signed_record.size() < total)
+        {
+            require(rt::readWebSignature(operation.data(), owner.data(), false, static_cast<uint32_t>(signed_record.size()), 320, scratch.data(), scratch.size(), written) == rt::WebReadResult::Ready, "signature chunk missing");
+            geocaching::protocol::CmpReader reader({scratch.data(), written}); size_t fields = 0; uint64_t offset = 0, bytes = 0; geocaching::ByteView id, bound, chunk;
+            require(reader.array(fields, 5) && reader.binary(id, 16) && reader.unsignedInteger(offset) && reader.unsignedInteger(bytes) && reader.binary(bound, 32) && reader.binary(chunk, 320) && reader.finished(), "signature chunk invalid");
+            require(offset == signed_record.size() && bytes == total, "signature chunk binding changed"); signed_record.insert(signed_record.end(), chunk.data, chunk.data + chunk.size);
+        }
+        geocaching::protocol::VerifiedRecordView verified;
+        require(geocaching::protocol::verifyGeocache({signed_record.data(), signed_record.size()}, crypto, scratch.data(), scratch.size(), verified) == geocaching::protocol::VerificationResult::Valid, "local signature crypto verification failed");
+        require(router.sends == sends && router.identity.signs == 1 && !test::blocked_io, "local signing used network or accessed SD outside maintenance");
+        auto stranger = owner; stranger[0] ^= 1;
+        require(rt::readWebSignature(operation.data(), stranger.data(), false, 0, 320, scratch.data(), scratch.size(), written) == rt::WebReadResult::Forbidden, "foreign USB session read signature");
+        if (!bound_draft)
+        {
+            ++router.author_generation;
+            require(rt::readWebSignature(operation.data(), owner.data(), false, 0, 320, scratch.data(), scratch.size(), written) != rt::WebReadResult::Ready, "stale identity read signature");
+        }
+        require(rt::releaseWebSignature(owner.data(), operation.data()) == rt::WebReadResult::Ready, "local signature release failed");
+        require(rt::sharedSignatureUploadIdle() == rt::WebReadResult::Ready, "released signature still blocks read-only recovery");
+        bool nested_idle = true;
+        require(rt::withSignatureInputRecovery(+[](void* opaque){*static_cast<bool*>(opaque)=rt::sharedSignatureUploadIdle()==rt::WebReadResult::Ready;return false;}, &nested_idle),
+                "released signing input requires unrelated RF/network readiness");
+        require(!nested_idle, "runtime test mutex must reject nested acquisition like the physical device");
+        require(rt::withSignatureInputRecovery(recovery_action, &recovery_calls) && recovery_calls == 1,
+                "protected recovery did not invoke its callback after release");
+        if (bound_draft)
+        {
+            until([&]{ return rt::queueWebSignature(operation.data(), owner.data(), transfer.data(), hash.data(), static_cast<uint32_t>(size),
+                    router.identity.public_key.data(), router.author_generation, nonce.data(), 1) == rt::WebReadResult::Ready; }, "exact reservation replay not admitted");
+            until([&]{
+                if (rt::readWebSignature(operation.data(), owner.data(), true, 0, 0, scratch.data(), scratch.size(), written) != rt::WebReadResult::Ready) return false;
+                geocaching::protocol::CmpReader response({scratch.data(), written}); size_t count = 0; geocaching::ByteView id, hash;
+                uint64_t version = 0, phase = 0, bytes = 0;
+                require(response.array(count, 5) && response.binary(id, 16) && response.binary(hash, 32) && response.unsignedInteger(version) && response.unsignedInteger(phase) && response.unsignedInteger(bytes), "replay signature receipt invalid");
+                require(phase != 2, "exact reservation replay rejected"); return phase == 1;
+            }, "exact reservation replay signature unavailable");
+            require(rt::releaseWebSignature(owner.data(), operation.data()) == rt::WebReadResult::Ready, "replay task release failed");
+            std::vector<uint8_t> saved_draft;
+            size_t draft_total = 0;
+            do
+            {
+                rt::WebReadResult read = rt::WebReadResult::Pending;
+                until([&]{ if (read == rt::WebReadResult::Pending) read = rt::readWebDraftChunk(nonce.data(), static_cast<uint32_t>(saved_draft.size()), 320, saved_draft.empty() ? 0 : 2, scratch.data(), scratch.size(), written); return read != rt::WebReadResult::Pending; }, "reserved draft cannot be read");
+                if (read != rt::WebReadResult::Ready) std::fprintf(stderr, "Reserved draft read result=%u offset=%zu\n", static_cast<unsigned>(read), saved_draft.size());
+                require(read == rt::WebReadResult::Ready, "reserved draft read failed");
+                geocaching::protocol::CmpReader response({scratch.data(), written}); size_t count = 0;
+                uint64_t version = 0, bytes = 0, offset = 0; geocaching::ByteView id, chunk;
+                require(response.array(count, 5) && response.binary(id, 16) && response.unsignedInteger(version) && response.unsignedInteger(bytes) && response.unsignedInteger(offset) && response.binary(chunk, 320) && response.finished(), "reserved draft receipt invalid");
+                require(version == 2 && offset == saved_draft.size(), "reservation failed to advance draft generation");
+                draft_total = static_cast<size_t>(bytes); saved_draft.insert(saved_draft.end(), chunk.data, chunk.data + chunk.size);
+            } while (saved_draft.size() < draft_total);
+            geocaching::storage::DraftView draft;
+            require(geocaching::storage::decodeDraft({nonce.data(), 16}, {saved_draft.data(), saved_draft.size()}, draft) &&
+                    draft.author.size == 64 && !std::memcmp(draft.author.data, router.identity.public_key.data(), 64) &&
+                    draft.base_hash.size == 32 && !std::memcmp(draft.base_hash.data, verified.hash.bytes.data(), 32), "author and reserved version were not persisted together");
+            const auto signs_before_confirmation = router.identity.signs;
+            if (restored_confirmation)
+            {
+                ++router.author_generation;
+                tick();
+            }
+            checkExternalConfirmationProjection(signed_record,verified,router.author_generation);
+            require(router.identity.signs == signs_before_confirmation && router.sends == sends,
+                    "confirmed history restoration signed again or used RF");
+        }
+        require(rt::webLease(false), "local signature web lease release failed"); tick();
+        std::puts("Local IP-author signature reservation/export without RF passed"); return 0;
+    }
+    if (argc == 3 && !close_on_save && !legacy_projection && !web_latest && !web_stop && !web_signed_stop)
     {
         const bool legacy_upgrade = std::strcmp(argv[2], "legacy-index-upgrade") == 0;
-        require(legacy_upgrade || std::strcmp(argv[2], "local-draft-only") == 0, "unknown runtime scenario");
+        const bool web_read = std::strcmp(argv[2], "web-draft-read") == 0;
+        require(legacy_upgrade || web_read || std::strcmp(argv[2], "local-draft-only") == 0, "unknown runtime scenario");
         router.ready = false;
         test::in_ui = true;
         test::source->activate(true);
@@ -286,6 +756,254 @@ int main(int argc, char** argv)
         until([&]
               { return test::source->draftSaveStatus(local.id, 0) == ui::geocaching::DraftSaveStatus::Saved; },
               "offline draft was not saved");
+        if (web_read)
+        {
+            require(rt::webLease(true), "web lease was not admitted");
+            test::source->activate(false);
+            std::array<uint8_t, 384> response;
+            std::vector<uint8_t> encoded;
+            size_t written = 0, total = 0;
+            uint64_t generation = 0;
+            require(rt::readWebDraftChunk(local.id.data(), 1, 16, 0, response.data(), response.size(), written) == rt::WebReadResult::Invalid,
+                    "continuation without generation was accepted");
+            do
+            {
+                bool ready = false;
+                until([&]
+                      { if (!ready) ready = rt::readWebDraftChunk(local.id.data(), static_cast<uint32_t>(encoded.size()), 16, generation, response.data(), response.size(), written) == rt::WebReadResult::Ready; return ready; },
+                      "web draft read did not become ready");
+                geocaching::protocol::CmpReader reader({response.data(), written});
+                size_t fields = 0;
+                uint64_t size = 0, offset = 0;
+                geocaching::ByteView id, chunk;
+                require(reader.array(fields, 5) && fields == 5 && reader.binary(id, 16) && reader.unsignedInteger(generation) &&
+                            reader.unsignedInteger(size) && reader.unsignedInteger(offset) && reader.binary(chunk, 320) && reader.finished(),
+                        "invalid web draft chunk shape");
+                require(generation == 1 && offset == encoded.size() && !std::memcmp(id.data, local.id.data(), 16), "web draft correlation lost");
+                total = static_cast<size_t>(size);
+                encoded.insert(encoded.end(), chunk.data, chunk.data + chunk.size);
+                if (encoded.size() == 16)
+                {
+                    // Consuming the same row in the UI must leave the web lease.
+                    test::source->activate(true);
+                    bool delivered = false;
+                    require(test::source->readDraft(
+                                local.id, [](const ui::geocaching::DraftInput& value, void* context)
+                                { *static_cast<bool*>(context) = value.generation == 1; },
+                                &delivered) == ui::geocaching::DraftReadStatus::Ready &&
+                                delivered,
+                            "UI could not share a web draft snapshot");
+                    test::source->cancelDraftRead(local.id);
+                    test::source->activate(false);
+                }
+            } while (encoded.size() < total);
+            geocaching::storage::DraftView draft;
+            require(geocaching::storage::decodeDraft({local.id.data(), local.id.size()}, {encoded.data(), encoded.size()}, draft) &&
+                        draft.name == local.name && draft.description == local.description && draft.generation == 1,
+                    "web chunks changed the persisted draft");
+            bool conflicted = false;
+            until([&]
+                  { if (!conflicted) conflicted = rt::readWebDraftChunk(local.id.data(), 0, 16, 2, response.data(), response.size(), written) == rt::WebReadResult::Conflict; return conflicted; },
+                  "stale web draft generation was accepted");
+            until([&]
+                  { return rt::readWebDraftCatalog(0, false, 0, response.data(), response.size(), written) == rt::WebReadResult::Ready; },
+                  "web draft catalog did not become ready");
+            geocaching::protocol::CmpReader catalog({response.data(), written});
+            size_t fields = 0;
+            uint64_t catalog_generation = 0, catalog_offset = 0, known_count = 0, row_generation = 0;
+            geocaching::ByteView row_id;
+            std::string_view row_name;
+            require(catalog.array(fields, 4) && fields == 4 && catalog.unsignedInteger(catalog_generation) &&
+                        catalog.unsignedInteger(catalog_offset) && catalog.unsignedInteger(known_count) &&
+                        catalog.array(fields, 9) && fields == 9 && catalog.binary(row_id, 16) &&
+                        catalog.unsignedInteger(row_generation) && catalog.nil() && catalog.text(row_name, 96),
+                    "invalid web catalog projection");
+            require(catalog_offset == 0 && known_count == 1 && row_generation == 1 && row_name == local.name &&
+                        row_id.size == 16 && !std::memcmp(row_id.data, local.id.data(), 16),
+                    "web catalog changed the saved draft");
+            require(rt::readWebDraftCatalog(0, true, catalog_generation + 1, response.data(), response.size(), written) == rt::WebReadResult::Conflict,
+                    "web catalog accepted a stale storage generation");
+            require(rt::readWebDraftCatalog(1, true, catalog_generation, response.data(), response.size(), written) == rt::WebReadResult::Ready,
+                    "web catalog end marker was unavailable");
+            geocaching::protocol::CmpReader end({response.data(), written});
+            require(end.array(fields, 4) && end.unsignedInteger(generation) && end.unsignedInteger(catalog_offset) &&
+                        end.unsignedInteger(known_count) && end.nil() && end.finished() && catalog_offset == 1 && known_count == 1,
+                    "web catalog fabricated an extra row");
+            draft.name = "Edited through shared transaction";
+            draft.generation = 2;
+            std::array<uint8_t, 1024> edit;
+            size_t edit_size = 0;
+            std::array<uint8_t, 64> forged_author{};
+            draft.author = {forged_author.data(), forged_author.size()};
+            require(geocaching::storage::encodeDraft({local.id.data(), 16}, draft, edit.data(), edit.size(), edit_size), "forged author test encoding failed");
+            require(!rt::queueDraftSave(local.id.data(), edit.data(), edit_size, 1, true), "editor command accepted caller author metadata");
+            draft.author = {};
+            require(geocaching::storage::encodeDraft({local.id.data(), 16}, draft, edit.data(), edit.size(), edit_size), "edit encoding failed");
+            require(!rt::queueDraftSave(local.id.data(), edit.data(), edit_size, 0, true), "editor command accepted inconsistent generation");
+            require(rt::queueDraftSave(local.id.data(), edit.data(), edit_size, 1, true), "shared editor transaction not queued");
+            require(!rt::queueDraftSave(local.id.data(), edit.data(), edit_size, 1, true), "parallel edit replaced the active save job");
+            until([&]
+                  { return test::source->draftSaveStatus(local.id, 1) == ui::geocaching::DraftSaveStatus::Saved; },
+                  "shared editor transaction was not persisted");
+            bool edited = false;
+            until([&]
+                  { if (!edited) edited = rt::readWebDraftChunk(local.id.data(), 0, 320, 2, response.data(), response.size(), written) == rt::WebReadResult::Ready; return edited; },
+                  "edited draft was not readable at the next generation");
+            auto permission = [&](const uint8_t* key, uint64_t expected, const uint8_t* author)
+            {
+                auto result = rt::WebReadResult::Pending;
+                until([&]
+                      { if (result == rt::WebReadResult::Pending) result = rt::checkWebDraftEditOwner(key, expected, author); return result != rt::WebReadResult::Pending; },
+                      "stored draft ownership did not become available");
+                return result;
+            };
+            require(permission(local.id.data(), 2, forged_author.data()) == rt::WebReadResult::Ready,
+                    "unbound draft was not editable");
+            std::array<uint8_t, 16> bound_id{};
+            bound_id.fill(5);
+            std::array<uint8_t, 32> retained_base{};
+            retained_base.fill(6);
+            forged_author.fill(7);
+            require(permission(bound_id.data(), 0, forged_author.data()) == rt::WebReadResult::Ready,
+                    "new draft generation zero was not admitted");
+            require(permission(bound_id.data(), 1, forged_author.data()) == rt::WebReadResult::Conflict,
+                    "missing draft with a nonzero generation was admitted");
+            draft.generation = 1;
+            draft.author = {forged_author.data(), forged_author.size()};
+            draft.base_hash = {retained_base.data(), retained_base.size()};
+            require(geocaching::storage::encodeDraft({bound_id.data(), 16}, draft, edit.data(), edit.size(), edit_size) &&
+                        rt::queueDraftSave(bound_id.data(), edit.data(), edit_size, 0),
+                    "bound test draft was not queued");
+            until([&]
+                  { return test::source->draftSaveStatus(bound_id, 0) == ui::geocaching::DraftSaveStatus::Saved; },
+                  "bound test draft was not stored");
+            require(permission(bound_id.data(), 1, forged_author.data()) == rt::WebReadResult::Ready, "original author was denied");
+            auto wrong_author = forged_author;
+            wrong_author[0] ^= 1;
+            require(permission(bound_id.data(), 1, wrong_author.data()) == rt::WebReadResult::Forbidden, "different author was admitted");
+            require(permission(bound_id.data(), 0, forged_author.data()) == rt::WebReadResult::Conflict, "stale generation was admitted");
+            draft.generation = 2;
+            draft.name = "Bound metadata survives browser fields";
+            draft.author = draft.base_hash = {};
+            require(geocaching::storage::encodeDraft({bound_id.data(), 16}, draft, edit.data(), edit.size(), edit_size) &&
+                        rt::queueDraftSave(bound_id.data(), edit.data(), edit_size, 1, true),
+                    "bound editor save was not queued");
+            until([&]
+                  { return test::source->draftSaveStatus(bound_id, 1) == ui::geocaching::DraftSaveStatus::Saved; },
+                  "bound editor save was not persisted");
+            bool bound_read = false;
+            until([&]
+                  { if (!bound_read) bound_read = rt::readWebDraftChunk(bound_id.data(), 0, 320, 2, response.data(), response.size(), written) == rt::WebReadResult::Ready; return bound_read; },
+                  "bound edit could not be reread");
+            geocaching::protocol::CmpReader bound_response({response.data(), written});
+            geocaching::ByteView returned_id, retained_chunk;
+            uint64_t retained_total = 0, retained_offset = 0;
+            geocaching::storage::DraftView stored;
+            require(bound_response.array(fields, 5) && bound_response.binary(returned_id, 16) && bound_response.unsignedInteger(generation) &&
+                        bound_response.unsignedInteger(retained_total) && bound_response.unsignedInteger(retained_offset) &&
+                        bound_response.binary(retained_chunk, 320) && bound_response.finished() && retained_total == retained_chunk.size &&
+                        geocaching::storage::decodeDraft({bound_id.data(), 16}, retained_chunk, stored) && stored.generation == 2 &&
+                        stored.name == draft.name && stored.author.size == 64 && stored.base_hash.size == 32 &&
+                        !std::memcmp(stored.author.data, forged_author.data(), 64) && !std::memcmp(stored.base_hash.data, retained_base.data(), 32),
+                    "browser field editing lost committed author or base hash");
+            std::array<uint8_t, 32> edit_hash{};
+            chat::reticulum::fullHash(edit.data(), edit_size, edit_hash.data());
+            auto replay = [&](const uint8_t* author, const uint8_t* hash)
+            {
+                auto result = rt::WebReadResult::Pending;
+                until([&]
+                      { if (result == rt::WebReadResult::Pending) result = rt::checkWebDraftEditOwner(bound_id.data(), 1, author, hash); return result != rt::WebReadResult::Pending; },
+                      "saved edit retry did not become available");
+                return result;
+            };
+            require(replay(forged_author.data(), edit_hash.data()) == rt::WebReadResult::AlreadySaved,
+                    "exact saved edit was not recognised after identity metadata restoration");
+            edit_hash[0] ^= 1;
+            require(replay(forged_author.data(), edit_hash.data()) == rt::WebReadResult::Conflict,
+                    "different content at the same generation was accepted as a saved retry");
+            edit_hash[0] ^= 1;
+            require(replay(wrong_author.data(), edit_hash.data()) == rt::WebReadResult::Forbidden,
+                    "saved retry bypassed author ownership");
+            rt::webLease(false);
+            until([&]
+                  { return test::allocations.empty(); },
+                  "closed web lease retained session payloads");
+            require(replay(forged_author.data(), edit_hash.data()) == rt::WebReadResult::AlreadySaved,
+                    "reopened storage forgot a previously saved edit");
+            std::string web_description(650, 'w');
+            draft.generation = 1;
+            draft.name = "Staged web edit";
+            draft.description = web_description;
+            draft.author = draft.base_hash = {};
+            std::array<uint8_t, 16> staged_id{};
+            staged_id.fill(9);
+            require(geocaching::storage::encodeDraft({staged_id.data(), 16}, draft, edit.data(), edit.size(), edit_size), "web file encoding failed");
+            chat::reticulum::fullHash(edit.data(), edit_size, edit_hash.data());
+            test::files[rt::kWebDraftCandidatePath] = std::vector<uint8_t>(edit.data(), edit.data() + edit_size);
+            auto staged = [&](const std::array<uint8_t, 16>& id, uint32_t author_generation)
+            {
+                auto result = rt::WebReadResult::Pending;
+                until([&]
+                      { if (result == rt::WebReadResult::Pending) result = rt::queueWebDraftFile(id.data(), static_cast<uint32_t>(edit_size), 0, edit_hash.data(), router.identity.public_key.data(), author_generation); return result != rt::WebReadResult::Pending; },
+                      "web file save did not reach a terminal result");
+                return result;
+            };
+            require(staged(staged_id, 7) == rt::WebReadResult::AlreadySaved, "web file was not saved through the existing editor transaction");
+            require(permission(staged_id.data(), 1, router.identity.public_key.data()) == rt::WebReadResult::Ready, "web file save generation was not persisted");
+            staged_id.fill(10);
+            test::files[rt::kWebDraftCandidatePath][0] ^= 1;
+            require(staged(staged_id, 7) == rt::WebReadResult::HashMismatch, "corrupted web candidate was committed");
+            require(permission(staged_id.data(), 0, router.identity.public_key.data()) == rt::WebReadResult::Ready, "hash failure created a draft");
+            test::files[rt::kWebDraftCandidatePath][0] ^= 1;
+            staged_id.fill(11);
+            require(rt::queueWebDraftFile(staged_id.data(), static_cast<uint32_t>(edit_size), 0, edit_hash.data(), router.identity.public_key.data(), 7) == rt::WebReadResult::Pending,
+                    "identity-change test could not stage its candidate");
+            router.author_generation = 8;
+            require(staged(staged_id, 7) == rt::WebReadResult::StaleIdentity, "queued web save ignored an author generation change");
+            router.author_generation = 7;
+            require(permission(staged_id.data(), 0, router.identity.public_key.data()) == rt::WebReadResult::Ready, "stale identity created a draft");
+            staged_id.fill(12);
+            draft.author = {forged_author.data(), forged_author.size()};
+            require(geocaching::storage::encodeDraft({staged_id.data(), 16}, draft, edit.data(), edit.size(), edit_size), "invalid metadata file encoding failed");
+            chat::reticulum::fullHash(edit.data(), edit_size, edit_hash.data());
+            test::files[rt::kWebDraftCandidatePath] = std::vector<uint8_t>(edit.data(), edit.data() + edit_size);
+            require(staged(staged_id, 7) == rt::WebReadResult::Invalid, "web file accepted caller author metadata");
+            require(permission(staged_id.data(), 0, router.identity.public_key.data()) == rt::WebReadResult::Ready, "invalid metadata created a draft");
+            rt::webLease(false);
+            until([&]
+                  { return test::allocations.empty(); },
+                  "reopened retry retained session payloads");
+            // Match HostLink draft_put: every Busy retry first rechecks the
+            // committed owner, then (only if Ready) advances the same intent.
+            // Separate queue/owner tests miss read jobs starving this commit.
+            staged_id.fill(13);
+            draft.author = draft.base_hash = {};
+            draft.description = std::string_view(web_description);
+            require(geocaching::storage::encodeDraft({staged_id.data(), 16}, draft, edit.data(), edit.size(), edit_size), "interleaved web file encoding failed");
+            chat::reticulum::fullHash(edit.data(), edit_size, edit_hash.data());
+            test::files[rt::kWebDraftCandidatePath] = std::vector<uint8_t>(edit.data(), edit.data() + edit_size);
+            bool interleaved_saved = false;
+            until([&]
+                  {
+                      if (interleaved_saved) return true;
+                      const auto owner = rt::checkWebDraftEditOwner(staged_id.data(), 0, router.identity.public_key.data(), edit_hash.data());
+                      if (owner == rt::WebReadResult::AlreadySaved) return interleaved_saved = true;
+                      require(owner == rt::WebReadResult::Pending || owner == rt::WebReadResult::Ready, "interleaved owner check rejected its own edit");
+                      if (owner == rt::WebReadResult::Ready)
+                      {
+                          const auto queued = rt::queueWebDraftFile(staged_id.data(), static_cast<uint32_t>(edit_size), 0, edit_hash.data(), router.identity.public_key.data(), 7);
+                          require(queued == rt::WebReadResult::Pending || queued == rt::WebReadResult::AlreadySaved, "interleaved save rejected its own intent");
+                      }
+                      return false;
+                  },
+                  "interleaved HostLink save did not confirm the committed row");
+            rt::webLease(false);
+            until([&]
+                  { return test::allocations.empty(); },
+                  "interleaved save retained session payloads");
+            require(test::ui_io == 0, "web/UI projection performed direct storage I/O");
+            return 0;
+        }
         test::source->activate(false);
         until([&]
               { return test::allocations.empty(); },
@@ -489,9 +1207,127 @@ int main(int argc, char** argv)
     until([&]
           { const auto view = snapshot(Section::Discover); return view.count == 1 && view.can_refresh; },
           "query page not displayed");
+    std::array<uint8_t, 320> directory_response{};
+    size_t directory_size = 0, directory_fields = 0;
+    require(rt::readWebDirectories(0, directory_response.data(), directory_response.size(), directory_size) == rt::WebReadResult::Ready,
+            "web directory projection was not available");
+    geocaching::protocol::CmpReader directory_reader({directory_response.data(), directory_size});
+    uint64_t directory_offset = 0, directory_count = 0, directory_sequence = 0, directory_flags = 0, directory_limit = 0, directory_age = 0;
+    geocaching::ByteView directory_delivery, directory_discovery, directory_key, directory_epoch;
+    std::string_view directory_name;
+    require(directory_reader.array(directory_fields, 3) && directory_fields == 3 && directory_reader.unsignedInteger(directory_offset) &&
+                directory_reader.unsignedInteger(directory_count) && directory_reader.array(directory_fields, 9) && directory_fields == 9 &&
+                directory_reader.binary(directory_delivery, 16) && directory_reader.binary(directory_discovery, 16) &&
+                directory_reader.binary(directory_key, 64) && directory_reader.binary(directory_epoch, 16) &&
+                directory_reader.unsignedInteger(directory_sequence) && directory_reader.text(directory_name, 40) &&
+                directory_reader.unsignedInteger(directory_flags) && directory_reader.unsignedInteger(directory_limit) &&
+                directory_reader.unsignedInteger(directory_age) && directory_reader.finished() && directory_offset == 0 && directory_count == 1 &&
+                directory_key.size == 64 && (directory_flags & 1) && directory_limit > 0,
+            "web directory projection changed discovery metadata");
+    require(rt::readWebDirectories(1, directory_response.data(), directory_response.size(), directory_size) == rt::WebReadResult::Ready,
+            "web directory end marker missing");
+    require(rt::readWebDirectories(5, directory_response.data(), directory_response.size(), directory_size) == rt::WebReadResult::Invalid,
+            "web directory projection accepted an out-of-budget index");
+    rt::webLease(false);
     require(test::files.empty() && !test::blocked_io && !test::allocated("geocaching.index.read") &&
                 !test::allocated("geocaching.index.encode"),
             "browsing depends on SD or its workspaces");
+    if (web_latest)
+    {
+        ui::geocaching::Item latest_item;
+        const auto page = snapshot(Section::Discover);
+        require(test::source->item(Section::Discover, 0, page.generation, latest_item), "latest test cache missing");
+        std::array<uint8_t, 16> target{};
+        std::array<uint8_t, 36> latest_result{};
+        const auto baseline_allocations = test::allocations.size();
+        require(rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), 35) == rt::WebReadResult::Invalid,
+                "latest query accepted short buffer");
+        const auto before_get = router.sends;
+        require(rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "latest query did not start");
+        until([&] { return router.sends == before_get + 1; }, "latest GET not sent");
+        geocaching::protocol::CmpReader envelope({router.sent_bytes.data(), router.sent_bytes.size()});
+        size_t fields = 0;
+        uint64_t value = 0;
+        geocaching::ByteView request_id;
+        require(envelope.array(fields, 6) && fields == 6 && envelope.unsignedInteger(value) && value == 1 &&
+                    envelope.unsignedInteger(value) && value == 0 && envelope.unsignedInteger(value) && value == 3 &&
+                    envelope.binary(request_id, 16) && request_id.size == 16, "latest GET envelope invalid");
+        geocaching::RequestId expected_request;
+        std::memcpy(expected_request.bytes.data(), request_id.data, 16);
+        geocaching::protocol::GetRequestView request;
+        require(geocaching::protocol::decodeGetRequest({router.sent_bytes.data(), router.sent_bytes.size()}, expected_request, request) &&
+                    !request.wanted_hash.size && !request.known_hash.size && !std::memcmp(request.cache_id.data, latest_item.id.data(), 32),
+                "latest GET pinned an old revision");
+        auto noncurrent = fixture(folder, "get-response-v1.bin");
+        noncurrent[noncurrent.size() - 2] = 0;
+        reply(router, noncurrent, 3);
+        for (unsigned i = 0; i < 30; ++i) tick();
+        require(rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "latest query accepted noncurrent record");
+        auto invalid = fixture(folder, "get-response-v1.bin");
+        invalid[invalid.size() - 4] ^= 1;
+        reply(router, invalid, 3);
+        for (unsigned i = 0; i < 30; ++i) tick();
+        require(rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "latest query accepted invalid author signature");
+        target[0] = 99;
+        require(rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::NotFound,
+                "latest query accepted unknown directory");
+        target[0] = 0;
+        reply(router, fixture(folder, "get-response-v1.bin"), 3);
+        bool latest_ready = false;
+        until([&] { if (latest_ready) return true;
+                    latest_ready = rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Ready;
+                    return latest_ready; }, "verified latest record not returned");
+        require(latest_result[0] == expected_record.revision && latest_result[1] == 0 && latest_result[2] == 0 && latest_result[3] == 0 &&
+                    !std::memcmp(latest_result.data() + 4, latest_item.revision_hash.data(), 32), "latest revision result mismatch");
+        require(test::allocations.size() == baseline_allocations && !test::allocated("geocaching.detail.rx") &&
+                    !test::allocated("geocaching.detail.verify"), "latest query retained its detail buffers");
+        require(test::files.empty() && !test::blocked_io, "latest query opened SD");
+        auto missing_id = latest_item.id;
+        missing_id[0] ^= 1;
+        const auto before_missing = router.sends;
+        require(rt::readWebLatestRevision(missing_id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "missing record query did not start");
+        until([&] { return router.sends == before_missing + 1; }, "missing record GET not sent");
+        std::array<uint8_t, 96> error_bytes{};
+        geocaching::protocol::CmpWriter error(error_bytes.data(), error_bytes.size());
+        error.array(6); error.unsignedInteger(1); error.unsignedInteger(1); error.unsignedInteger(3);
+        error.binary({expected_request.bytes.data(), 16}); error.unsignedInteger(404);
+        error.array(3); error.text("revision_unavailable"); error.nil(); error.nil();
+        require(error.good(), "missing revision fixture encoding failed");
+        reply(router, {error_bytes.data(), error_bytes.data() + error.size()}, 3);
+        for (unsigned i = 0; i < 30; ++i) tick();
+        require(rt::readWebLatestRevision(missing_id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "missing revision was treated as missing cache");
+        geocaching::protocol::CmpWriter absent(error_bytes.data(), error_bytes.size());
+        absent.array(6); absent.unsignedInteger(1); absent.unsignedInteger(1); absent.unsignedInteger(3);
+        absent.binary({expected_request.bytes.data(), 16}); absent.unsignedInteger(404);
+        absent.array(3); absent.text("not_found"); absent.nil(); absent.nil();
+        require(absent.good(), "missing cache fixture encoding failed");
+        auto malformed_absence = std::vector<uint8_t>(error_bytes.data(), error_bytes.data() + absent.size());
+        malformed_absence.back() = 0;
+        reply(router, malformed_absence, 3);
+        for (unsigned i = 0; i < 30; ++i) tick();
+        require(rt::readWebLatestRevision(missing_id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "malformed absence response was accepted");
+        reply(router, {error_bytes.data(), error_bytes.data() + absent.size()}, 3);
+        auto absence = rt::WebReadResult::Pending;
+        until([&] { if (absence != rt::WebReadResult::Pending) return true;
+                    absence = rt::readWebLatestRevision(missing_id.data(), target.data(), latest_result.data(), latest_result.size());
+                    return absence != rt::WebReadResult::Pending; }, "explicit absence not returned");
+        require(absence == rt::WebReadResult::Absent && latest_result == std::array<uint8_t, 36>{},
+                "explicit absence retained the previous version result");
+        require(test::allocations.size() == baseline_allocations && test::files.empty(), "absence query retained memory or touched SD");
+        require(rt::readWebLatestRevision(latest_item.id.data(), target.data(), latest_result.data(), latest_result.size()) == rt::WebReadResult::Pending,
+                "second latest query did not start");
+        rt::webLease(false);
+        until([&] { return test::allocations.size() == baseline_allocations; }, "cancelled latest query retained its detail");
+        test::source->activate(false);
+        until([&] { return test::allocations.empty(); }, "latest query session did not close");
+        return 0;
+    }
     test::card_ready = true;
     tick_ms = 5;
     std::array<uint8_t, 16> reply_remote{};
@@ -898,10 +1734,255 @@ int main(int argc, char** argv)
             prior_attempt_shards.push_back(file.first);
     test::profile_reads = true;
     test::read_bytes_by_path.clear();
-    require(from == 0 && to == 1 && test::source->publishDraft(draft.id, draft_generation, author, to), "publication confirmation rejected");
+    namespace web_publish = platform::esp::arduino_common::geocaching::browse_runtime;
+    std::array<uint8_t, 16> selected_directory{};
+    std::array<uint8_t, 64> web_author{};
+    uint32_t web_from = 0, web_to = 0;
+    const auto before_preview = test::files;
+    require(web_publish::webPublicationPlan(draft.id.data(), draft_generation, selected_directory.data(), web_author.data(), web_from, web_to),
+            "web publication preview rejected verified directory");
+    require(web_author == author && web_from == from && web_to == to && test::files == before_preview,
+            "web preview changed storage or publication tuple");
+    std::array<uint8_t, 56> publication_binding{};
+    selected_directory[0] = 99;
+    require(web_publish::readWebPublicationBinding(draft.id.data(), draft_generation, selected_directory.data(), author.data(),
+                                                   publication_binding.data(), publication_binding.size()) == rt::WebReadResult::NotFound,
+            "confirmation binding accepted unknown directory");
+    selected_directory[0] = 0;
+    require(web_publish::readWebPublicationBinding(draft.id.data(), draft_generation, selected_directory.data(), author.data(),
+                                                   publication_binding.data(), 55) == rt::WebReadResult::Invalid,
+            "confirmation binding accepted short output");
+    std::array<uint8_t, 384> another_window{};
+    size_t another_window_size = 0;
+    until([&]
+          { return rt::readWebDraftCatalog(4, false, 0, another_window.data(), another_window.size(), another_window_size) == rt::WebReadResult::Ready; },
+          "alternate publication window unavailable");
+    auto binding_status = rt::WebReadResult::Pending;
+    until([&]
+          { if (binding_status == rt::WebReadResult::Ready) return true;
+            binding_status = web_publish::readWebPublicationBinding(draft.id.data(), draft_generation, selected_directory.data(), author.data(),
+                                                                     publication_binding.data(), publication_binding.size());
+            return binding_status == rt::WebReadResult::Ready; },
+          "committed draft confirmation binding not ready");
+    require(test::files == before_preview && router.identity.signs == 0,
+            "confirmation binding mutated or signed the draft");
+    require(publication_binding[48] == 0 && publication_binding[52] == 1,
+            "confirmation binding changed local revision plan");
+    for (size_t i = 32; i < 48; ++i) require(publication_binding[i] == 0, "confirmation binding changed directory epoch");
+    std::vector<uint8_t> committed_draft;
+    uint64_t committed_size = 0;
+    do
+    {
+        std::array<uint8_t, 384> frame{};
+        size_t written = 0;
+        bool chunk_ready = false;
+        until([&]
+              { if (chunk_ready) return true;
+                chunk_ready = rt::readWebDraftChunk(draft.id.data(), static_cast<uint32_t>(committed_draft.size()), 320, draft_generation,
+                                                   frame.data(), frame.size(), written) == rt::WebReadResult::Ready;
+                return chunk_ready; },
+              "confirmation draft bytes unavailable");
+        geocaching::protocol::CmpReader reader({frame.data(), written});
+        size_t count = 0;
+        uint64_t read_generation = 0, offset = 0;
+        geocaching::ByteView read_id, chunk;
+        require(reader.array(count, 5) && count == 5 && reader.binary(read_id, 16) && read_id.size == 16 &&
+                    !std::memcmp(read_id.data, draft.id.data(), 16) && reader.unsignedInteger(read_generation) &&
+                    read_generation == draft_generation && reader.unsignedInteger(committed_size) && reader.unsignedInteger(offset) &&
+                    offset == committed_draft.size() && reader.binary(chunk, 320) && chunk.size && reader.finished(),
+                "confirmation draft chunk correlation failed");
+        committed_draft.insert(committed_draft.end(), chunk.data, chunk.data + chunk.size);
+    } while (committed_draft.size() < committed_size);
+    std::array<uint8_t, 32> committed_hash{};
+    chat::reticulum::fullHash(committed_draft.data(), committed_draft.size(), committed_hash.data());
+    require(!std::memcmp(committed_hash.data(), publication_binding.data(), committed_hash.size()),
+            "confirmation hash does not cover committed draft bytes");
+    rt::WebReadResult stale_binding = rt::WebReadResult::Pending;
+    until([&]
+          { if (stale_binding != rt::WebReadResult::Pending) return true;
+            stale_binding = rt::readWebPublicationBinding(draft.id.data(), draft_generation + 1, selected_directory.data(), author.data(),
+                                                           publication_binding.data(), publication_binding.size()); return stale_binding != rt::WebReadResult::Pending; },
+          "stale confirmation binding did not finish");
+    require(stale_binding == rt::WebReadResult::Conflict, "confirmation binding accepted wrong draft generation");
+    selected_directory[0] = 99;
+    require(!web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), author.data(), to),
+            "web publication accepted unknown directory");
+    selected_directory[0] = 0;
+    web_author[0] ^= 1;
+    require(!web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), web_author.data(), to),
+            "web publication accepted another author");
+    require(!web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), author.data(), to + 1),
+            "web publication accepted stale revision");
+    bool read_for_confirmation = false;
+    std::array<uint8_t, 384> confirmation_chunk{};
+    size_t confirmation_chunk_size = 0;
+    until([&]
+          { if (read_for_confirmation) return true;
+            read_for_confirmation = rt::readWebDraftChunk(draft.id.data(), 0, 1, draft_generation,
+                                                           confirmation_chunk.data(), confirmation_chunk.size(), confirmation_chunk_size) == rt::WebReadResult::Ready;
+            return read_for_confirmation; },
+          "confirmation reader did not retain the committed draft");
+    publication_binding[0] ^= 1;
+    require(!web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), author.data(), to,
+                                                   publication_binding.data()),
+            "publication accepted another confirmed content hash");
+    publication_binding[0] ^= 1;
+    publication_binding[32] ^= 1;
+    require(!web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), author.data(), to,
+                                                   publication_binding.data()),
+            "publication accepted another directory incarnation");
+    publication_binding[32] ^= 1;
+    require(from == 0 && to == 1, "web confirmation version plan changed");
+    std::array<uint8_t, 16> web_operation_id{};
+    require(!web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), author.data(), to,
+                                                   publication_binding.data(), web_operation_id.data()),
+            "web publication accepted an empty operation ID");
+    web_operation_id.fill(0x6a);
+    bool publication_queued = false;
+    until([&]
+          { if (publication_queued) return true;
+            publication_queued = web_publish::queueWebDraftPublication(draft.id.data(), draft_generation, selected_directory.data(), author.data(), to,
+                                                                       publication_binding.data(), web_operation_id.data());
+            return publication_queued; },
+          "web publication confirmation rejected");
+    std::array<uint8_t, 256> job_response{};
+    size_t job_written = 0;
+    auto check_web_job = [&](uint64_t expected_phase, bool metadata, int expected_durable, int expected_transport)
+    {
+        require(rt::readWebPublicationJob(web_operation_id.data(), author.data(), job_response.data(), job_response.size(), job_written) == rt::WebReadResult::Ready,
+                "web operation projection unavailable");
+        geocaching::protocol::CmpReader projection({job_response.data(), job_written});
+        size_t fields = 0;
+        uint64_t phase = 0, revision = 0, durable = 0, transported = 0;
+        geocaching::ByteView operation, cache, hash;
+        require(projection.array(fields, 8) && fields == 8 && projection.binary(operation, 16) && operation.size == 16 &&
+                    !std::memcmp(operation.data, web_operation_id.data(), 16) && projection.unsignedInteger(phase) && phase == expected_phase &&
+                    (metadata ? projection.binary(cache, 32) && cache.size == 32 : projection.nil()) &&
+                    (metadata ? projection.binary(hash, 32) && hash.size == 32 : projection.nil()) && projection.unsignedInteger(revision) && revision == 1 &&
+                    (expected_durable < 0 ? projection.nil() : projection.unsignedInteger(durable) && durable == static_cast<uint64_t>(expected_durable)),
+                "web operation projection changed phase or durability");
+        if (expected_transport == -2)
+        {
+            auto optional = projection;
+            if (optional.nil()) projection = optional;
+            else require(projection.unsignedInteger(transported) && transported == 1, "unobserved transport was reported false");
+        }
+        else require(expected_transport < 0 ? projection.nil() : projection.unsignedInteger(transported) && transported == static_cast<uint64_t>(expected_transport),
+                     "web operation transport state mismatch");
+        require(projection.nil() && projection.finished(), "successful web operation included an error");
+    };
+    check_web_job(0, false, 0, 0);
+    auto other_operation = web_operation_id;
+    other_operation[0] ^= 1;
+    require(rt::readWebPublicationJob(other_operation.data(), author.data(), job_response.data(), job_response.size(), job_written) == rt::WebReadResult::NotFound,
+            "operation query aliased another ID");
+    auto other_author = author;
+    other_author[0] ^= 1;
+    require(rt::readWebPublicationJob(web_operation_id.data(), other_author.data(), job_response.data(), job_response.size(), job_written) == rt::WebReadResult::Forbidden,
+            "operation query exposed another author's job");
+    router.identity.public_key[0] ^= 1;
+    require(rt::readWebPublicationJob(web_operation_id.data(), author.data(), job_response.data(), job_response.size(), job_written) == rt::WebReadResult::StaleIdentity,
+            "operation query ignored the connected device's changed identity");
+    router.identity.public_key[0] ^= 1;
+    require(rt::webLease(false), "confirmed publication did not release the browser lease");
+    if (web_signed_stop)
+    {
+        const auto sends_before_stop = router.sends;
+        until([&] { return router.identity.signs == 1; }, "draft never reached the signed pre-attempt window");
+        require(router.sends == sends_before_stop, "signed window already sent the publication");
+        const bool previous_ui = test::in_ui;
+        test::in_ui = false;
+        require(rt::requestWebPublicationStop(web_operation_id.data(), author.data()) == rt::WebReadResult::Pending,
+                "signed stop invented a durable completion");
+        test::in_ui = previous_ui;
+        check_web_job(6, false, -1, -1);
+        // Deliberately do not retry the command while the owner creates and
+        // persists the attempt. Its retained stop request must prevent sends.
+        until([&]
+              {
+                  const auto result = rt::readWebPublicationJob(web_operation_id.data(), author.data(),
+                                                               job_response.data(), job_response.size(), job_written);
+                  if (result != rt::WebReadResult::Ready) return false;
+                  geocaching::protocol::CmpReader reader({job_response.data(), job_written});
+                  size_t fields = 0;
+                  geocaching::ByteView operation;
+                  uint64_t phase = 0;
+                  require(reader.array(fields, 8) && fields == 8 && reader.binary(operation, 16) && reader.unsignedInteger(phase),
+                          "signed stop projection invalid");
+                  return phase == 4;
+              }, "signed stop did not persist without command retries");
+        check_web_job(4, true, 1, -2);
+        require(router.sends == sends_before_stop && router.identity.signs == 1, "signed stop sent or signed again");
+        require(rt::webLease(false), "signed stop retained web lease");
+        test::source->activate(false);
+        until([&] { return test::allocations.empty(); }, "signed stop leaked PSRAM");
+        return 0;
+    }
     until([&]
           { return router.sends == 5; },
           "publication request not dispatched", true);
+    geocaching::RequestId expected_web_request;
+    expected_web_request.bytes = web_operation_id;
+    geocaching::protocol::PublishRequestView web_request;
+    require(geocaching::protocol::decodePublishRequest({router.sent_bytes.data(), router.sent_bytes.size()}, expected_web_request, web_request),
+            "durable web publication changed the caller operation ID");
+    check_web_job(2, true, 1, -2);
+    if (web_stop)
+    {
+        auto stop_as_command = [&](const uint8_t* operation, const uint8_t* identity)
+        {
+            const bool previous_ui = test::in_ui;
+            test::in_ui = false;
+            const auto result = rt::requestWebPublicationStop(operation, identity);
+            test::in_ui = previous_ui;
+            return result;
+        };
+        std::array<uint8_t, 16> empty_operation{};
+        require(stop_as_command(empty_operation.data(), author.data()) == rt::WebReadResult::Invalid, "empty stop ID accepted");
+        require(stop_as_command(other_operation.data(), author.data()) == rt::WebReadResult::Pending, "stop replaced another active operation");
+        require(stop_as_command(web_operation_id.data(), other_author.data()) == rt::WebReadResult::Forbidden, "stop accepted another author");
+        const auto sends_before_stop = router.sends;
+        const auto saved_waiting_files = test::files;
+        auto stopped = rt::WebReadResult::Pending;
+        until([&]
+              { if (stopped == rt::WebReadResult::Ready) return true; stopped = stop_as_command(web_operation_id.data(), author.data()); return stopped == rt::WebReadResult::Ready; },
+              "web publication stop not committed");
+        check_web_job(4, true, 1, -2);
+        require(stop_as_command(web_operation_id.data(), author.data()) == rt::WebReadResult::Ready, "stop retry changed its result");
+        require(router.sends == sends_before_stop, "stopping caused another publication send");
+        require(rt::webLease(false), "stop retained web lease");
+        test::source->activate(false);
+        until([&] { return test::allocations.empty(); }, "stopped publication leaked PSRAM");
+        const auto saved_stopped_files = test::files;
+        auto historical_stop = rt::WebReadResult::Pending;
+        until([&]
+              { if (historical_stop == rt::WebReadResult::Ready) return true; historical_stop = stop_as_command(web_operation_id.data(), author.data());
+                if (historical_stop != rt::WebReadResult::Ready && historical_stop != rt::WebReadResult::Pending) std::fprintf(stderr, "historical stop status=%u\n", static_cast<unsigned>(historical_stop));
+                require(historical_stop == rt::WebReadResult::Ready || historical_stop == rt::WebReadResult::Pending, "historical stop failed");return historical_stop == rt::WebReadResult::Ready; },
+              "stopped operation did not survive session reconstruction");
+        check_web_job(4, true, 1, -2);
+        require(router.sends == sends_before_stop && router.identity.signs == 1 && test::files == saved_stopped_files,
+                "historical stop resubmitted, resigned or changed the stopped journal");
+        require(rt::webLease(false), "historical stop retained web lease");
+        until([&] { return test::allocations.empty(); }, "historical stop leaked PSRAM");
+        test::files = saved_waiting_files;
+        auto recovered_stop = rt::WebReadResult::Pending;
+        until([&]
+              {
+                  if (recovered_stop == rt::WebReadResult::Ready) return true;
+                  recovered_stop = stop_as_command(web_operation_id.data(), author.data());
+                  require(recovered_stop == rt::WebReadResult::Ready || recovered_stop == rt::WebReadResult::Pending,
+                          "cold waiting stop failed");
+                  return recovered_stop == rt::WebReadResult::Ready;
+              }, "cold waiting publication was not stopped");
+        check_web_job(4, true, 1, -2);
+        require(router.sends == sends_before_stop && router.identity.signs == 1,
+                "cold waiting stop resubmitted or resigned");
+        require(rt::webLease(false), "cold waiting stop retained web lease");
+        until([&] { return test::allocations.empty(); }, "cold waiting stop leaked PSRAM");
+        return 0;
+    }
+    require(rt::webLease(false), "operation query retained its browser lease");
     require(!test::read_bytes_by_path.empty(), "foreground dispatch read profile was not captured");
     for (const auto& read : test::read_bytes_by_path)
         require(std::find(prior_attempt_shards.begin(), prior_attempt_shards.end(), read.first) == prior_attempt_shards.end() || !read.second,
@@ -914,6 +1995,29 @@ int main(int argc, char** argv)
               return view.count == 1 && test::source->item(Section::Published, 0, view.generation, item) && item.publication_confirmed && item.publication_revision == 1; },
           "publication receipt not reflected in draft list");
     require(router.identity.signs == 1, "publication signed more than once");
+    check_web_job(3, true, 1, 1);
+    require(rt::requestWebPublicationStop(web_operation_id.data(), author.data()) == rt::WebReadResult::Ready, "confirmed result rejected a late stop");
+    check_web_job(3, true, 1, 1);
+    require(rt::webLease(false), "confirmed operation query retained its browser lease");
+    rt::WebReadResult historical_result = rt::WebReadResult::Pending;
+    until([&]
+          {
+              if (historical_result != rt::WebReadResult::Pending) return true;
+              const bool was_ui = test::in_ui;
+              test::in_ui = false;
+              historical_result = rt::readWebPublicationHistory(web_operation_id.data(), author.data(), job_response.data(), job_response.size(), job_written);
+              test::in_ui = was_ui;
+              return historical_result != rt::WebReadResult::Pending;
+          }, "verified historical operation read stalled");
+    require(historical_result == rt::WebReadResult::Ready, "durable publication history unavailable");
+    geocaching::protocol::CmpReader historical({job_response.data(), job_written});
+    size_t historical_fields = 0;
+    uint64_t historical_phase = 0;
+    geocaching::ByteView historical_id;
+    require(historical.array(historical_fields, 8) && historical_fields == 8 && historical.binary(historical_id, 16) &&
+                !std::memcmp(historical_id.data, web_operation_id.data(), 16) && historical.unsignedInteger(historical_phase) && historical_phase == 3,
+            "historical operation did not preserve its directory-confirmed phase");
+    require(rt::webLease(false), "historical operation query retained its browser lease");
     const auto discovery_before_edit = snapshot(Section::Discover).generation;
     // Exercise the UI field limits and the confirmed-version edit path through
     // the same device owner, not a direct store call.
