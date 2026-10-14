@@ -11,7 +11,7 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   const snapshot=()=>JSON.parse(runtime.UTF8ToString(runtime._native_snapshot()));
   const click=text=>{const button=snapshot().find(item=>item.button&&item.text===text);assert.ok(button,`${device}: missing ${text}`);runtime._native_activate(button.id);tick();};
   runtime._native_open_page(14);tick();
-  assert.ok(snapshot().some(item=>item.text==='No tracks yet'&&!item.button));
+  assert.ok(snapshot().some(item=>item.text==='No tracks yet'));
   assert.ok(!snapshot().some(item=>item.text==='Back'));
   const action=snapshot().find(item=>item.button&&item.text==='Start recording');
   assert.ok(action);
@@ -31,9 +31,25 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   click('Routes');
   assert.ok(!snapshot().some(item=>['Start recording','Stop recording','Back'].includes(item.text)));
   assert.ok(snapshot().some(item=>item.text.includes('sample-route')));
+  const routeCard=snapshot().find(item=>item.button&&item.text==='sample-route.kml');
+  assert.ok(routeCard,`${device}: first route is shown in the card`);
+  const routeCounter=snapshot().find(item=>item.text==='1 / 2');
+  assert.ok(routeCounter,`${device}: card shows the selected position`);
+  click('\uf054');
+  const nextCard=snapshot().find(item=>item.button&&item.text==='z-sample-route.kml');
+  assert.equal(nextCard?.id,routeCard.id,`${device}: flipping reuses the route card`);
+  assert.ok(snapshot().some(item=>item.text==='2 / 2'));
+  click('Tracks');
+  click('Routes');
+  assert.equal(snapshot().find(item=>item.button&&item.text==='z-sample-route.kml')?.id,routeCard.id,
+    `${device}: category switching preserves the selected file and card widget`);
+  const previous=snapshot().find(item=>item.button&&item.text==='\uf053'&&item.y>50);
+  assert.ok(previous,`${device}: previous-card navigation is available`);
+  runtime._native_activate(previous.id);tick();
+  assert.equal(snapshot().find(item=>item.button&&item.text==='sample-route.kml')?.id,routeCard.id);
   click('Tracks');
   assert.ok(snapshot().some(item=>item.button&&item.text==='Start recording'));
   click('\uf053');
   assert.equal(runtime._native_page_value(),10,'Top-bar back remains available without a list Back row');
-  console.log(`${device}: empty state, stable action width, recording, list refresh, route mode and top-bar back passed.`);
+  console.log(`${device}: empty state, recording, reused file cards, selection across categories, navigation and top-bar back passed.`);
 }

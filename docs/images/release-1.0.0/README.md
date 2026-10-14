@@ -12,6 +12,7 @@ review should refresh captures if the corresponding UI changes.
 | `web-track-country-search.png` | Local `live-track-page.mjs` using the review worktree's built page and actual public WSS/Reticulum directory, 2026-10-14 | Country pagination, verified Austria boundary and empty regional query; no USB author, public write or published-website assertion. |
 | `center-map-cache.png` | Trail Mate Center repository `assets/QQ20260515-103200.png` | Existing desktop screenshot; separate Center release, not a firmware acceptance capture. |
 | `center-propagation.png` | Trail Mate Center repository `assets/QQ_1778812190407.png` | Existing desktop screenshot; no completed radio simulation claimed. |
+| `firmware-geocaching-card-native.png` | Production Geocaching LVGL page rendered by `modules/ui_shared/tests/geocaching/test_page.cpp`, 320×240, 2026-10-14 | Reused single-card interface with synthetic cache data; not a camera capture or real-device publication acceptance. |
 
 Firmware illustrations already live under `docs/images/`, including map,
 messaging, team and route-preview captures. The final 1.0.0 screenshot set still

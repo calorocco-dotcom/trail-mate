@@ -3125,46 +3125,160 @@ std::string format_list_name(const std::string& name)
     return utf8_truncate(name, max_chars);
 }
 
-void update_record_page()
+void update_item_card();
+
+void step_item_card(int direction)
 {
     auto& state = g_tracker_state;
-    if (!state.list_container)
+    if (is_any_modal_open()) return;
+    const bool recording = state.mode == TrackerPageState::Mode::Record;
+    const auto& names = recording ? s_record_names : s_route_names;
+    auto& index = recording ? state.selected_record_idx : state.selected_route_idx;
+    auto& selected = recording ? state.selected_record : state.selected_route;
+    const int next = index + direction;
+    if (next < 0 || next >= static_cast<int>(names.size())) return;
+    index = next;
+    selected = names[static_cast<size_t>(next)];
+    update_item_card();
+}
+
+void update_item_card()
+{
+    auto& state = g_tracker_state;
+    if (!state.list_container || is_any_modal_open()) return;
+    if (!state.item_card)
     {
-        return;
+        // A fixed set of widgets serves every file. Only filenames are indexed;
+        // KML, elevation and images remain in the existing on-demand preview.
+        lv_obj_clear_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_pad_all(state.list_container, 0, 0);
+        auto* card = state.item_card = lv_btn_create(state.list_container);
+        lv_obj_set_width(card, LV_PCT(100));
+        lv_obj_set_height(card, 0);
+        lv_obj_set_flex_grow(card, 1);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        lv_obj_set_style_bg_color(card, lv_color_hex(0xFFFCF5), 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(0xE7C98F), 0);
+        lv_obj_set_style_border_width(card, 1, 0);
+        lv_obj_set_style_radius(card, 10, 0);
+        lv_obj_set_style_pad_all(card, page_profile().dense ? 5 : 8, 0);
+        auto label = [&](uint32_t background, bool muted)
+        {
+            auto* result = lv_label_create(card);
+            lv_obj_set_width(result, LV_PCT(100));
+            lv_label_set_long_mode(result, LV_LABEL_LONG_DOT);
+            lv_obj_set_style_text_font(result, muted ? ::ui::page_profile::resolve_caption_font() : ::ui::page_profile::resolve_body_font(), 0);
+            lv_obj_set_style_text_color(result, lv_color_hex(muted ? 0x416F65 : 0x6B4A1E), 0);
+            lv_obj_set_style_bg_color(result, lv_color_hex(background), 0);
+            lv_obj_set_style_bg_opa(result, LV_OPA_COVER, 0);
+            lv_obj_set_style_pad_all(result, 4, 0);
+            lv_obj_set_style_radius(result, 5, 0);
+            return result;
+        };
+        state.card_name = label(0xF6E6C8, false);
+        state.card_format = label(0xE4EFEB, false);
+        state.card_location = label(0xEEEDE7, true);
+        lv_label_set_long_mode(state.card_location, LV_LABEL_LONG_SCROLL);
+        lv_obj_add_event_cb(card, on_list_item_clicked, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(
+            card, [](lv_event_t*)
+            {
+                                auto* input = lv_indev_get_act();
+                                if (!input) return;
+                                const auto direction = lv_indev_get_gesture_dir(input);
+                                if (direction == LV_DIR_TOP || direction == LV_DIR_LEFT) step_item_card(1);
+                                else if (direction == LV_DIR_BOTTOM || direction == LV_DIR_RIGHT) step_item_card(-1); },
+            LV_EVENT_GESTURE, nullptr);
+        auto* controls = lv_obj_create(state.list_container);
+        lv_obj_set_size(controls, LV_PCT(100), page_profile().control_button_height);
+        lv_obj_clear_flag(controls, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_border_width(controls, 0, 0);
+        lv_obj_set_style_bg_opa(controls, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_all(controls, 0, 0);
+        lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        auto navigation = [&](const char* symbol, int direction)
+        {
+            auto* button = lv_btn_create(controls);
+            lv_obj_set_size(button, page_profile().control_button_height, page_profile().control_button_height);
+            auto* text = lv_label_create(button);
+            lv_label_set_text(text, symbol);
+            lv_obj_center(text);
+            apply_action_button(button, text);
+            lv_obj_add_event_cb(
+                button, [](lv_event_t* event)
+                { step_item_card(static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)))); },
+                LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(direction)));
+            return button;
+        };
+        state.card_previous = navigation(LV_SYMBOL_LEFT, -1);
+        state.card_counter = lv_label_create(controls);
+        lv_obj_set_width(state.card_counter, 0);
+        lv_obj_set_flex_grow(state.card_counter, 1);
+        lv_obj_set_style_text_align(state.card_counter, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(state.card_counter, lv_color_hex(kPanelTextMuted), 0);
+        state.card_next = navigation(LV_SYMBOL_RIGHT, 1);
     }
-
-    const lv_coord_t scroll_y = lv_obj_get_scroll_y(state.list_container);
-    clear_list_items();
-
-    if (s_record_names.empty())
+    const bool recording = state.mode == TrackerPageState::Mode::Record;
+    const auto& names = recording ? s_record_names : s_route_names;
+    auto& index = recording ? state.selected_record_idx : state.selected_route_idx;
+    auto& selected = recording ? state.selected_record : state.selected_route;
+    const auto found = std::find(names.begin(), names.end(), selected);
+    index = found != names.end() ? static_cast<int>(found - names.begin()) : names.empty() ? -1
+                                                                                           : 0;
+    if (index < 0)
     {
-        create_empty_state(s_record_empty_text);
+        selected.clear();
+        lv_obj_set_user_data(state.item_card, nullptr);
+        lv_obj_add_state(state.item_card, LV_STATE_DISABLED);
+        ::ui::i18n::set_content_label_text_raw(state.card_name, (recording ? s_record_empty_text : s_route_empty_text).c_str());
+        ::ui::i18n::set_label_text(state.card_format, recording ? "Tracks" : "Routes");
+        lv_label_set_text(state.card_location, recording ? platform::ui::tracker::track_dir() : platform::ui::route_storage::route_dir());
     }
     else
     {
-        for (size_t index = 0; index < s_record_names.size(); ++index)
+        selected = names[static_cast<size_t>(index)];
+        lv_obj_set_user_data(state.item_card, reinterpret_cast<void*>(static_cast<intptr_t>(index) + kListUserDataOffset));
+        lv_obj_clear_state(state.item_card, LV_STATE_DISABLED);
+        ::ui::i18n::set_content_label_text_raw(state.card_name, selected.c_str());
+        const auto extension = selected.find_last_of('.');
+        std::string format = extension == std::string::npos ? "" : selected.substr(extension + 1);
+        std::transform(format.begin(), format.end(), format.begin(), [](unsigned char ch)
+                       { return static_cast<char>(std::toupper(ch)); });
+        const char* status = ::ui::i18n::tr(recording ? "Tracks" : "Routes");
+        if (recording && platform::ui::tracker::is_recording())
         {
-            create_list_item_button(format_list_name(s_record_names[index]),
-                                    static_cast<intptr_t>(index) + kListUserDataOffset,
-                                    static_cast<int>(index) == state.selected_record_idx,
-                                    false);
+            std::string current;
+            if (platform::ui::tracker::current_path(current) && path_basename(current) == selected) status = ::ui::i18n::tr("Recording");
         }
+        if (!recording && state.active_route == selected)
+            ::ui::i18n::set_content_label_text_raw(state.card_format, ::ui::i18n::format("Active: %s", format.c_str()).c_str());
+        else lv_label_set_text_fmt(state.card_format, "%s | %s", format.c_str(), status);
+        lv_label_set_text_fmt(state.card_location, "%s/%s", recording ? platform::ui::tracker::track_dir() : platform::ui::route_storage::route_dir(), selected.c_str());
     }
-
-    lv_obj_add_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(state.list_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_scroll_to_y(state.list_container, scroll_y, LV_ANIM_OFF);
+    lv_label_set_text_fmt(state.card_counter, "%u / %u", index < 0 ? 0 : static_cast<unsigned>(index + 1), static_cast<unsigned>(names.size()));
+    if (index <= 0) lv_obj_add_state(state.card_previous, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.card_previous, LV_STATE_DISABLED);
+    if (index < 0 || static_cast<size_t>(index + 1) >= names.size()) lv_obj_add_state(state.card_next, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.card_next, LV_STATE_DISABLED);
+    if (!recording) update_route_status();
     if (state.focus_col == TrackerPageState::FocusColumn::Main && !is_any_modal_open())
     {
         tracker::ui::input::tracker_input_on_ui_refreshed();
     }
 }
 
+void update_record_page()
+{
+    update_item_card();
+}
+
 void refresh_record_list()
 {
     auto& state = g_tracker_state;
-    if (!state.list_container)
+    if (!state.list_container || is_any_modal_open())
     {
         return;
     }
@@ -3183,11 +3297,6 @@ void refresh_record_list()
 
     constexpr size_t kMaxTracks = 32;
     platform::ui::tracker::list_tracks(s_record_names, kMaxTracks);
-    if (state.selected_record_idx >= static_cast<int>(s_record_names.size()))
-    {
-        state.selected_record_idx = -1;
-        state.selected_record.clear();
-    }
     if (state.mode == TrackerPageState::Mode::Record)
     {
         update_record_page();
@@ -3263,54 +3372,17 @@ void update_route_status()
 
 void update_route_page()
 {
-    auto& state = g_tracker_state;
-    if (!state.list_container)
-    {
-        return;
-    }
-
-    const lv_coord_t scroll_y = lv_obj_get_scroll_y(state.list_container);
-    clear_list_items();
-
-    if (s_route_names.empty())
-    {
-        create_empty_state(s_route_empty_text);
-        if (platform::ui::device::sd_ready())
-        {
-            create_empty_state(::ui::i18n::tr("Add KML files to the routes folder"));
-        }
-    }
-    else
-    {
-        for (size_t index = 0; index < s_route_names.size(); ++index)
-        {
-            create_list_item_button(format_list_name(s_route_names[index]),
-                                    static_cast<intptr_t>(index) + kListUserDataOffset,
-                                    static_cast<int>(index) == state.selected_route_idx,
-                                    false);
-        }
-    }
-
-    lv_obj_add_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(state.list_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_scroll_to_y(state.list_container, scroll_y, LV_ANIM_OFF);
-    if (state.focus_col == TrackerPageState::FocusColumn::Main && !is_any_modal_open())
-    {
-        tracker::ui::input::tracker_input_on_ui_refreshed();
-    }
+    update_item_card();
 }
 
 void refresh_route_list()
 {
     auto& state = g_tracker_state;
-    if (!state.list_container)
+    if (!state.list_container || is_any_modal_open())
     {
         return;
     }
     s_route_names.clear();
-    state.selected_route_idx = -1;
-    state.selected_route.clear();
     s_route_empty_text = ::ui::i18n::tr("No KML routes");
 
     if (!platform::ui::device::sd_ready())
@@ -3514,10 +3586,12 @@ void on_action_menu_item_clicked(lv_event_t* e)
     {
     case ActionMenuCommand::Load:
         on_route_load_clicked(nullptr);
+        update_item_card();
         focus_main_panel();
         break;
     case ActionMenuCommand::Unload:
         on_route_unload_clicked(nullptr);
+        update_item_card();
         focus_main_panel();
         break;
     case ActionMenuCommand::Preview:

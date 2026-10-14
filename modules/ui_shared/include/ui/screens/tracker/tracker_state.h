@@ -28,6 +28,13 @@ struct TrackerPageState
     lv_obj_t* filter_panel = nullptr;
     lv_obj_t* list_panel = nullptr;
     lv_obj_t* list_container = nullptr;
+    lv_obj_t* item_card = nullptr;
+    lv_obj_t* card_name = nullptr;
+    lv_obj_t* card_format = nullptr;
+    lv_obj_t* card_location = nullptr;
+    lv_obj_t* card_counter = nullptr;
+    lv_obj_t* card_previous = nullptr;
+    lv_obj_t* card_next = nullptr;
     lv_obj_t* bottom_bar = nullptr;
 
     lv_obj_t* mode_record_btn = nullptr;

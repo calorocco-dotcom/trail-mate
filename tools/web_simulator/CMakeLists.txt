@@ -116,6 +116,8 @@ target_include_directories(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_sys/include"
   "${REPO_ROOT}/modules/core_chat/include"
   "${REPO_ROOT}/modules/core_gps/include"
+  "${REPO_ROOT}/modules/core_track_sharing/include"
+  "${REPO_ROOT}/third_party/yxml"
   "${REPO_ROOT}/platform/esp/arduino_common/include")
 target_compile_features(${PREVIEW_TARGET} PRIVATE cxx_std_17)
 target_compile_options(${PREVIEW_TARGET} PRIVATE -O2)
@@ -212,6 +214,7 @@ set_source_files_properties(
 file(GLOB PROBE_PROTO_SOURCES "${REPO_ROOT}/modules/core_chat/generated/meshtastic/*.cpp")
 file(GLOB PROBE_ED25519_SOURCES "${REPO_ROOT}/modules/core_chat/src/infra/meshcore/crypto/ed25519/*.c")
 target_sources(${PREVIEW_TARGET} PRIVATE ${PROBE_PROTO_SOURCES} ${PROBE_ED25519_SOURCES}
+  "${REPO_ROOT}/third_party/yxml/yxml.c"
   "${NANOPB_SOURCE_DIR}/pb_common.c"
   "${NANOPB_SOURCE_DIR}/pb_decode.c"
   "${NANOPB_SOURCE_DIR}/pb_encode.c"

@@ -21,7 +21,7 @@ namespace
 {
 namespace styles = ::ui::components::two_pane_styles;
 using Section = ::ui::geocaching::Section;
-constexpr size_t kVisibleRows = 4;
+constexpr size_t kVisibleRows = 1;
 struct Editor
 {
     ::ui::geocaching::DraftInput input;
@@ -244,6 +244,13 @@ void keyEvent(lv_event_t* event)
         else if (page->host) ::ui::page::request_exit(page->host);
     }
     else if (page->editor && page->group && lv_group_get_editing(page->group)) return;
+    else if (!page->details && !page->editor && lv_event_get_target(event) == page->rows[0] &&
+             (key == LV_KEY_DOWN || key == LV_KEY_RIGHT || key == LV_KEY_UP || key == LV_KEY_LEFT))
+    {
+        auto* target = key == LV_KEY_DOWN || key == LV_KEY_RIGHT ? page->next : page->previous;
+        lv_event_stop_processing(event);
+        if (!lv_obj_has_state(target, LV_STATE_DISABLED)) lv_obj_send_event(target, LV_EVENT_CLICKED, nullptr);
+    }
     else if (page->details && (key == LV_KEY_DOWN || key == LV_KEY_UP))
         lv_obj_scroll_by(page->list, 0, key == LV_KEY_DOWN ? -28 : 28, LV_ANIM_OFF);
     else if (page->group && (key == LV_KEY_DOWN || key == LV_KEY_RIGHT)) lv_group_focus_next(page->group);
@@ -314,9 +321,9 @@ void refreshDetailText()
 void updateListControls(PageState& p)
 {
     lv_label_set_text(p.status, p.snapshot.status.data());
-    lv_label_set_text_fmt(p.range, "%lu-%lu / %lu%s",
+    lv_label_set_text_fmt(p.range, "%lu / %lu%s",
                           static_cast<unsigned long>(p.row_count ? p.offset + 1 : 0),
-                          static_cast<unsigned long>(p.offset + p.row_count), static_cast<unsigned long>(p.snapshot.count), p.snapshot.has_more ? "+" : "");
+                          static_cast<unsigned long>(p.snapshot.count), p.snapshot.has_more ? "+" : "");
     setEnabled(p.refresh, p.section == Section::Published ? p.snapshot.can_create : p.snapshot.can_refresh);
     lv_label_set_text(lv_obj_get_child(p.refresh, 0), p.section == Section::Published ? "New" : "Refresh");
     setEnabled(p.previous, p.offset != 0);
@@ -485,51 +492,93 @@ void refreshView()
         if (i == static_cast<size_t>(p.section)) lv_obj_add_state(p.tabs[i], LV_STATE_CHECKED);
         else lv_obj_remove_state(p.tabs[i], LV_STATE_CHECKED);
     }
-    lv_obj_clean(p.list);
-    p.rows.fill(nullptr);
-    p.row_count = 0;
-    ::ui::geocaching::Item item;
-    while (p.row_count < p.window && p.offset + p.row_count < p.snapshot.count)
+    if (!p.rows[0])
     {
-        const size_t i = p.row_count;
-        if (!source || !source->item(p.section, p.offset + i, p.snapshot.generation, item))
-        {
-            p.valid = false;
-            break;
-        }
-        auto* row = button(p.list, item.name.data(), ::ui::page_profile::current().list_item_height);
+        lv_obj_clean(p.list);
+        auto* row = p.rows[0] = button(p.list, "", 0);
         lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_flex_grow(row, 1);
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        lv_obj_set_style_pad_all(row, 6, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xFFFCF5), 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(0xE7C98F), 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_radius(row, 10, 0);
         auto* label = lv_obj_get_child(row, 0);
         lv_obj_set_width(label, LV_PCT(100));
         lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-        if (item.is_draft && item.publication_revision)
-            lv_label_set_text_fmt(label, "v%lu %s | %s", static_cast<unsigned long>(item.publication_revision),
-                                  item.publication_confirmed ? "accepted" : "unconfirmed", item.name.data());
-        p.rows[i] = row;
-        p.row_ids[i] = item.id;
-        ++p.row_count;
+        lv_obj_set_style_text_font(label, ::ui::page_profile::resolve_body_font(), 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0x6B4A1E), 0);
+        lv_obj_set_style_bg_color(label, lv_color_hex(0xF6E6C8), 0);
+        lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(label, 5, 0);
+        lv_obj_set_style_pad_all(label, 4, 0);
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            auto* summary = lv_label_create(row);
+            lv_obj_set_width(summary, LV_PCT(100));
+            lv_label_set_long_mode(summary, LV_LABEL_LONG_DOT);
+            lv_obj_set_style_text_font(summary, ::ui::page_profile::resolve_caption_font(), 0);
+            lv_obj_set_style_text_color(summary, lv_color_hex(i == 0 ? 0x245B50 : 0x66675F), 0);
+            lv_obj_set_style_bg_color(summary, lv_color_hex(i == 0 ? 0xE4EFEB : 0xEEEDE7), 0);
+            lv_obj_set_style_bg_opa(summary, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(summary, 5, 0);
+            lv_obj_set_style_pad_all(summary, 4, 0);
+        }
         lv_obj_add_event_cb(
-            row, [](lv_event_t* event)
+            row, [](lv_event_t*)
             {
             if (!page || !source) return;
-            const auto index = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
             ::ui::geocaching::Item selected;
-            if (index < page->row_count &&
-                source->item(page->section, page->offset + index, page->snapshot.generation, selected) &&
-                selected.id == page->row_ids[index])
-            { const auto row = page->offset + index; source->open(selected, page->snapshot.generation); if (page) showDetails(selected, row); }
+            if (page->row_count && page->valid &&
+                source->item(page->section, page->offset, page->snapshot.generation, selected) &&
+                selected.id == page->row_ids[0])
+            { const auto index = page->offset; source->open(selected, page->snapshot.generation); if (page) showDetails(selected, index); }
             else { page->valid = false; refreshView(); } },
-            LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+            LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(
+            row, [](lv_event_t*)
+            {
+            if (!page || page->details || page->editor) return;
+            auto* input = lv_indev_get_act();
+            if (!input) return;
+            const auto direction = lv_indev_get_gesture_dir(input);
+            auto* target = direction == LV_DIR_TOP || direction == LV_DIR_LEFT ? page->next :
+                           direction == LV_DIR_BOTTOM || direction == LV_DIR_RIGHT ? page->previous : nullptr;
+            if (target && !lv_obj_has_state(target, LV_STATE_DISABLED)) lv_obj_send_event(target, LV_EVENT_CLICKED, nullptr); },
+            LV_EVENT_GESTURE, nullptr);
     }
+    p.row_count = 0;
+    ::ui::geocaching::Item item;
+    if (p.offset < p.snapshot.count)
+    {
+        if (source && source->item(p.section, p.offset, p.snapshot.generation, item))
+        {
+            p.row_count = 1;
+            p.row_ids[0] = item.id;
+            auto* card = p.rows[0];
+            lv_label_set_text(lv_obj_get_child(card, 0), item.name.data());
+            lv_label_set_text(lv_obj_get_child(card, 1), item.detail.data());
+            if (item.has_coordinates)
+                lv_label_set_text_fmt(lv_obj_get_child(card, 2), "%.5f, %.5f", item.latitude_e7 / 10000000.0, item.longitude_e7 / 10000000.0);
+            else lv_label_set_text(lv_obj_get_child(card, 2), "No location selected");
+            auto* status = lv_obj_get_child(card, 3);
+            if (item.is_draft && item.publication_revision)
+                lv_label_set_text_fmt(status, "v%lu | %s", static_cast<unsigned long>(item.publication_revision),
+                                      item.publication_confirmed ? "Directory confirmed" : "Unconfirmed");
+            else lv_label_set_text(status, item.is_draft ? "Local draft" : item.downloaded ? "Saved offline"
+                                                                                           : "Shared cache");
+        }
+        else p.valid = false;
+    }
+    setEnabled(p.rows[0], p.row_count && p.valid);
     if (!p.row_count)
     {
-        auto* empty = lv_label_create(p.list);
-        lv_label_set_text(empty, p.snapshot.busy ? "Loading caches..." : source ? "No caches in this view"
-                                                                                : "No cached items");
-        styles::apply_label_muted(empty);
-        lv_obj_set_width(empty, LV_PCT(100));
-        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_pad_top(empty, 12, 0);
+        lv_label_set_text(lv_obj_get_child(p.rows[0], 0), p.snapshot.busy || !p.valid ? "Loading caches..." : source ? "No caches in this view"
+                                                                                                                     : "No cached items");
+        for (unsigned i = 1; i < 4; ++i) lv_label_set_text(lv_obj_get_child(p.rows[0], i), "");
     }
     updateListControls(p);
     if (p.group)
@@ -1257,8 +1306,7 @@ void enter(void* user_data, lv_obj_t* parent)
         LV_EVENT_CLICKED, nullptr);
     lv_label_set_text(p.status, " ");
     lv_obj_update_layout(p.root);
-    const auto available = std::max<lv_coord_t>(0, lv_obj_get_content_height(p.list));
-    p.window = std::max<size_t>(1, std::min<size_t>(kVisibleRows, (available + 3) / (profile.list_item_height + 3)));
+    p.window = 1;
     refreshView();
     if (p.group)
     {
