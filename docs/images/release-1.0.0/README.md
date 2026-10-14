@@ -13,8 +13,10 @@ review should refresh captures if the corresponding UI changes.
 | `center-map-cache.png` | Trail Mate Center repository `assets/QQ20260515-103200.png` | Existing desktop screenshot; separate Center release, not a firmware acceptance capture. |
 | `center-propagation.png` | Trail Mate Center repository `assets/QQ_1778812190407.png` | Existing desktop screenshot; no completed radio simulation claimed. |
 | `firmware-geocaching-card-native.png` | Production Geocaching LVGL page rendered by `modules/ui_shared/tests/geocaching/test_page.cpp`, 320×240, 2026-10-14 | Reused card with distance and a synthetic approximate administrative area; not a geographic-accuracy measurement, camera capture or real-device publication acceptance. |
+| `firmware-tracker-card-native.png` | Actual Wio LVGL native preview from CI run `38552778708`, source `5ea6e635`, 320×240, 2026-10-14 | Sample KML and simulated GPS. Zero distance is the demo fix matching the sample start; the preview has no TMAP administrative dataset, so the region is explicitly unknown. Not a device camera capture or real hiking record. |
 
 Firmware illustrations already live under `docs/images/`, including map,
 messaging, team and route-preview captures. The final 1.0.0 screenshot set still
-needs current firmware Geocaching/Tracker captures; do not
-present this initial set as complete coverage.
+includes native Geocaching/Tracker card captures. Physical card interaction and
+TMAP geographic accuracy still require hardware acceptance; native captures do
+not establish those results.

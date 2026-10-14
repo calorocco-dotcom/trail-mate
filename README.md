@@ -116,7 +116,27 @@ and can be continued instead of silently starting a second publication.
 *Actual Web maintenance page from a native Reticulum directory check with a
 simulated USB author. Sample cache data is shown; this is not a real-Wio result.*
 
+The firmware browses caches through a reused single card. The card emphasizes
+distance and an approximate administrative area; details retain coordinates and
+the full cache description. Only the current item is hydrated.
+
+![Firmware Geocaching card](docs/images/release-1.0.0/firmware-geocaching-card-native.png)
+
+*Production LVGL page rendered with synthetic cache and administrative-area data;
+this capture demonstrates the interface, not geographic accuracy on hardware.*
+
 ### Decentralized KML trail sharing
+
+Firmware Tracker uses the same card interaction for recordings and KML routes.
+Previous/next navigation reuses the widgets; the current file's start position
+feeds the shared approximate-area and distance presentation. Route geometry,
+elevation and images are opened through the existing preview when needed.
+
+![Firmware Tracker card](docs/images/release-1.0.0/firmware-tracker-card-native.png)
+
+*Actual Wio native LVGL preview from CI with sample KML and simulated GPS. The
+preview has no TMAP administrative data, so its region remains unknown. This is
+not a physical-device capture.*
 
 The [Tracks workspace](https://vicliu624.github.io/trail-mate/tracks/) combines
 **your own trail library**, **shared-trail discovery**, and **trail details and
