@@ -1,5 +1,6 @@
 # PlatformIO library hook. Preserve existing exclusions for all other targets.
 Import("env")
+env.AppendUnique(CPPPATH=[env.subst("$PROJECT_DIR") + "/modules/core_hostlink/include"])
 source_filter = ["+<*>", "-<ble/>", "-<rnode_kiss/>",
                  "-<platform_ui_hostlink_runtime.cpp>", "-<ui/screens/gps/>"]
 if env.subst("$PIOENV") != "wio_tracker_l2":

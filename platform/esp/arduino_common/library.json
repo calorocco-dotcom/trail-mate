@@ -32,7 +32,6 @@
               },
     "dependencies":  [
                          { "name": "core_geocaching" },
-                         { "name": "core_hostlink" },
                          {
                              "name":  "esp_common"
                          },
