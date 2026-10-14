@@ -99,7 +99,7 @@ void resetCompleteConfigFixture()
     fake_nvs::fail_commit = false;
     fake_nvs::open_error = 0;
     using namespace platform::ui::reticulum_network_config;
-    fixture = {};
+    fixture = NetworkConfig{};
     fixture.interface_count = 5;
     for (std::size_t i = 0; i < fixture.interface_count; ++i)
     {
