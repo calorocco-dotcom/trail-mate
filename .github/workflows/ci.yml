@@ -111,7 +111,7 @@ jobs:
           node --test tests/site/track-manifest-native.test.mjs
           node --test tests/site/track-upload-native.test.mjs
           node --test tests/site/track-manifest-sign-native.test.mjs
-          node --test tests/site/track-device-ip-confirmation.test.mjs tests/site/track-device-sync.test.mjs tests/site/track-attachment-cleanup.test.mjs
+          node --test tests/site/track-device-ip-confirmation.test.mjs tests/site/track-device-sync.test.mjs tests/site/track-attachment-cleanup.test.mjs tests/site/track-hardware-session.test.mjs
           node --test tests/site/track-shared-package.test.mjs tests/site/track-package-publication.test.mjs
           node --test tests/site/package-archive.test.mjs tests/site/track-kml-archive.test.mjs tests/site/track-draft-backup.test.mjs tests/site/kml-original-labels.test.mjs tests/site/recording-original.test.mjs
           node --test tests/site/track-bulk-transfer.test.mjs

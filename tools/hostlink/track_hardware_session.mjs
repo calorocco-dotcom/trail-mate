@@ -14,7 +14,7 @@ import {signDeviceTrackManifest} from '../../site/tracks/src/device-local-signat
 import {confirmDeviceTrackPublication} from '../../site/tracks/src/device-ip-confirmation.js';
 import {encodeTrackIPCheckpoint} from '../../site/tracks/src/ip-publication-journal.js';
 
-const allowed=new Set([0,1,2,3,32,33,34,35,37,96,97,99]);
+const allowed=new Set([0,1,2,3,32,33,34,35,37,38,96,97,99]);
 const hex=bytes=>Buffer.from(bytes).toString('hex');
 const randomId=()=>crypto.getRandomValues(new Uint8Array(16));
 
@@ -54,7 +54,7 @@ export class TrackHardwareSession {
   if(![0,1,2].includes(operation))assert.ok(this.author?.verified&&this.author.fingerprint===this.fingerprint);
   if(operation===32){
    assert.ok([3,4,7,8,9,10].includes(body[1])&&body[2]>0&&body[2]<=8192);
-   this.uploads.set(hex(body[0]),body[0].slice());
+   this.uploads.set(hex(body[0]),{id:body[0].slice(),kind:body[1],total:body[2],hash:body[3].slice()});
   }
   if([33,34,35,37].includes(operation))assert.ok(this.uploads.has(hex(body[0])),'Unrelated upload rejected');
   const id=randomId(),response=decodeManagement(await this.exchange(FRAME.MANAGEMENT_REQUEST,
@@ -65,9 +65,11 @@ export class TrackHardwareSession {
  }
  async open() {
   const hello=decodeHello(await this.exchange(FRAME.HELLO,new Uint8Array(),FRAME.HELLO_ACK));
-  assert.equal(hello.firmware,'1.0.0','Final acceptance requires the 1.0.0 candidate');
+  // The current service hardcodes its diagnostic firmware label to "dev".
+  // The verified upload receipt binds the candidate; validate its wire contract.
+  assert.equal(hello.version,1,'Final acceptance requires HostLink protocol v1');
   const caps=await this.request(0,[]);this.operations=caps[4];
-  assert.ok([1,2,32,33,35,37,96,97,99].every(operation=>this.operations.includes(operation)));
+  assert.ok([1,2,32,33,35,37,38,96,97,99].every(operation=>this.operations.includes(operation)));
   this.author=await proveDeviceAuthor(this);assert.equal(this.author.fingerprint,this.fingerprint);
   return this.author;
  }
@@ -76,6 +78,7 @@ export class TrackHardwareSession {
   const manifest=decode(plan.manifest,4096);
   assert.ok(['Network trail','Updated network trail'].includes(manifest[9]),'Only the isolated test trail may be signed');
   assert.ok(equal(manifest[1],this.author.publicKey));
+  await this.cleanupExactStaging(4,plan.manifest.length,new Uint8Array(await crypto.subtle.digest('SHA-256',plan.manifest)));
   const result=await signDeviceTrackManifest(this,{...plan,kml,author:this.author,
     attachmentIndex:index,attachmentFiles:[{id:'photo',content:photo}],
     indexUploadId:randomId(),packageUploadId:randomId(),attachmentUploadIds:[{id:'photo',uploadId:randomId()}]},
@@ -93,8 +96,33 @@ export class TrackHardwareSession {
     checkpoint:Buffer.from(encodeTrackIPCheckpoint(record)).toString('base64')},null,2));
   const result=await confirmDeviceTrackPublication(this,record,this.author,{id:randomId(),operations:this.operations});
   assert.ok(result.confirmed&&result.durable);
-  for(const id of this.uploads.values())await this.request(37,[id]);
+  // A resumed signature was created in an earlier USB session. Its exact KML
+  // and manifest uploads are still known from the retained, confirmed plan.
+  this.uploads.set(hex(plan.kmlUploadId),{id:plan.kmlUploadId,kind:3,total:plan.fileBytes,hash:plan.fileHash});
+  this.uploads.set(hex(plan.manifestUploadId),{id:plan.manifestUploadId,kind:4,total:plan.manifest.length,
+    hash:new Uint8Array(await crypto.subtle.digest('SHA-256',plan.manifest))});
+  for(const row of this.uploads.values())await this.request(37,[row.id,row.kind,row.total,row.hash]);
+  await this.cleanupExactStaging(3,plan.fileBytes,plan.fileHash);
+  await this.cleanupConfirmedIndex(plan);
   this.uploads.clear();return {confirmed:true,durable:true,revision:result.revision};
+ }
+ async cleanupConfirmedIndex(plan) {
+  const assets=decode(plan.manifest,4096)[15];if(!assets)return;
+  await this.cleanupExactStaging(8,assets[1],assets[0]);
+ }
+ async cleanupExactStaging(kind,total,hash) {
+  const matches=new Map();let cursor=null,ended=false;
+  for(let page=0;page<32&&!ended;page++){
+   const reply=await this.request(38,[kind,cursor]);assert.ok(Array.isArray(reply)&&reply.length===3);
+   const [media,next,row]=reply;ended=next===null;cursor=ended?null:[media,next];
+   if(row&&row[1]===kind&&row[2]===total&&equal(row[3],hash)&&row[4]===this.author.generation)
+    matches.set(hex(row[0]),row.slice(0,4));
+  }
+  assert.ok(ended,'Temporary index inventory did not finish');
+  for(const binding of matches.values()){
+   this.uploads.set(hex(binding[0]),{id:binding[0],kind:binding[1],total:binding[2],hash:binding[3]});
+   await this.request(37,binding);
+  }
  }
  async close() {
   this.child.stdin.end();const code=await this.done;this.lines.close();
