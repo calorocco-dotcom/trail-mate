@@ -1,5 +1,6 @@
 #pragma once
 #include "platform/memory/psram_ptr.h"
+#include "ui/support/kml_card_title.h"
 #include "ui/support/route_image_kml_reader.h"
 #include <cmath>
 #include <cstring>
@@ -8,7 +9,7 @@ namespace ui::support
 {
 // Read only the selected file's first point. The page retains two numbers, not
 // route geometry, images or the complete file. Parsing work lives in PSRAM.
-inline bool readCardFileLocation(const char* path, double& latitude, double& longitude)
+inline bool readCardFileLocation(const char* path, double& latitude, double& longitude, std::string* title = nullptr)
 {
     const auto normalized = fs::normalize_path(path);
     if (normalized.empty()) return false;
@@ -33,6 +34,10 @@ inline bool readCardFileLocation(const char* path, double& latitude, double& lon
     };
     auto* work = platform::memory::createPsram<RouteImageKmlWork>(callbacks);
     if (!work) return false;
+    auto* title_work = title && extension == ".kml" ? platform::memory::createPsram<KmlCardTitle>() : nullptr;
+    if (title) title->clear();
+    auto complete = [&]()
+    { return point.found && (!title_work || title_work->hasDocumentTitle()); };
     lv_fs_file_t file;
     bool ok = lv_fs_open(&file, normalized.c_str(), LV_FS_MODE_RD) == LV_FS_RES_OK;
     if (ok)
@@ -43,7 +48,7 @@ inline bool readCardFileLocation(const char* path, double& latitude, double& lon
         bool point_tag = false, latitude_attribute = false, longitude_attribute = false, has_latitude = false, has_longitude = false;
         yxml_t xml;
         yxml_init(&xml, work->names, sizeof(work->names));
-        while (ok && remaining && !point.found)
+        while (ok && remaining && !complete())
         {
             uint32_t count = 0;
             ok = lv_fs_read(&file, work->chunk, std::min<uint32_t>(remaining, sizeof(work->chunk)), &count) == LV_FS_RES_OK && count <= sizeof(work->chunk);
@@ -93,11 +98,12 @@ inline bool readCardFileLocation(const char* path, double& latitude, double& lon
                 point.found = end != start && (*end == ',' || *end == '\0');
                 break;
             }
-            for (uint32_t i = 0; i < count && ok && !point.found; ++i)
+            for (uint32_t i = 0; i < count && ok && !complete(); ++i)
             {
                 const auto byte = static_cast<uint8_t>(work->chunk[i]);
                 if (extension == ".kml")
                 {
+                    if (title_work) title_work->feed(byte);
                     ok = work->parser.feed(&byte, 1);
                     continue;
                 }
@@ -161,6 +167,8 @@ inline bool readCardFileLocation(const char* path, double& latitude, double& lon
         lv_fs_close(&file);
     }
     platform::memory::destroyPsram(work);
+    if (title_work) *title = title_work->title();
+    platform::memory::destroyPsram(title_work);
     if (!ok || !point.found || !std::isfinite(point.latitude) || !std::isfinite(point.longitude) ||
         std::abs(point.latitude) > 90 || std::abs(point.longitude) > 180) return false;
     latitude = point.latitude;

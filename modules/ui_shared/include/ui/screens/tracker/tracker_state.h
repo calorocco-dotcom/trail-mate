@@ -44,6 +44,7 @@ struct TrackerPageState
     lv_obj_t* card_counter = nullptr;
     lv_obj_t* card_previous = nullptr;
     lv_obj_t* card_next = nullptr;
+    lv_obj_t* card_actions = nullptr;
     lv_obj_t* bottom_bar = nullptr;
 
     lv_obj_t* mode_record_btn = nullptr;

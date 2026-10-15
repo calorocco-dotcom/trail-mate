@@ -13,6 +13,7 @@
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/runtime/ui_feedback.h"
+#include "ui/screens/tracker/tracker_item_card_view.h"
 #include "ui/screens/tracker/tracker_navigation_dialog.h"
 #include "ui/screens/tracker/tracker_page_input.h"
 #include "ui/screens/tracker/tracker_page_layout.h"
@@ -2972,6 +2973,11 @@ void set_mode(TrackerPageState::Mode mode)
         state.selected_route_idx = -1;
     }
     state.mode = mode;
+    if (state.status_label)
+    {
+        if (mode == TrackerPageState::Mode::Record) lv_obj_clear_flag(state.status_label, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(state.status_label, LV_OBJ_FLAG_HIDDEN);
+    }
     if (change_navigation || mode == TrackerPageState::Mode::Navigation) refresh_route_list();
     update_mode_buttons();
     if (state.bottom_bar)
@@ -3187,36 +3193,20 @@ void update_item_card()
         // KML, elevation and images remain in the existing on-demand preview.
         lv_obj_clear_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_pad_all(state.list_container, 0, 0);
-        auto* card = state.item_card = lv_btn_create(state.list_container);
-        lv_obj_set_width(card, LV_PCT(100));
-        lv_obj_set_height(card, 0);
-        lv_obj_set_flex_grow(card, 1);
-        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0xFFFCF5), 0);
-        lv_obj_set_style_border_color(card, lv_color_hex(0xE7C98F), 0);
-        lv_obj_set_style_border_width(card, 1, 0);
-        lv_obj_set_style_radius(card, 10, 0);
-        lv_obj_set_style_pad_all(card, page_profile().dense ? 5 : 8, 0);
-        auto label = [&](uint32_t background, bool muted)
-        {
-            auto* result = lv_label_create(card);
-            lv_obj_set_width(result, LV_PCT(100));
-            lv_label_set_long_mode(result, LV_LABEL_LONG_DOT);
-            lv_obj_set_style_text_font(result, muted ? ::ui::page_profile::resolve_caption_font() : ::ui::page_profile::resolve_body_font(), 0);
-            lv_obj_set_style_text_color(result, lv_color_hex(muted ? 0x416F65 : 0x6B4A1E), 0);
-            lv_obj_set_style_bg_color(result, lv_color_hex(background), 0);
-            lv_obj_set_style_bg_opa(result, LV_OPA_COVER, 0);
-            lv_obj_set_style_pad_all(result, 4, 0);
-            lv_obj_set_style_radius(result, 5, 0);
-            return result;
-        };
-        state.card_name = label(0xF6E6C8, false);
-        state.card_distance = label(0xE4EFEB, false);
-        state.card_location = label(0xE4EFEB, true);
-        lv_label_set_long_mode(state.card_location, LV_LABEL_LONG_SCROLL);
-        state.card_format = label(0xEEEDE7, true);
+        const auto view = item_card_view::create(state.list_container,
+                                                 ::ui::page_profile::resolve_body_font(), ::ui::page_profile::resolve_caption_font(),
+                                                 ::ui::page_profile::resolve_title_font(),
+                                                 page_profile().compact_touch_keyboard ? 36 : page_profile().control_button_height, page_profile().dense);
+        auto* card = state.item_card = view.root;
+        state.card_name = view.name;
+        state.card_distance = view.distance;
+        state.card_location = view.region;
+        state.card_format = view.format;
+        state.card_previous = view.previous;
+        state.card_counter = view.counter;
+        state.card_next = view.next;
+        state.card_actions = view.actions;
+        ::ui::i18n::set_label_text(lv_obj_get_child(view.actions, 0), "Actions");
         state.card_timer = lv_timer_create([](lv_timer_t*)
                                            { update_card_location(); },
                                            500, nullptr);
@@ -3230,35 +3220,18 @@ void update_item_card()
                                 if (direction == LV_DIR_TOP || direction == LV_DIR_LEFT) step_item_card(1);
                                 else if (direction == LV_DIR_BOTTOM || direction == LV_DIR_RIGHT) step_item_card(-1); },
             LV_EVENT_GESTURE, nullptr);
-        auto* controls = lv_obj_create(state.list_container);
-        lv_obj_set_size(controls, LV_PCT(100), page_profile().control_button_height);
-        lv_obj_clear_flag(controls, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_border_width(controls, 0, 0);
-        lv_obj_set_style_bg_opa(controls, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_pad_all(controls, 0, 0);
-        lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        auto navigation = [&](const char* symbol, int direction)
+        for (auto* button : {state.card_previous, state.card_next})
         {
-            auto* button = lv_btn_create(controls);
-            lv_obj_set_size(button, page_profile().control_button_height, page_profile().control_button_height);
-            auto* text = lv_label_create(button);
-            lv_label_set_text(text, symbol);
-            lv_obj_center(text);
-            apply_action_button(button, text);
+            const int direction = button == state.card_previous ? -1 : 1;
             lv_obj_add_event_cb(
                 button, [](lv_event_t* event)
                 { step_item_card(static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)))); },
                 LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(direction)));
-            return button;
-        };
-        state.card_previous = navigation(LV_SYMBOL_LEFT, -1);
-        state.card_counter = lv_label_create(controls);
-        lv_obj_set_width(state.card_counter, 0);
-        lv_obj_set_flex_grow(state.card_counter, 1);
-        lv_obj_set_style_text_align(state.card_counter, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_color(state.card_counter, lv_color_hex(kPanelTextMuted), 0);
-        state.card_next = navigation(LV_SYMBOL_RIGHT, 1);
+        }
+        lv_obj_add_event_cb(
+            state.card_actions, [](lv_event_t*)
+            { open_action_menu_modal(); },
+            LV_EVENT_CLICKED, nullptr);
     }
     const bool recording = state.mode == TrackerPageState::Mode::Record;
     const auto& names = recording ? s_record_names : s_route_names;
@@ -3270,6 +3243,7 @@ void update_item_card()
     if (index < 0)
     {
         selected.clear();
+        if (state.card_location_model) state.card_location_model->file.clear();
         lv_obj_set_user_data(state.item_card, nullptr);
         lv_obj_add_state(state.item_card, LV_STATE_DISABLED);
         ::ui::i18n::set_content_label_text_raw(state.card_name, (recording ? s_record_empty_text : s_route_empty_text).c_str());
@@ -3281,7 +3255,6 @@ void update_item_card()
         selected = names[static_cast<size_t>(index)];
         lv_obj_set_user_data(state.item_card, reinterpret_cast<void*>(static_cast<intptr_t>(index) + kListUserDataOffset));
         lv_obj_clear_state(state.item_card, LV_STATE_DISABLED);
-        ::ui::i18n::set_content_label_text_raw(state.card_name, selected.c_str());
         const auto extension = selected.find_last_of('.');
         std::string format = extension == std::string::npos ? "" : selected.substr(extension + 1);
         std::transform(format.begin(), format.end(), format.begin(), [](unsigned char ch)
@@ -3302,10 +3275,17 @@ void update_item_card()
         {
             state.card_location_model->file = path;
             double latitude = 0, longitude = 0;
-            const bool has_position = ::ui::support::readCardFileLocation(path.c_str(), latitude, longitude);
+            std::string title;
+            const bool has_position = ::ui::support::readCardFileLocation(path.c_str(), latitude, longitude, &title);
+            if (title.empty()) title = ::ui::support::cardFileTitleFallback(selected, ::ui::i18n::tr("Route"));
+            ::ui::i18n::set_content_label_text_raw(state.card_name, title.c_str());
             ::ui::support::updateCardLocation(state.card_location_model, has_position, latitude, longitude, state.card_location, state.card_distance);
         }
-        else if (!state.card_location_model) ::ui::support::updateCardLocation(state.card_location_model, false, 0, 0, state.card_location, state.card_distance);
+        else if (!state.card_location_model)
+        {
+            ::ui::i18n::set_content_label_text_raw(state.card_name, ::ui::support::cardFileTitleFallback(selected, ::ui::i18n::tr("Route")).c_str());
+            ::ui::support::updateCardLocation(state.card_location_model, false, 0, 0, state.card_location, state.card_distance);
+        }
         else update_card_location();
     }
     lv_label_set_text_fmt(state.card_counter, "%u / %u", index < 0 ? 0 : static_cast<unsigned>(index + 1), static_cast<unsigned>(names.size()));
@@ -3313,6 +3293,8 @@ void update_item_card()
     else lv_obj_clear_state(state.card_previous, LV_STATE_DISABLED);
     if (index < 0 || static_cast<size_t>(index + 1) >= names.size()) lv_obj_add_state(state.card_next, LV_STATE_DISABLED);
     else lv_obj_clear_state(state.card_next, LV_STATE_DISABLED);
+    if (index < 0) lv_obj_add_state(state.card_actions, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.card_actions, LV_STATE_DISABLED);
     if (!recording) update_route_status();
     if (state.focus_col == TrackerPageState::FocusColumn::Main && !is_any_modal_open())
     {

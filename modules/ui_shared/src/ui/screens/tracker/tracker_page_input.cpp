@@ -119,7 +119,7 @@ static size_t get_list_count(void* /*ctx*/)
 {
     auto& state = tracker::ui::g_tracker_state;
     size_t count = 0;
-    for (auto* control : {state.item_card, state.card_previous, state.card_next})
+    for (auto* control : {state.item_card, state.card_previous, state.card_next, state.card_actions})
     {
         if (is_focusable_list_child(control))
         {
@@ -137,7 +137,7 @@ static lv_obj_t* get_list_button(void* /*ctx*/, size_t index)
 {
     auto& state = tracker::ui::g_tracker_state;
     size_t current = 0;
-    for (auto* control : {state.item_card, state.card_previous, state.card_next})
+    for (auto* control : {state.item_card, state.card_previous, state.card_next, state.card_actions})
     {
         if (is_focusable_list_child(control))
         {
@@ -173,7 +173,7 @@ static bool handle_list_enter(void* /*ctx*/, lv_obj_t* focused)
         lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
         return true;
     }
-    if (focused == state.item_card || focused == state.card_previous || focused == state.card_next)
+    if (focused == state.item_card || focused == state.card_previous || focused == state.card_next || focused == state.card_actions)
     {
         lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
         return true;
