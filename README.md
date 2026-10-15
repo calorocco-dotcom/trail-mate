@@ -132,6 +132,11 @@ Previous/next navigation reuses the widgets; the current file's start position
 feeds the shared approximate-area and distance presentation. Route geometry,
 elevation and images are opened through the existing preview when needed.
 
+The card uses the full content width. **Menu** in the bottom bar selects
+**Tracks**, **Routes** or **Nav** on supported navigation targets. Contacts,
+Chat, Settings, Extensions and Network use the same bottom-menu components;
+Contacts and Chat expose their radio status through **Menu → Info**.
+
 ![Firmware Tracker card](docs/images/release-1.0.0/firmware-tracker-card-native.png)
 
 *Actual Wio native LVGL preview from CI with sample KML and simulated GPS. The

@@ -16,7 +16,7 @@ search. The terrain and satellite layers show only the zoom levels present in
 their respective packages.
 
 The current calculation runtime is available on supported PSRAM-capable Arduino
-ESP targets, including Wio L2. The Navigation filter is hidden when the runtime
+ESP targets, including Wio L2. The Nav menu choice is hidden when the runtime
 is unavailable. This integration currently calculates foot routes within one
 installed routing package. It does not offer car/bicycle profiles, runtime
 conditional-rule evaluation, or route stitching across separate graphs. Prepare
@@ -24,7 +24,7 @@ a connected regional graph in Center when a trip needs wider coverage.
 
 ## Create an origin-to-destination plan
 
-1. Open **Tracker**, choose **Navigation**, then **New navigation**.
+1. Open **Tracker → Menu → Nav**, then **New navigation**.
 2. Keep **Current location** as the origin, or choose another origin using the
    existing POI search. A current-location origin needs a valid GNSS fix when
    calculation starts.
@@ -51,7 +51,7 @@ Loading activates the route overlay and the existing route-following displays
 for current position, route progress, remaining distance, deviation and arrival.
 Stopping navigation does not delete the saved plan.
 
-Tracker keeps **Tracks**, **Routes** and **Navigation** separate. Tracks contains
+Tracker's bottom **Menu** keeps **Tracks**, **Routes** and **Nav** separate. Tracks contains
 recordings, Routes contains ordinary route files, and Navigation contains saved
 calculated plans. Each mode reuses a single card with previous/next controls.
 Route names come from KML when available; an internal revision filename is not
@@ -62,10 +62,13 @@ use the calculated result or route preview for route length.
 ## Use the Map taskbar
 
 The bottom bar keeps the zoom controls at the left. **Pos**, **Help**, **Team**
-and **Menu** appear at the right, in that order.
+and **Menu** appear at the right, in that order. **Team** is visible only while
+the device has joined a team with a valid team ID.
 
 **Menu** opens upward and contains contour visibility, map-layer selection,
-POI search, **Load navigation** and **Load track**. **Team** opens its own upward
+**Search**, **Load navigation** and **Load track**. **Map Layer** opens a second
+level with direct **OSM**, **Terrain** and **Satellite** choices, marking the
+current source. **Team** opens its own upward
 menu for member selection and member-track actions, making team operations
 accessible without entering the general tool menu. Only one menu is open at a
 time. Tap its button again or tap the map outside it to dismiss it. Long menus

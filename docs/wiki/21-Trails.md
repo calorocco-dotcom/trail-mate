@@ -99,7 +99,7 @@ images. Package installation depends on firmware capabilities, storage and the
 resources included in the package. A successful browser preview is not proof
 that every KML presentation feature can render on every embedded target.
 
-The Navigation filter adds locally calculated origin-to-destination foot routes
+**Tracker → Menu → Nav** adds locally calculated origin-to-destination foot routes
 on supported targets with routing data. It reuses the existing POI picker and
 saves KML plans separately from recordings and imported routes. See
 [[24. Offline Navigation and Map Controls]] for the complete device workflow.
