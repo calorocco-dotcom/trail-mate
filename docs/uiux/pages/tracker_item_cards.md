@@ -21,6 +21,12 @@ Clicking the card also opens its existing action menu. Touch gestures and
 keyboard selection remain available. The title has at most two lines; the
 region can scroll within its row.
 
+![Wio L2 Tracker route card](../../images/release-1.0.0/firmware-tracker-card-native.png)
+
+This full-page native LVGL capture uses the CI-built Wio L2 preview, sample KML
+and simulated GPS. No administrative map dataset is installed in the preview,
+so it shows an unknown region. It is not a physical-device screenshot.
+
 Title extraction shares the current selected-file read (at most 64 KiB) with
 first-position extraction. Its bounded XML workspace is transient PSRAM and is
 freed after the read. No per-route metadata cache or geometry collection is
@@ -31,3 +37,7 @@ against LVGL at 320×240, 480×222 and 240×320, checks control bounds and Actio
 and exercises title decoding, UTF-8 truncation, hash fallback and combined
 title/coordinate reads. The surrounding native page is a test scaffold, not a
 physical device capture. Physical acceptance of this revision is pending.
+
+The full-page native tests also exercise recording, KML document titles, Actions,
+previous/next selection and widget reuse on Pager, T-Deck and Wio L2. The shorter
+Pager recording card hides the format row to keep location and controls visible.
