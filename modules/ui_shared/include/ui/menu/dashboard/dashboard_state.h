@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/menu/dashboard/dashboard_style.h"
+#include <string>
 
 namespace ui::menu::dashboard
 {
@@ -44,6 +45,8 @@ struct RecentWidgetUi
     lv_obj_t* row_dots[2]{};
     lv_obj_t* row_names[2]{};
     lv_obj_t* row_previews[2]{};
+    std::string row_name_text[2];
+    std::string row_preview_text[2];
     lv_obj_t* row_badges[2]{};
     lv_obj_t* row_badge_labels[2]{};
     lv_obj_t* scan_track = nullptr;
