@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';import {createInterface} from 'node:rea
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {FrameDecoder,FRAME} from '../../site/device/src/hostlink.js';import {decodeManagement} from '../../site/device/src/management-protocol.js';import {decode,verifySigned,equal} from '../../site/geocaching/src/protocol.js';import {validateAuthorInfo} from '../../site/device/src/author-identity.js';
+import {decodeDeviceDraft,encodeDraftEdit} from '../../site/geocaching/src/device-draft.js';
 const allowed=new Set([0,1,2,3,32,33,34,35,36,37,38,64,65,66,71,72,73,74,75,76,77]),hex=value=>Buffer.from(value).toString('hex');
 export class GeocachingHardwareExchange{
  constructor({port,python,fingerprint,namePrefix,resumeDraftId=null,resumeBaseHash=null,calls=[],signedVersions=[],checkpointPath=null}){
@@ -60,6 +61,32 @@ export class GeocachingHardwareExchange{
  }
  async observe({code,body},value){
   if(code===1||code===2){const author=await validateAuthorInfo(value.slice(0,4));assert.equal(author.fingerprint,this.fingerprint,'Physical device author differs from acceptance baseline');this.author=author;}
+  if(code===65){
+   assert.ok(equal(value[0],body[0])&&Number.isInteger(value[2])&&value[2]>0&&value[2]<=32768);
+   const key='draft:'+hex(body[0]);let output=this.outputs.get(key);
+   if(!output){assert.equal(value[3],0);output={bytes:new Uint8Array(value[2]),generation:value[1],offset:0};this.outputs.set(key,output);}
+   assert.equal(value[2],output.bytes.length);assert.equal(BigInt(value[1]),BigInt(output.generation));assert.equal(value[3],output.offset);
+   output.bytes.set(value[4],output.offset);output.offset+=value[4].length;
+   if(output.offset===output.bytes.length){
+    const {id,authorKey,baseHash,generation,...fields}=decodeDeviceDraft(body[0],output.bytes);
+    assert.ok((authorKey===null||equal(authorKey,this.author.publicKey))&&fields.name.startsWith(this.namePrefix));
+    assert.equal(fields.latitudeE7,310000000);assert.equal(fields.longitudeE7,1210000000);
+    this.retainedInputs??=new Map();
+    // Reconstruct only the two planned fixture edits from the real readback.
+    // A sealed resume sends no chunks; never substitute zero-filled content or
+    // bypass the existing save guard just because the device reports sealed.
+    for(const edit of [{...fields,name:this.namePrefix+'-v2'},{...fields,state:2}]){
+     const source=encodeDraftEdit(id,edit,generation),hash=new Uint8Array(await crypto.subtle.digest('SHA-256',source));
+     this.retainedInputs.set(hex(hash),source);
+    }
+    this.outputs.delete(key);
+   }
+  }
+  if(code===32&&body[1]===2&&value[3]===1){
+   const row=this.transfers.get(hex(body[0])),source=this.retainedInputs?.get(hex(row.hash));
+   assert.ok(equal(value[0],body[0])&&value[2]===row.total&&source?.length===row.total,'Sealed upload is not an exact planned fixture edit');
+   row.content.set(source);row.offset=row.total;row.sealed=true;
+  }
   if(code===33){const row=this.transfers.get(hex(body[0]));row.content.set(body[2],body[1]);row.offset=Math.max(row.offset,body[1]+body[2].length);}
   if(code===35){const row=this.transfers.get(hex(body[0]));assert.equal(row.offset,row.total);assert.ok(equal(new Uint8Array(await crypto.subtle.digest('SHA-256',row.content)),row.hash));row.sealed=true;}
   if(code===66)this.drafts.add(hex(body[1]));
