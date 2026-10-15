@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "platform/ui/walkie_runtime.h"
 // LVGL 9 exposes callback/user-data getters but no event-filter getter.
 // Inspect the descriptor only to distinguish explicit page KEY contracts from
 // unrelated DELETE, draw and click callbacks.
@@ -103,6 +104,8 @@ bool s_pressed_consumed = false;
 bool s_release_pending = false;
 uint8_t s_i2c_failures = 0;
 uint32_t s_next_attach_ms = 0;
+uint8_t s_ptt_number = 0;
+lv_obj_t* s_ptt_screen = nullptr;
 std::shared_ptr<cpp_bus_driver::SoftwareI2c> s_xl9555_bus;
 std::shared_ptr<cpp_bus_driver::SoftwareI2c> s_tca8418_bus;
 std::unique_ptr<cpp_bus_driver::Xl95x5> s_xl9555;
@@ -535,6 +538,12 @@ void route_proxy_cb(lv_event_t* event)
 
 void reset_pressed_key()
 {
+    if (s_ptt_number != 0)
+    {
+        platform::ui::walkie::set_ptt(false);
+        s_ptt_number = 0;
+        s_ptt_screen = nullptr;
+    }
     if (s_keypad != nullptr)
     {
         lv_indev_reset(s_keypad, nullptr);
@@ -608,6 +617,14 @@ void keypad_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
     }
     if (!s_ready) return;
 
+    if (s_ptt_number != 0 &&
+        (!platform::ui::walkie::is_active() || s_ptt_screen != lv_screen_active()))
+    {
+        reset_pressed_key();
+        s_release_pending = false;
+        return;
+    }
+
     if (s_pressed_number != 0 &&
         (s_pressed_screen != lv_screen_active() ||
          (s_route_page != nullptr && s_route_page != find_page_key_target(lv_screen_active())) ||
@@ -638,6 +655,27 @@ void keypad_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
         if (valid) s_physical_down[event.number - 1U] = event.pressed;
         s_shift = s_physical_down[52];
         s_fn = s_physical_down[50] || s_physical_down[57];
+        // Walkie's PTT needs both physical edges, independent of LVGL's
+        // single-key repeat/click processing. Do not also activate Monitor.
+        if (valid && kKeyMap[event.number - 1U] == ' ' &&
+            (s_ptt_number != 0 || platform::ui::walkie::is_active()))
+        {
+            if (event.pressed && !duplicate && s_ptt_number == 0)
+            {
+                s_ptt_number = event.number;
+                s_ptt_screen = lv_screen_active();
+                platform::ui::walkie::set_ptt(true);
+                lv_display_trigger_activity(nullptr);
+                trail_mate_idf_note_user_activity();
+            }
+            else if (!event.pressed && s_ptt_number == event.number)
+            {
+                platform::ui::walkie::set_ptt(false);
+                s_ptt_number = 0;
+                s_ptt_screen = nullptr;
+            }
+            return;
+        }
         if (event.pressed && !duplicate)
         {
             const uint32_t key = translate_key(event.number);

@@ -277,5 +277,37 @@ int main()
     tap(21);
     assert(std::strlen(lv_textarea_get_text(textarea)) == before_overflow_tap + 1);
 
+    // PTT is a physical hold, never a repeated LVGL click on Monitor.
+    fresh_page(true);
+    button(app_g);
+    platform::ui::walkie::active = true;
+    edge(55, true);
+    assert(platform::ui::walkie::ptt && clicks == 0);
+    edge(55, false);
+    assert(!platform::ui::walkie::ptt && clicks == 0);
+    edge(55, true);
+    cpp_bus_driver::Tca8418::irq_flags = 8;
+    drain_fifo();
+    assert(!platform::ui::walkie::ptt);
+    read();
+    edge(55, true);
+    assert(platform::ui::walkie::ptt);
+    platform::ui::walkie::active = false;
+    read();
+    assert(!platform::ui::walkie::ptt);
+    read();
+    edge(55, false);
+    platform::ui::walkie::active = true;
+    edge(55, true);
+    assert(platform::ui::walkie::ptt);
+    fake::transfer_ok = false;
+    for (int i = 0; i < 3; ++i)
+    {
+        drain_fifo();
+        lv_tick_inc(kI2cFailureBackoffMs);
+    }
+    assert(!platform::ui::walkie::ptt && !s_ready);
+    fake::transfer_ok = true;
+    platform::ui::walkie::active = false;
     std::cout << "P4 keyboard: native click, focus, repeat, page routes and recovery passed\n";
 }

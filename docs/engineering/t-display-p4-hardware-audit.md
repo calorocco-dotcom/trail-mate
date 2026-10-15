@@ -78,6 +78,12 @@ test exercises absent, attached, disconnected and missing-adapter states against
 the production helper. An editor chooses its keyboard mode when it opens; reopen
 the editor after changing the expansion keyboard connection.
 
+The P4 adapter also forwards physical Space holds to active Walkie PTT, matching
+Pager's input contract. It consumes those edges instead of clicking Monitor and
+releases PTT on key-up, session/screen changes, FIFO overflow or persistent I2C
+failure. Real-LVGL adapter tests exercise these cancellation paths; they do not
+transmit RF. Walkie still uses the expansion keyboard for hold-to-talk input.
+
 1. Cold boot each panel variant repeatedly with and without the keyboard. Verify
    image, touch corners/rotation, minimum/maximum brightness, USB enumeration,
    and absence of spurious resets when SD/C6 start.
