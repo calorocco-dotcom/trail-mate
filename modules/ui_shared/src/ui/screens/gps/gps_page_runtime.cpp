@@ -11,6 +11,7 @@ using Projection = gps::ui::shell::Projection;
 #include "gps/kml/image_sources.h"
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/gps_runtime.h"
+#include "platform/ui/navigation_runtime.h"
 #include "platform/ui/route_storage.h"
 #include "platform/ui/team_ui_store_runtime.h"
 #include "platform/ui/tracker_runtime.h"
@@ -177,6 +178,9 @@ enum class MapControlAction : uint8_t
     PickLocation,
     CancelLocation,
     Search,
+    Menu,
+    Navigation,
+    Team,
 };
 
 const Host* s_host = nullptr;
@@ -218,6 +222,13 @@ lv_obj_t* s_map_layer_btn = nullptr;
 lv_obj_t* s_map_contour_btn = nullptr;
 lv_obj_t* s_map_help_btn = nullptr;
 lv_obj_t* s_map_tracker_btn = nullptr;
+lv_obj_t* s_map_menu_btn = nullptr;
+lv_obj_t* s_map_menu = nullptr;
+lv_obj_t* s_map_navigation_btn = nullptr;
+bool s_select_navigation = false;
+bool s_team_panel_visible = false;
+lv_obj_t* s_map_menu_panel = nullptr;
+lv_obj_t* s_map_team_btn = nullptr;
 lv_obj_t* s_map_altitude_panel = nullptr;
 lv_obj_t* s_map_altitude_label = nullptr;
 ::ui::widgets::route_elevation_profile::Widget s_route_elevation_profile;
@@ -267,7 +278,11 @@ uint32_t s_member_panel_last_ms = 0;
 void refresh_view();
 void root_key_event_cb(lv_event_t* e);
 void open_map_help_modal();
-void open_tracker_modal();
+void open_tracker_modal(bool navigation = false);
+void close_map_menu();
+void open_map_menu(bool team = false);
+void refresh_map_menu_labels();
+void on_map_control_clicked(lv_event_t* event);
 void add_map_controls_to_group(lv_group_t* group);
 void request_refresh_view();
 void consume_key_event(lv_event_t* e);
@@ -650,6 +665,11 @@ void clear_map_controls()
     s_map_contour_btn = nullptr;
     s_map_help_btn = nullptr;
     s_map_tracker_btn = nullptr;
+    s_map_menu_btn = s_map_menu = s_map_navigation_btn = nullptr;
+    s_select_navigation = false;
+    s_team_panel_visible = false;
+    s_map_menu_panel = nullptr;
+    s_map_team_btn = nullptr;
     s_map_altitude_panel = nullptr;
     s_map_altitude_label = nullptr;
     ::ui::widgets::route_elevation_profile::reset(s_route_elevation_profile);
@@ -1683,21 +1703,24 @@ void member_button_event_cb(lv_event_t* e)
     const uint32_t member_id = static_cast<uint32_t>(
         reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
     select_member(member_id);
+    close_map_menu();
 }
 
-lv_obj_t* create_member_button(const ::team::ui::TeamMemberUi& member)
+lv_obj_t* create_member_button(const ::team::ui::TeamMemberUi& member, lv_obj_t* parent = nullptr)
 {
-    if (!s_map_context_rail || !lv_obj_is_valid(s_map_context_rail))
+    if (!parent) parent = s_map_context_rail;
+    if (!parent || !lv_obj_is_valid(parent))
     {
         return nullptr;
     }
 
     const uint32_t member_id = member_id_for_button(member);
-    lv_obj_t* btn = create_map_control_button(s_map_context_rail,
+    lv_obj_t* btn = create_map_control_button(parent,
                                               kMapSideRailWidth - 10,
                                               "",
                                               MapControlAction::TeamMember);
     lv_obj_set_height(btn, kMapControlButtonHeight);
+    if (parent != s_map_context_rail) lv_obj_remove_event_cb(btn, on_map_control_clicked);
     lv_obj_set_style_pad_left(btn, 3, LV_PART_MAIN);
     lv_obj_set_style_pad_right(btn, 3, LV_PART_MAIN);
     lv_obj_add_event_cb(btn,
@@ -1837,58 +1860,17 @@ void sync_map_context_buttons(const ::ui::map::MapWorkspaceSnapshot& snapshot)
     }
 
     const bool show_route = route_context_available();
-    ::team::ui::TeamUiSnapshot team_snapshot;
-    const bool has_team_members = load_team_snapshot(team_snapshot) && !team_snapshot.members.empty();
-    const uint8_t next_mask = static_cast<uint8_t>((show_route ? 0x01 : 0x00) |
-                                                   (has_team_members ? 0x02 : 0x00));
-    const uint32_t now_ms = sys::millis_now();
+    const uint8_t next_mask = show_route ? 0x01 : 0x00;
     bool group_dirty = next_mask != s_map_context_mask;
 
     set_hidden(s_map_route_btn, !show_route);
     set_hidden(s_map_context_rail, next_mask == 0);
 
-    if (has_team_members)
-    {
-        const uint32_t hash = hash_member_list(team_snapshot);
-        const bool refresh_due = (now_ms - s_member_panel_last_ms) >= 2000U;
-        if (hash != s_member_list_hash ||
-            team_snapshot.members.size() != s_member_buttons.size() ||
-            refresh_due)
-        {
-            s_member_panel_last_ms = now_ms;
-            if (hash != s_member_list_hash ||
-                team_snapshot.members.size() != s_member_buttons.size())
-            {
-                clear_member_buttons();
-                s_member_buttons.reserve(team_snapshot.members.size());
-                s_member_button_ids.reserve(team_snapshot.members.size());
-                for (const auto& member : team_snapshot.members)
-                {
-                    const uint32_t member_id = member_id_for_button(member);
-                    lv_obj_t* btn = create_member_button(member);
-                    if (!btn)
-                    {
-                        continue;
-                    }
-                    s_member_buttons.push_back(btn);
-                    s_member_button_ids.push_back(member_id);
-                }
-                s_member_list_hash = hash;
-                group_dirty = true;
-            }
-        }
-
-        if (!member_exists(team_snapshot, s_selected_member_id))
-        {
-            s_selected_member_id = kInvalidMemberId;
-        }
-        update_member_button_states();
-    }
-    else if (!s_member_buttons.empty() || s_member_list_hash != 0)
+    // Team controls are built only when its taskbar menu is opened.
+    if (!s_member_buttons.empty() || s_member_list_hash != 0)
     {
         clear_member_buttons();
         s_member_list_hash = 0;
-        s_selected_member_id = kInvalidMemberId;
         group_dirty = true;
     }
 
@@ -1930,8 +1912,8 @@ void sync_map_control_labels(const ::ui::map::MapWorkspaceSnapshot& snapshot)
     sync_map_altitude_overlay();
 
     const auto layers = ::ui::widgets::map::current_layer_state();
-    set_button_label(s_map_layer_btn, compact_map_source_label(layers.map_source));
-    set_button_label(s_map_contour_btn, layers.contour_enabled ? "Ctr*" : "Ctr");
+    (void)layers;
+    refresh_map_menu_labels();
     sync_map_context_buttons(snapshot);
 
     char zoom_buf[8]{};
@@ -3534,9 +3516,9 @@ void close_tracker_modal()
     lv_obj_del(s_tracker_modal);
     s_tracker_modal = nullptr;
     rebuild_map_control_group();
-    if (app_g && s_map_tracker_btn && lv_obj_is_valid(s_map_tracker_btn))
+    if (app_g && s_map_menu_btn && lv_obj_is_valid(s_map_menu_btn))
     {
-        lv_group_focus_obj(s_map_tracker_btn);
+        lv_group_focus_obj(s_map_menu_btn);
     }
 }
 
@@ -3589,8 +3571,17 @@ void tracker_track_button_event_cb(lv_event_t* e)
     }
 
     const std::string path =
-        std::string(::platform::ui::tracker::track_dir()) + "/" + s_track_modal_names[index];
-    (void)load_map_track_file_impl(path.c_str(), true);
+        std::string(s_select_navigation ? ::platform::ui::navigation::directory() : ::platform::ui::tracker::track_dir()) + "/" + s_track_modal_names[index];
+    if (load_map_track_file_impl(path.c_str(), true) && s_select_navigation)
+    {
+        auto edit = app::appFacade().beginConfigEdit();
+        if (edit && path.size() < sizeof(edit.config().route_path))
+        {
+            edit.config().route_enabled = true;
+            std::strcpy(edit.config().route_path, path.c_str());
+            edit.commit(app::AppConfigChangeSet::route());
+        }
+    }
     close_tracker_modal();
 }
 
@@ -3624,7 +3615,7 @@ lv_obj_t* create_tracker_modal_button(lv_obj_t* parent,
     return btn;
 }
 
-void open_tracker_modal()
+void open_tracker_modal(bool navigation)
 {
     if (s_tracker_modal && lv_obj_is_valid(s_tracker_modal))
     {
@@ -3641,6 +3632,7 @@ void open_tracker_modal()
         request_refresh_view();
         return;
     }
+    s_select_navigation = navigation;
 
     s_tracker_modal = lv_obj_create(s_root);
     lv_obj_set_size(s_tracker_modal, LV_PCT(100), LV_PCT(100));
@@ -3674,7 +3666,7 @@ void open_tracker_modal()
     lv_obj_add_event_cb(panel, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, "Select Track");
+    ::ui::i18n::set_label_text(title, navigation ? "Load navigation" : "Load track");
     lv_obj_set_width(title, LV_PCT(100));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), LV_PART_MAIN);
@@ -3691,7 +3683,8 @@ void open_tracker_modal()
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
     s_track_modal_names.clear();
-    ::platform::ui::tracker::list_tracks(s_track_modal_names, 64);
+    if (navigation) ::platform::ui::navigation::list(s_track_modal_names, 64);
+    else ::platform::ui::tracker::list_tracks(s_track_modal_names, 64);
     std::sort(s_track_modal_names.begin(), s_track_modal_names.end());
 
     lv_obj_t* first_focus = nullptr;
@@ -3699,7 +3692,7 @@ void open_tracker_modal()
     if (s_track_modal_names.empty())
     {
         lv_obj_t* empty = lv_label_create(list);
-        lv_label_set_text(empty, "No track files");
+        ::ui::i18n::set_label_text(empty, navigation ? "No saved navigation" : "No track files");
         lv_obj_set_width(empty, LV_PCT(100));
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_font(empty, &lv_font_montserrat_12, LV_PART_MAIN);
@@ -3822,6 +3815,15 @@ void on_map_control_clicked(lv_event_t* e)
 
     const auto action = static_cast<MapControlAction>(
         reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (action == MapControlAction::Menu || action == MapControlAction::Team)
+    {
+        const bool team = action == MapControlAction::Team;
+        const bool was_same = s_map_menu && s_team_panel_visible == team;
+        close_map_menu();
+        if (!was_same) open_map_menu(team);
+        return;
+    }
+    close_map_menu();
     switch (action)
     {
     case MapControlAction::ZoomOut:
@@ -3854,6 +3856,13 @@ void on_map_control_clicked(lv_event_t* e)
     case MapControlAction::Tracker:
         open_tracker_modal();
         break;
+    case MapControlAction::Navigation:
+        open_tracker_modal(true);
+        break;
+    case MapControlAction::Team:
+        break;
+    case MapControlAction::Menu:
+        break;
     case MapControlAction::Help:
         request_open_map_help_modal();
         break;
@@ -3879,6 +3888,22 @@ void on_map_control_clicked(lv_event_t* e)
 
 bool handle_map_key(uint32_t key, lv_event_t* e)
 {
+    if (s_map_menu)
+    {
+        if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE || key == 'm' || key == 'M')
+        {
+            consume_key_event(e);
+            close_map_menu();
+            return true;
+        }
+        return false;
+    }
+    if (!s_location_request && (key == 'm' || key == 'M'))
+    {
+        consume_key_event(e);
+        open_map_menu();
+        return true;
+    }
     if (!s_location_request && (key == 'f' || key == 'F'))
     {
         const auto viewport = map_workspace_model().viewport();
@@ -4089,6 +4114,18 @@ void add_map_controls_to_group(lv_group_t* group)
     {
         return;
     }
+    if (s_map_menu)
+    {
+        if (s_map_menu_panel)
+            for (uint32_t index = 0; index < lv_obj_get_child_count(s_map_menu_panel); ++index)
+            {
+                auto* child = lv_obj_get_child(s_map_menu_panel, index);
+                if (lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) lv_group_add_obj(group, child);
+            }
+        if (s_map_team_btn) lv_group_add_obj(group, s_map_team_btn);
+        if (s_map_menu_btn) lv_group_add_obj(group, s_map_menu_btn);
+        return;
+    }
     if (s_map_pick_btn) lv_group_add_obj(group, s_map_pick_btn);
     if (s_map_cancel_btn) lv_group_add_obj(group, s_map_cancel_btn);
     if (s_map_zoom_out_btn) lv_group_add_obj(group, s_map_zoom_out_btn);
@@ -4099,6 +4136,9 @@ void add_map_controls_to_group(lv_group_t* group)
     if (s_map_contour_btn) lv_group_add_obj(group, s_map_contour_btn);
     if (s_map_tracker_btn) lv_group_add_obj(group, s_map_tracker_btn);
     if (s_map_help_btn) lv_group_add_obj(group, s_map_help_btn);
+    if (s_map_team_btn) lv_group_add_obj(group, s_map_team_btn);
+    if (s_map_menu_btn) lv_group_add_obj(group, s_map_menu_btn);
+    if (s_map_navigation_btn) lv_group_add_obj(group, s_map_navigation_btn);
     if (map_control_visible(s_map_route_btn)) lv_group_add_obj(group, s_map_route_btn);
     for (lv_obj_t* member_btn : s_member_buttons)
     {
@@ -4109,8 +4149,114 @@ void add_map_controls_to_group(lv_group_t* group)
     }
 }
 
+void close_map_menu()
+{
+    if (!s_map_menu) return;
+    auto* menu = s_map_menu;
+    s_map_menu = nullptr;
+    const bool team = s_team_panel_visible;
+    s_team_panel_visible = false;
+    s_map_menu_panel = nullptr;
+    s_map_search_btn = s_map_layer_btn = s_map_contour_btn = s_map_tracker_btn = s_map_navigation_btn = nullptr;
+    if (lv_obj_is_valid(menu)) lv_obj_del(menu);
+    rebuild_map_control_group();
+    if (app_g && map_control_visible(team ? s_map_team_btn : s_map_menu_btn)) lv_group_focus_obj(team ? s_map_team_btn : s_map_menu_btn);
+}
+
+void refresh_map_menu_labels()
+{
+    if (!s_map_menu) return;
+    const auto layers = ::ui::widgets::map::current_layer_state();
+    const char* source = layers.map_source == 1 ? "Terrain" : layers.map_source == 2 ? "Satellite"
+                                                                                     : "OSM";
+    const auto label = ::ui::i18n::format("Map layer: %s", ::ui::i18n::tr(source));
+    set_button_label(s_map_layer_btn, label.c_str());
+    set_button_label(s_map_contour_btn, ::ui::i18n::tr(layers.contour_enabled ? "Hide contours" : "Show contours"));
+}
+
+void open_map_menu(bool team)
+{
+    if (s_map_menu || s_location_request || !s_map_viewport || !lv_obj_is_valid(s_map_viewport)) return;
+    s_map_menu = lv_obj_create(s_map_viewport);
+    s_team_panel_visible = team;
+    lv_obj_set_size(s_map_menu, LV_PCT(100), LV_PCT(100));
+    lv_obj_add_flag(s_map_menu, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_style_pad_all(s_map_menu, 0, 0);
+    lv_obj_set_style_border_width(s_map_menu, 0, 0);
+    lv_obj_set_style_radius(s_map_menu, 0, 0);
+    lv_obj_set_style_bg_opa(s_map_menu, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(s_map_menu, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(
+        s_map_menu, [](lv_event_t* event)
+        { if (lv_event_get_target(event) == s_map_menu) close_map_menu(); },
+        LV_EVENT_CLICKED, nullptr);
+    auto* panel = s_map_menu_panel = lv_obj_create(s_map_menu);
+    const auto width = std::min<lv_coord_t>(228, lv_obj_get_width(s_map_viewport) - 8);
+    const auto available = std::max<lv_coord_t>(48, lv_obj_get_height(s_map_viewport) - kMapControlBarHeight - 8);
+    lv_obj_set_size(panel, width, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(panel, available, 0);
+    const lv_coord_t right = team ? std::min<lv_coord_t>(kMapControlButtonWideWidth + 6, std::max<lv_coord_t>(3, lv_obj_get_width(s_map_viewport) - width - 3)) : 3;
+    lv_obj_align(panel, LV_ALIGN_BOTTOM_RIGHT, -right, -(kMapControlBarHeight + 3));
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(panel, 3, 0);
+    lv_obj_set_style_pad_row(panel, 2, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF3DF), 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x8A6E43), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_radius(panel, 2, 0);
+    lv_obj_set_style_shadow_width(panel, 8, 0);
+    lv_obj_set_scroll_dir(panel, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
+    auto item = [&](const char* text, MapControlAction action)
+    {
+        auto* button = create_map_control_button(panel, width - 10, ::ui::i18n::tr(text), action);
+        lv_obj_set_height(button, ::ui::page_profile::current().large_touch_hitbox ? 44 : 28);
+        lv_obj_set_style_text_align(lv_obj_get_child(button, 0), LV_TEXT_ALIGN_LEFT, 0);
+        return button;
+    };
+    lv_obj_t* first = nullptr;
+    if (team)
+    {
+        ::team::ui::TeamUiSnapshot snapshot;
+        if (load_team_snapshot(snapshot))
+            for (const auto& member : snapshot.members)
+            {
+                auto* button = create_member_button(member, panel);
+                if (!button) continue;
+                lv_obj_set_width(button, width - 10);
+                lv_obj_set_height(button, ::ui::page_profile::current().large_touch_hitbox ? 44 : 28);
+                style_member_button_selected(button, member_id_for_button(member) == s_selected_member_id);
+                if (!first) first = button;
+            }
+        if (!first)
+        {
+            auto* empty = lv_label_create(panel);
+            ::ui::i18n::set_label_text(empty, "No team");
+        }
+    }
+    else
+    {
+        s_map_contour_btn = item("Show contours", MapControlAction::Contour);
+        s_map_layer_btn = item("Map layer: %s", MapControlAction::Layer);
+        s_map_search_btn = item("Search POI", MapControlAction::Search);
+        s_map_navigation_btn = item("Load navigation", MapControlAction::Navigation);
+        s_map_tracker_btn = item("Load track", MapControlAction::Tracker);
+        first = s_map_contour_btn;
+    }
+    refresh_map_menu_labels();
+    // Keep the taskbar above the transparent dismiss surface so Menu can
+    // toggle the popup and Pos/Help remain directly accessible.
+    lv_obj_move_foreground(s_map_control_bar);
+    rebuild_map_control_group();
+    if (app_g && first) lv_group_focus_obj(first);
+}
+
 void create_map_control_bar(lv_obj_t* viewport)
 {
+    const bool narrow = lv_obj_get_width(viewport) < 300;
+    const lv_coord_t small = narrow ? 20 : kMapControlButtonSmallWidth;
+    const lv_coord_t medium = narrow ? 28 : kMapControlButtonMediumWidth;
+    const lv_coord_t wide = narrow ? 34 : kMapControlButtonWideWidth;
     s_map_control_bar = lv_obj_create(viewport);
     lv_obj_set_size(s_map_control_bar, LV_PCT(100), kMapControlBarHeight);
     lv_obj_align(s_map_control_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -4129,20 +4275,18 @@ void create_map_control_bar(lv_obj_t* viewport)
     lv_obj_set_style_pad_top(s_map_control_bar, 2, 0);
     lv_obj_set_style_pad_bottom(s_map_control_bar, 2, 0);
     lv_obj_set_style_pad_column(s_map_control_bar, 3, 0);
-    // Fixed controls fit a 320px screen; route/team controls may extend it.
-    lv_obj_add_flag(s_map_control_bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(s_map_control_bar, LV_DIR_HOR);
+    lv_obj_clear_flag(s_map_control_bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(s_map_control_bar, LV_SCROLLBAR_MODE_OFF);
     bind_map_key_handler(s_map_control_bar);
 
     s_map_zoom_out_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonSmallWidth,
+        small,
         "-",
         MapControlAction::ZoomOut);
     s_map_zoom_label = lv_label_create(s_map_control_bar);
     lv_label_set_text(s_map_zoom_label, "Z7");
-    lv_obj_set_width(s_map_zoom_label, 24);
+    lv_obj_set_width(s_map_zoom_label, narrow ? 20 : 24);
     lv_obj_set_style_text_font(s_map_zoom_label, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_map_zoom_label, lv_color_hex(0x3E2B18), 0);
     lv_obj_set_style_text_align(s_map_zoom_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -4150,43 +4294,36 @@ void create_map_control_bar(lv_obj_t* viewport)
 
     s_map_zoom_in_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonSmallWidth,
+        small,
         "+",
         MapControlAction::ZoomIn);
+    auto* spacer = lv_obj_create(s_map_control_bar);
+    lv_obj_remove_style_all(spacer);
+    lv_obj_set_size(spacer, 0, 1);
+    lv_obj_set_flex_grow(spacer, 1);
+    lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE);
     s_map_center_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonMediumWidth,
+        medium,
         "Pos",
         MapControlAction::Center);
     if (s_location_request)
     {
-        s_map_pick_btn = create_map_control_button(s_map_control_bar, 66, ::ui::i18n::tr("Pick"), MapControlAction::PickLocation);
-        s_map_cancel_btn = create_map_control_button(s_map_control_bar, 66, ::ui::i18n::tr("Cancel"), MapControlAction::CancelLocation);
+        s_map_pick_btn = create_map_control_button(s_map_control_bar, narrow ? 54 : 66, ::ui::i18n::tr("Pick"), MapControlAction::PickLocation);
+        s_map_cancel_btn = create_map_control_button(s_map_control_bar, narrow ? 54 : 66, ::ui::i18n::tr("Cancel"), MapControlAction::CancelLocation);
         lv_obj_move_foreground(s_map_control_bar);
         return;
     }
-    s_map_layer_btn = create_map_control_button(
-        s_map_control_bar,
-        kMapControlButtonMediumWidth,
-        "OSM",
-        MapControlAction::Layer);
-    s_map_search_btn = create_map_control_button(
-        s_map_control_bar, kMapControlButtonSmallWidth, "F", MapControlAction::Search);
-    s_map_contour_btn = create_map_control_button(
-        s_map_control_bar,
-        kMapControlButtonContourWidth,
-        "Ctr",
-        MapControlAction::Contour);
-    s_map_tracker_btn = create_map_control_button(
-        s_map_control_bar,
-        tracker_button_width(),
-        tracker_button_label(),
-        MapControlAction::Tracker);
     s_map_help_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonSmallWidth,
-        help_key_label(),
+        wide,
+        ::ui::i18n::tr("Help"),
         MapControlAction::Help);
+    s_map_team_btn = create_map_control_button(
+        s_map_control_bar, wide, ::ui::i18n::tr("Team"), MapControlAction::Team);
+    s_map_menu_btn = create_map_control_button(
+        s_map_control_bar, wide, ::ui::i18n::tr("Menu"), MapControlAction::Menu);
     lv_obj_move_foreground(s_map_control_bar);
 }
 

@@ -199,8 +199,9 @@ int main(int argc, char** argv)
     assert(contains(gps_runtime, "show_team_overlay_notice"));
     assert(contains(gps_runtime, "route_context_available"));
     assert(contains(gps_runtime, "config.route_enabled && config.route_path[0] != '\\0'"));
-    assert(contains(gps_runtime, "load_team_snapshot(team_snapshot) && !team_snapshot.members.empty()"));
-    assert(contains(gps_runtime, "create_member_button(member)"));
+    assert(contains(gps_runtime, "open_map_menu(bool team)"));
+    assert(contains(gps_runtime, "load_team_snapshot(snapshot)"));
+    assert(contains(gps_runtime, "create_member_button(member, panel)"));
     assert(contains(gps_runtime, "select_member(member_id)"));
     assert(contains(gps_runtime, "lv_obj_align(s_map_notice_panel, LV_ALIGN_TOP_LEFT"));
     assert(contains(gps_runtime, "lv_obj_set_style_bg_opa(s_map_notice_panel, LV_OPA_70"));
@@ -251,7 +252,7 @@ int main(int argc, char** argv)
     assert(contains(gps_runtime, "request_open_map_help_modal"));
     assert(contains(gps_runtime, "lv_async_call(open_map_help_modal_async, nullptr)"));
     assert(contains(gps_runtime, "lv_obj_add_flag(s_map_help_modal, LV_OBJ_FLAG_IGNORE_LAYOUT)"));
-    assert(contains(gps_runtime, "lv_label_set_text(title, \"Map Help\")"));
+    assert(contains(gps_runtime, "::ui::i18n::set_label_text(title, \"Map Help\")"));
     assert(contains(gps_runtime, "add_help_row(\"WASD\", nullptr, \"Move map\")"));
     assert(contains(gps_runtime, "add_help_row(\"Q\", \"E\", \"Zoom map\")"));
     assert(contains(gps_runtime, "add_help_row(\"C\", \"Pos\", \"Center current position\")"));

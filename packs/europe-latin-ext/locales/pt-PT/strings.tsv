@@ -848,3 +848,30 @@ My position unknown	A minha posição é desconhecida
 No nodes	Sem nós
 Old position	Posição antiga
 Contacts unavailable	Contactos indisponíveis
+Map Help	Ajuda do mapa
+Map layer: %s	Camada do mapa: %s
+Show contours	Mostrar curvas de nível
+Hide contours	Ocultar curvas de nível
+Search POI	Pesquisar locais
+Load navigation	Carregar navegação
+Load track	Carregar percurso
+No saved navigation	Sem navegações guardadas
+Help	Ajuda
+Menu	Menu
+Navigation	Navegação
+New navigation	Nova navegação
+Current location	Localização atual
+Use current location	Usar localização atual
+Choose destination	Escolher destino
+Calculate route	Calcular percurso
+Save and preview	Guardar e pré-visualizar
+Calculating route...	A calcular percurso...
+Route ready: %.1f km	Percurso pronto: %.1f km
+No TMAP routing data	Sem dados de navegação TMAP
+No path found	Não foi encontrado um caminho
+Outside routing coverage	Fora da cobertura de percursos
+Navigation memory limit	Limite de memória da navegação
+Navigation unavailable	Navegação indisponível
+Origin	Origem
+Destination	Destino
+Tap the origin to search for a place	Toque na origem para procurar um local

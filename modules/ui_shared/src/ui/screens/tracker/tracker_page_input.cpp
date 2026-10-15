@@ -33,7 +33,7 @@ static lv_obj_t* get_top_back_button(void* /*ctx*/)
 
 static size_t get_filter_count(void* /*ctx*/)
 {
-    return 2;
+    return tracker::ui::g_tracker_state.mode_navigation_btn ? 3 : 2;
 }
 
 static lv_obj_t* get_filter_button(void* /*ctx*/, size_t index)
@@ -45,6 +45,8 @@ static lv_obj_t* get_filter_button(void* /*ctx*/, size_t index)
         return state.mode_record_btn;
     case 1:
         return state.mode_route_btn;
+    case 2:
+        return state.mode_navigation_btn;
     default:
         return nullptr;
     }
@@ -52,7 +54,7 @@ static lv_obj_t* get_filter_button(void* /*ctx*/, size_t index)
 
 static int get_preferred_filter_index(void* /*ctx*/)
 {
-    return tracker::ui::g_tracker_state.mode == tracker::ui::TrackerPageState::Mode::Record ? 0 : 1;
+    return static_cast<int>(tracker::ui::g_tracker_state.mode);
 }
 
 static bool is_focusable_list_child(lv_obj_t* obj)
@@ -97,7 +99,7 @@ static lv_obj_t* get_list_back_button(void* /*ctx*/)
 static bool include_start_stop_button()
 {
     auto& state = tracker::ui::g_tracker_state;
-    if (state.mode != tracker::ui::TrackerPageState::Mode::Record)
+    if (state.mode == tracker::ui::TrackerPageState::Mode::Route)
     {
         return false;
     }

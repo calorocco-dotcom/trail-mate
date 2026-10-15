@@ -848,3 +848,30 @@ My position unknown	本機位置未知
 No nodes	暫無節點
 Old position	舊位置
 Contacts unavailable	聯絡人暫不可用
+Map Help	地圖說明
+Map layer: %s	地圖圖層：%s
+Show contours	顯示等高線
+Hide contours	隱藏等高線
+Search POI	搜尋興趣點
+Load navigation	載入導航
+Load track	載入軌跡
+No saved navigation	尚無已儲存的導航
+Help	說明
+Menu	選單
+Navigation	導航
+New navigation	新增導航
+Current location	目前位置
+Use current location	使用目前位置
+Choose destination	選擇目的地
+Calculate route	計算路徑
+Save and preview	儲存並預覽
+Calculating route...	正在計算路徑…
+Route ready: %.1f km	路徑已就緒：%.1f 公里
+No TMAP routing data	沒有可用的 TMAP 路網資料
+No path found	未找到可通行路徑
+Outside routing coverage	超出路網涵蓋範圍
+Navigation memory limit	導航計算超出記憶體限額
+Navigation unavailable	導航暫時無法使用
+Origin	起始地
+Destination	目的地
+Tap the origin to search for a place	點選起始地可搜尋地名

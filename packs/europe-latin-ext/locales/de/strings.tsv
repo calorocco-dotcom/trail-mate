@@ -848,3 +848,30 @@ My position unknown	Eigene Position unbekannt
 No nodes	Keine Knoten
 Old position	Veraltete Position
 Contacts unavailable	Kontakte nicht verfügbar
+Map Help	Kartenhilfe
+Map layer: %s	Kartenebene: %s
+Show contours	Höhenlinien anzeigen
+Hide contours	Höhenlinien ausblenden
+Search POI	Orte suchen
+Load navigation	Navigation laden
+Load track	Track laden
+No saved navigation	Keine gespeicherte Navigation
+Help	Hilfe
+Menu	Menü
+Navigation	Navigation
+New navigation	Neue Navigation
+Current location	Aktueller Standort
+Use current location	Aktuellen Standort verwenden
+Choose destination	Ziel auswählen
+Calculate route	Route berechnen
+Save and preview	Speichern und ansehen
+Calculating route...	Route wird berechnet...
+Route ready: %.1f km	Route bereit: %.1f km
+No TMAP routing data	Keine TMAP-Routingdaten
+No path found	Kein Weg gefunden
+Outside routing coverage	Außerhalb der Routingabdeckung
+Navigation memory limit	Speichergrenze der Navigation erreicht
+Navigation unavailable	Navigation nicht verfügbar
+Origin	Startpunkt
+Destination	Ziel
+Tap the origin to search for a place	Startpunkt antippen, um einen Ort zu suchen

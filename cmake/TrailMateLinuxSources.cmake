@@ -517,6 +517,7 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
     # tracker
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_components.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_input.cpp"
+      "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_navigation_dialog.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_layout.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_runtime.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_shell.cpp"

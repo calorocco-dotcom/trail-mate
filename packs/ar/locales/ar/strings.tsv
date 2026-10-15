@@ -848,3 +848,30 @@ My position unknown	موقعي غير معروف
 No nodes	لا توجد عقد
 Old position	موقع قديم
 Contacts unavailable	جهات الاتصال غير متاحة
+Map Help	مساعدة الخريطة
+Map layer: %s	طبقة الخريطة: %s
+Show contours	إظهار خطوط الكنتور
+Hide contours	إخفاء خطوط الكنتور
+Search POI	البحث عن أماكن
+Load navigation	تحميل مسار الملاحة
+Load track	تحميل المسار المسجل
+No saved navigation	لا توجد ملاحة محفوظة
+Help	مساعدة
+Menu	القائمة
+Navigation	الملاحة
+New navigation	ملاحة جديدة
+Current location	الموقع الحالي
+Use current location	استخدام الموقع الحالي
+Choose destination	اختيار الوجهة
+Calculate route	حساب المسار
+Save and preview	حفظ ومعاينة
+Calculating route...	جارٍ حساب المسار...
+Route ready: %.1f km	المسار جاهز: %.1f كم
+No TMAP routing data	لا توجد بيانات توجيه TMAP
+No path found	لم يتم العثور على مسار
+Outside routing coverage	خارج تغطية التوجيه
+Navigation memory limit	تم بلوغ حد ذاكرة الملاحة
+Navigation unavailable	الملاحة غير متاحة
+Origin	نقطة البداية
+Destination	الوجهة
+Tap the origin to search for a place	اضغط على نقطة البداية للبحث عن مكان

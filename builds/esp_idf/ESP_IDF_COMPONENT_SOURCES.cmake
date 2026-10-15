@@ -340,6 +340,7 @@ set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/team/team_page_transfer_leader_action.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_components.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_input.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_navigation_dialog.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_layout.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_runtime.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_shell.cpp"

@@ -3,6 +3,7 @@
 #include "app/app_facade_access.h"
 #include "gps/kml/image_sources.h"
 #include "platform/ui/device_runtime.h"
+#include "platform/ui/navigation_runtime.h"
 #include "platform/ui/route_storage.h"
 #include "platform/ui/tracker_runtime.h"
 #include "platform/ui/wifi_runtime.h"
@@ -12,6 +13,7 @@
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/runtime/ui_feedback.h"
+#include "ui/screens/tracker/tracker_navigation_dialog.h"
 #include "ui/screens/tracker/tracker_page_input.h"
 #include "ui/screens/tracker/tracker_page_layout.h"
 #include "ui/screens/tracker/tracker_state.h"
@@ -175,6 +177,7 @@ lv_coord_t modal_button_width();
 lv_coord_t action_menu_button_height();
 lv_coord_t action_menu_row_gap();
 void update_record_status();
+void refresh_route_list();
 void update_start_stop_button();
 void update_record_page();
 void update_route_status();
@@ -229,6 +232,11 @@ lv_obj_t* create_list_item_button(const std::string& text, intptr_t user_data, b
 
 void on_back(void*)
 {
+    if (navigation_dialog::is_open())
+    {
+        navigation_dialog::close();
+        return;
+    }
     if (g_tracker_state.route_preview_help_modal)
     {
         close_route_preview_help_modal();
@@ -380,7 +388,7 @@ void modal_close(lv_obj_t*& modal_obj)
 
 bool is_any_modal_open()
 {
-    return g_tracker_state.del_confirm_modal != nullptr ||
+    return navigation_dialog::is_open() || g_tracker_state.del_confirm_modal != nullptr ||
            g_tracker_state.action_menu_modal != nullptr ||
            g_tracker_state.route_preview_help_modal != nullptr;
 }
@@ -490,7 +498,8 @@ void update_mode_buttons()
     auto& state = g_tracker_state;
     bool record_active = (state.mode == TrackerPageState::Mode::Record);
     style_mode_button(state.mode_record_btn, state.mode_record_label, record_active);
-    style_mode_button(state.mode_route_btn, state.mode_route_label, !record_active);
+    style_mode_button(state.mode_route_btn, state.mode_route_label, state.mode == TrackerPageState::Mode::Route);
+    style_mode_button(state.mode_navigation_btn, state.mode_navigation_label, state.mode == TrackerPageState::Mode::Navigation);
 }
 
 std::string path_basename(const std::string& path)
@@ -544,7 +553,7 @@ bool can_delete_selected_item()
 bool can_load_selected_route()
 {
     auto& state = g_tracker_state;
-    return state.mode == TrackerPageState::Mode::Route &&
+    return state.mode != TrackerPageState::Mode::Record &&
            state.active_route.empty() &&
            state.selected_route_idx >= 0 &&
            !state.selected_route.empty();
@@ -553,14 +562,14 @@ bool can_load_selected_route()
 bool can_unload_active_route()
 {
     auto& state = g_tracker_state;
-    return state.mode == TrackerPageState::Mode::Route &&
+    return state.mode != TrackerPageState::Mode::Record &&
            !state.active_route.empty();
 }
 
 bool can_preview_selected_route()
 {
     auto& state = g_tracker_state;
-    return state.mode == TrackerPageState::Mode::Route &&
+    return state.mode != TrackerPageState::Mode::Record &&
            state.selected_route_idx >= 0 &&
            state.selected_route_idx < static_cast<int>(s_route_names.size()) &&
            !state.selected_route.empty();
@@ -568,7 +577,7 @@ bool can_preview_selected_route()
 
 std::string route_path_for_name(const std::string& route_name)
 {
-    return std::string(platform::ui::route_storage::route_dir()) + "/" + route_name;
+    return std::string(g_tracker_state.mode == TrackerPageState::Mode::Navigation ? platform::ui::navigation::directory() : platform::ui::route_storage::route_dir()) + "/" + route_name;
 }
 
 bool repair_degraded_active_route_from_list()
@@ -2956,11 +2965,18 @@ void focus_main_panel()
 void set_mode(TrackerPageState::Mode mode)
 {
     auto& state = g_tracker_state;
+    const bool change_navigation = state.mode != mode && (mode == TrackerPageState::Mode::Navigation || state.mode == TrackerPageState::Mode::Navigation);
+    if (change_navigation)
+    {
+        state.selected_route.clear();
+        state.selected_route_idx = -1;
+    }
     state.mode = mode;
+    if (change_navigation || mode == TrackerPageState::Mode::Navigation) refresh_route_list();
     update_mode_buttons();
     if (state.bottom_bar)
     {
-        if (mode == TrackerPageState::Mode::Record)
+        if (mode != TrackerPageState::Mode::Route)
         {
             lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
         }
@@ -2971,7 +2987,7 @@ void set_mode(TrackerPageState::Mode mode)
     }
     if (state.start_stop_btn)
     {
-        if (mode == TrackerPageState::Mode::Record)
+        if (mode != TrackerPageState::Mode::Route)
         {
             lv_obj_clear_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
         }
@@ -2989,6 +3005,7 @@ void set_mode(TrackerPageState::Mode mode)
     }
     else
     {
+        update_start_stop_button();
         update_route_status();
         update_route_page();
     }
@@ -3020,9 +3037,10 @@ void update_start_stop_button()
     const bool recording = platform::ui::tracker::is_recording();
     if (state.start_stop_label)
     {
-        ::ui::i18n::set_label_text(state.start_stop_label, recording ? "Stop recording" : "Start recording");
+        ::ui::i18n::set_label_text(state.start_stop_label, state.mode == TrackerPageState::Mode::Navigation ? "New navigation" : recording ? "Stop recording"
+                                                                                                                                           : "Start recording");
         int text_width = 0;
-        for (const char* key : {"Start recording", "Stop recording"})
+        for (const char* key : {"Start recording", "Stop recording", "New navigation"})
         {
             lv_point_t size;
             lv_text_get_size(&size, ::ui::i18n::tr(key),
@@ -3268,7 +3286,8 @@ void update_item_card()
         std::string format = extension == std::string::npos ? "" : selected.substr(extension + 1);
         std::transform(format.begin(), format.end(), format.begin(), [](unsigned char ch)
                        { return static_cast<char>(std::toupper(ch)); });
-        const char* status = ::ui::i18n::tr(recording ? "Tracks" : "Routes");
+        const char* status = ::ui::i18n::tr(recording ? "Tracks" : state.mode == TrackerPageState::Mode::Navigation ? "Navigation"
+                                                                                                                    : "Routes");
         if (recording && platform::ui::tracker::is_recording())
         {
             std::string current;
@@ -3277,7 +3296,7 @@ void update_item_card()
         if (!recording && state.active_route == selected)
             ::ui::i18n::set_content_label_text_raw(state.card_format, ::ui::i18n::format("Active: %s", format.c_str()).c_str());
         else lv_label_set_text_fmt(state.card_format, "%s | %s", format.c_str(), status);
-        const auto path = std::string(recording ? platform::ui::tracker::track_dir() : platform::ui::route_storage::route_dir()) + "/" + selected;
+        const auto path = recording ? std::string(platform::ui::tracker::track_dir()) + "/" + selected : route_path_for_name(selected);
         if (!state.card_location_model) state.card_location_model = ::platform::memory::createPsram<::ui::support::CardLocation>();
         if (state.card_location_model && state.card_location_model->file != path)
         {
@@ -3382,7 +3401,7 @@ void update_route_status()
     lv_obj_set_style_text_color(state.status_label, lv_color_hex(kPanelTextMuted), 0);
     lv_obj_set_style_text_font(
         state.status_label, ::ui::fonts::localized_font(::ui::fonts::ui_chrome_font()), 0);
-    if (state.mode == TrackerPageState::Mode::Route)
+    if (state.mode != TrackerPageState::Mode::Record)
     {
         if (!state.active_route.empty())
         {
@@ -3414,23 +3433,23 @@ void refresh_route_list()
         return;
     }
     s_route_names.clear();
-    s_route_empty_text = ::ui::i18n::tr("No KML routes");
+    s_route_empty_text = ::ui::i18n::tr(state.mode == TrackerPageState::Mode::Navigation ? "No saved navigation" : "No KML routes");
 
     if (!platform::ui::device::sd_ready())
     {
         s_route_empty_text = ::ui::i18n::tr("No SD Card");
-        if (state.mode == TrackerPageState::Mode::Route)
+        if (state.mode != TrackerPageState::Mode::Record)
         {
             update_route_page();
         }
         return;
     }
 
-    const bool route_dir_ready = platform::ui::route_storage::list_routes(s_route_names, 64);
+    const bool route_dir_ready = state.mode == TrackerPageState::Mode::Navigation ? platform::ui::navigation::list(s_route_names, 64) : platform::ui::route_storage::list_routes(s_route_names, 64);
     if (!route_dir_ready)
     {
         s_route_empty_text = ::ui::i18n::tr("No routes folder");
-        if (state.mode == TrackerPageState::Mode::Route)
+        if (state.mode != TrackerPageState::Mode::Record)
         {
             update_route_page();
         }
@@ -3439,7 +3458,7 @@ void refresh_route_list()
 
     if (s_route_names.empty())
     {
-        if (state.mode == TrackerPageState::Mode::Route)
+        if (state.mode != TrackerPageState::Mode::Record)
         {
             update_route_page();
         }
@@ -3448,7 +3467,7 @@ void refresh_route_list()
 
     std::sort(s_route_names.begin(), s_route_names.end());
     (void)repair_degraded_active_route_from_list();
-    if (state.mode == TrackerPageState::Mode::Route)
+    if (state.mode != TrackerPageState::Mode::Record)
     {
         update_route_page();
     }
@@ -3479,6 +3498,17 @@ void sync_active_route_from_config()
 
 void on_start_stop_clicked(lv_event_t*)
 {
+    if (g_tracker_state.mode == TrackerPageState::Mode::Navigation)
+    {
+        navigation_dialog::open(g_tracker_state.root, [](const char* path, void*)
+                                {
+                auto& state = g_tracker_state;
+                state.selected_route = path_basename(path);
+                refresh_route_list();
+                update_route_page();
+                open_route_preview_page(); });
+        return;
+    }
     const bool was_recording = platform::ui::tracker::is_recording();
     if (was_recording)
     {
@@ -3512,6 +3542,14 @@ void on_mode_route_clicked(lv_event_t*)
 {
     set_mode(TrackerPageState::Mode::Route);
     focus_main_panel();
+}
+
+void on_mode_navigation(lv_event_t* event)
+{
+    const auto code = lv_event_get_code(event);
+    if (code == LV_EVENT_KEY && lv_event_get_key(event) != LV_KEY_ENTER) return;
+    set_mode(TrackerPageState::Mode::Navigation);
+    if (code != LV_EVENT_FOCUSED) focus_main_panel();
 }
 
 void on_list_item_clicked(lv_event_t* e)
@@ -3736,7 +3774,7 @@ void open_action_menu_modal()
         }
     };
 
-    if (state.mode == TrackerPageState::Mode::Route)
+    if (state.mode != TrackerPageState::Mode::Record)
     {
         if (can_load_selected_route())
         {
@@ -3909,7 +3947,7 @@ void on_route_load_clicked(lv_event_t*)
         }
         edit.config().route_enabled = true;
         char path[96];
-        snprintf(path, sizeof(path), "%s/%s", platform::ui::route_storage::route_dir(), state.active_route.c_str());
+        snprintf(path, sizeof(path), "%s", route_path_for_name(state.active_route).c_str());
         strncpy(edit.config().route_path, path, sizeof(edit.config().route_path) - 1);
         edit.config().route_path[sizeof(edit.config().route_path) - 1] = '\0';
         edit.commit(app::AppConfigChangeSet::route());
@@ -3999,7 +4037,7 @@ void on_del_confirm_clicked(lv_event_t*)
             state.selected_route_idx = -1;
             state.selected_route.clear();
             refresh_route_list();
-            if (state.mode == TrackerPageState::Mode::Route)
+            if (state.mode != TrackerPageState::Mode::Record)
             {
                 update_route_page();
             }
@@ -4057,7 +4095,7 @@ void open_delete_confirm_modal()
         }
         state.pending_delete_mode = TrackerPageState::Mode::Route;
         state.pending_delete_name = s_route_names[state.selected_route_idx].c_str();
-        std::string path = std::string(platform::ui::route_storage::route_dir()) + "/" + s_route_names[state.selected_route_idx];
+        std::string path = route_path_for_name(s_route_names[state.selected_route_idx]);
         state.pending_delete_path = path;
     }
 
@@ -4153,6 +4191,19 @@ void init_page(lv_obj_t* parent)
     ::ui::i18n::set_label_text(state.mode_route_label, "Routes");
     lv_obj_center(state.mode_route_label);
 
+    if (platform::ui::navigation::supported())
+    {
+        state.mode_navigation_btn = lv_btn_create(state.filter_panel);
+        lv_obj_set_size(state.mode_navigation_btn, LV_PCT(100), filter_button_height());
+        state.mode_navigation_label = lv_label_create(state.mode_navigation_btn);
+        lv_obj_add_style(state.mode_navigation_label, &s_btn_label, LV_PART_MAIN);
+        ::ui::i18n::set_label_text(state.mode_navigation_label, "Navigation");
+        lv_obj_center(state.mode_navigation_label);
+        lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_FOCUSED, nullptr);
+        lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_KEY, nullptr);
+    }
+
     state.status_label = lv_label_create(state.list_panel);
     ::ui::i18n::set_label_text(state.status_label, "Not recording");
     lv_obj_set_width(state.status_label, LV_PCT(100));
@@ -4194,6 +4245,7 @@ void init_page(lv_obj_t* parent)
 
 void cleanup_page()
 {
+    navigation_dialog::close();
     auto& state = g_tracker_state;
     if (state.card_timer)
     {

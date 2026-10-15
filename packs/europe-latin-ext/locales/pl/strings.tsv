@@ -848,3 +848,30 @@ My position unknown	Moja pozycja jest nieznana
 No nodes	Brak węzłów
 Old position	Nieaktualna pozycja
 Contacts unavailable	Kontakty niedostępne
+Map Help	Pomoc mapy
+Map layer: %s	Warstwa mapy: %s
+Show contours	Pokaż poziomice
+Hide contours	Ukryj poziomice
+Search POI	Szukaj miejsc
+Load navigation	Wczytaj nawigację
+Load track	Wczytaj ślad
+No saved navigation	Brak zapisanej nawigacji
+Help	Pomoc
+Menu	Menu
+Navigation	Nawigacja
+New navigation	Nowa nawigacja
+Current location	Bieżąca lokalizacja
+Use current location	Użyj bieżącej lokalizacji
+Choose destination	Wybierz cel
+Calculate route	Oblicz trasę
+Save and preview	Zapisz i wyświetl
+Calculating route...	Obliczanie trasy...
+Route ready: %.1f km	Trasa gotowa: %.1f km
+No TMAP routing data	Brak danych nawigacyjnych TMAP
+No path found	Nie znaleziono drogi
+Outside routing coverage	Poza zasięgiem sieci dróg
+Navigation memory limit	Osiągnięto limit pamięci nawigacji
+Navigation unavailable	Nawigacja niedostępna
+Origin	Początek
+Destination	Cel
+Tap the origin to search for a place	Dotknij początku, aby wyszukać miejsce

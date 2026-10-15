@@ -11,7 +11,7 @@
 
 namespace platform::esp::map_tiles
 {
-class SdTmapStorage final : public ui::map_tiles::TmapStorage
+class SdTmapStorage final : public ::ui::map_tiles::TmapStorage
 {
     using File = arduino_common::storage::SdRuntimeFile;
     using Dir = arduino_common::storage::SdRuntimeDir;
@@ -19,6 +19,7 @@ class SdTmapStorage final : public ui::map_tiles::TmapStorage
     using DirStatus = arduino_common::storage::SdDirReadStatus;
 
   public:
+    explicit SdTmapStorage(bool routing = false) : routing_(routing) {}
     // Optional caller-owned search cache. Allocate in PSRAM, never on stack.
     struct ReadCache
     {
@@ -48,7 +49,10 @@ class SdTmapStorage final : public ui::map_tiles::TmapStorage
     tmap::Status nextPackage(char* path, size_t capacity) override
     {
         if (ended_) return tmap::Status::Missing;
-        static constexpr const char* roots[] = {"/maps/tmap/osm", "/maps/tmap/terrain", "/maps/tmap/satellite", "/maps/tmap"};
+        static constexpr const char* raster_roots[] = {"/maps/tmap/osm", "/maps/tmap/terrain", "/maps/tmap/satellite", "/maps/tmap"};
+        static constexpr const char* routing_roots[] = {"/maps/navigation", "/maps/tmap/navigation", "/maps/tmap/osm", "/maps/tmap/terrain", "/maps/tmap/satellite", "/maps/tmap"};
+        const auto* roots = routing_ ? routing_roots : raster_roots;
+        const size_t root_count = routing_ ? sizeof(routing_roots) / sizeof(routing_roots[0]) : sizeof(raster_roots) / sizeof(raster_roots[0]);
         const auto* root = roots[root_index_];
         if (!directory_.is_open())
         {
@@ -56,7 +60,7 @@ class SdTmapStorage final : public ui::map_tiles::TmapStorage
             if (status == OpenStatus::Missing)
             {
                 path[0] = 0;
-                ended_ = ++root_index_ == sizeof(roots) / sizeof(roots[0]);
+                ended_ = ++root_index_ == root_count;
                 return ended_ ? tmap::Status::Missing : tmap::Status::More;
             }
             if (status == OpenStatus::Busy || status == OpenStatus::Unavailable) return tmap::Status::Busy;
@@ -74,7 +78,7 @@ class SdTmapStorage final : public ui::map_tiles::TmapStorage
             {
                 directory_.close();
                 path[0] = 0;
-                ended_ = ++root_index_ == sizeof(roots) / sizeof(roots[0]);
+                ended_ = ++root_index_ == root_count;
                 return ended_ ? tmap::Status::Missing : tmap::Status::More;
             }
             if (status != DirStatus::Entry) return tmap::Status::IoError;
@@ -346,6 +350,7 @@ class SdTmapStorage final : public ui::map_tiles::TmapStorage
     uint64_t raw_offset_ = 0, position_ = 0;
     size_t raw_bytes_ = 0, raw_completed_ = 0;
     bool position_valid_ = false;
+    bool routing_ = false;
     File file_;
     Dir directory_;
     uint64_t size_ = 0;

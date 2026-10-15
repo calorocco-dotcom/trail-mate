@@ -19,7 +19,8 @@ struct TrackerPageState
     enum class Mode : uint8_t
     {
         Record = 0,
-        Route = 1
+        Route = 1,
+        Navigation = 2
     };
     enum class FocusColumn : uint8_t
     {
@@ -49,6 +50,8 @@ struct TrackerPageState
     lv_obj_t* mode_record_label = nullptr;
     lv_obj_t* mode_route_btn = nullptr;
     lv_obj_t* mode_route_label = nullptr;
+    lv_obj_t* mode_navigation_btn = nullptr;
+    lv_obj_t* mode_navigation_label = nullptr;
 
     lv_obj_t* status_label = nullptr;
 

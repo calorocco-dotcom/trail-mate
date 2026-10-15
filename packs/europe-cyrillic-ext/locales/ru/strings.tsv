@@ -848,3 +848,30 @@ My position unknown	Моё положение неизвестно
 No nodes	Нет узлов
 Old position	Устаревшее положение
 Contacts unavailable	Контакты недоступны
+Map Help	Справка карты
+Map layer: %s	Слой карты: %s
+Show contours	Показать горизонтали
+Hide contours	Скрыть горизонтали
+Search POI	Поиск мест
+Load navigation	Загрузить навигацию
+Load track	Загрузить трек
+No saved navigation	Нет сохранённой навигации
+Help	Справка
+Menu	Меню
+Navigation	Навигация
+New navigation	Новый маршрут
+Current location	Текущее положение
+Use current location	Использовать текущее положение
+Choose destination	Выбрать пункт назначения
+Calculate route	Рассчитать маршрут
+Save and preview	Сохранить и просмотреть
+Calculating route...	Расчёт маршрута...
+Route ready: %.1f km	Маршрут готов: %.1f км
+No TMAP routing data	Нет данных маршрутизации TMAP
+No path found	Путь не найден
+Outside routing coverage	Вне покрытия дорожной сети
+Navigation memory limit	Достигнут лимит памяти навигации
+Navigation unavailable	Навигация недоступна
+Origin	Начальная точка
+Destination	Пункт назначения
+Tap the origin to search for a place	Нажмите на начальную точку для поиска места

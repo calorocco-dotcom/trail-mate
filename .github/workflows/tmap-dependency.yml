@@ -9,6 +9,7 @@ on:
       - 'modules/ui_map_runtime/**'
       - 'builds/esp_idf/**'
       - 'tests/tmap/**'
+      - 'tests/navigation/**'
       - '.github/workflows/tmap-dependency.yml'
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - 'modules/ui_map_runtime/**'
       - 'builds/esp_idf/**'
       - 'tests/tmap/**'
+      - 'tests/navigation/**'
       - '.github/workflows/tmap-dependency.yml'
 jobs:
   native:

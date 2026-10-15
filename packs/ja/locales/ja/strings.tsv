@@ -848,3 +848,30 @@ My position unknown	現在地不明
 No nodes	ノードなし
 Old position	古い位置情報
 Contacts unavailable	連絡先を利用できません
+Map Help	地図ヘルプ
+Map layer: %s	地図レイヤー: %s
+Show contours	等高線を表示
+Hide contours	等高線を非表示
+Search POI	周辺施設を検索
+Load navigation	ナビを読み込む
+Load track	軌跡を読み込む
+No saved navigation	保存済みのナビはありません
+Help	ヘルプ
+Menu	メニュー
+Navigation	ナビゲーション
+New navigation	新しいナビゲーション
+Current location	現在地
+Use current location	現在地を使う
+Choose destination	目的地を選択
+Calculate route	経路を計算
+Save and preview	保存してプレビュー
+Calculating route...	経路を計算中...
+Route ready: %.1f km	経路の準備完了：%.1f km
+No TMAP routing data	TMAPの経路データがありません
+No path found	経路が見つかりません
+Outside routing coverage	経路データの範囲外です
+Navigation memory limit	ナビゲーションのメモリ上限に達しました
+Navigation unavailable	ナビゲーションを利用できません
+Origin	出発地
+Destination	目的地
+Tap the origin to search for a place	出発地をタップして場所を検索
