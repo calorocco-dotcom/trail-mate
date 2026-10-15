@@ -414,7 +414,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION=$(iconv -f UTF-16LE -t UTF-8 CHANGELOG.md | awk -F'[][]' '/^## \[[0-9]/ {print $2; exit}')
+            VERSION=$(python3 scripts/read_changelog.py --version)
           fi
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
@@ -596,7 +596,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION=$(iconv -f UTF-16LE -t UTF-8 CHANGELOG.md | awk -F'[][]' '/^## \[[0-9]/ {print $2; exit}')
+            VERSION=$(python3 scripts/read_changelog.py --version)
           fi
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
@@ -687,7 +687,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION=$(iconv -f UTF-16LE -t UTF-8 CHANGELOG.md | awk -F'[][]' '/^## \[[0-9]/ {print $2; exit}')
+            VERSION=$(python3 scripts/read_changelog.py --version)
           fi
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
@@ -786,7 +786,7 @@ jobs:
       - name: Extract changelog entry
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          iconv -f UTF-16LE -t UTF-8 CHANGELOG.md > CHANGELOG.utf8.md
+          python3 scripts/read_changelog.py > CHANGELOG.utf8.md
           awk -v version="$VERSION" '
             $0 ~ "^## \\[" version "\\]" {capture=1}
             capture {

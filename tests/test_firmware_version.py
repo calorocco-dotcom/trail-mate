@@ -4,6 +4,9 @@ import ast
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +25,29 @@ exec(compile(ast.Module(body=functions, type_ignores=[]), "version-helpers", "ex
 
 
 class FirmwareVersionTest(unittest.TestCase):
+    def test_ci_reads_current_and_historical_changelog_encodings(self):
+        text = "# Changelog\n\n## [1.0.0] - Unreleased\n\nRelease notes.\n\n## [0.1.53-alpha]\nOlder notes.\n"
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "CHANGELOG.md"
+            for encoding in ("utf-8", "utf-8-sig", "utf-16"):
+                source.write_bytes(text.encode(encoding))
+                command = [sys.executable, str(ROOT / "scripts/read_changelog.py"), str(source)]
+                version = subprocess.check_output(command + ["--version"], text=True)
+                self.assertEqual(version.strip(), "1.0.0", encoding)
+                body = subprocess.check_output(command, text=True)
+                self.assertEqual(body, text, encoding)
+                with patch.dict(namespace, {"project_dir": folder}):
+                    self.assertEqual(namespace["extract_version_from_changelog"](), version.strip())
+
+    def test_ci_rejects_missing_version_before_building(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "CHANGELOG.md"
+            source.write_text("# No version heading\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/read_changelog.py"), str(source), "--version"],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no version heading", result.stderr)
+
     def test_local_build_uses_changelog(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(namespace["resolve_project_version"](),
