@@ -3326,7 +3326,8 @@ void on_map_help_modal_key(lv_event_t* e)
 
     if (key == LV_KEY_UP || key == 'w' || key == 'W')
     {
-        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        lv_obj_t* panel = s_map_help_modal ? lv_obj_get_child(s_map_help_modal, 0) : nullptr;
+        lv_obj_t* target = panel ? lv_obj_get_child(panel, 1) : nullptr;
         if (target && lv_obj_is_valid(target))
         {
             lv_obj_scroll_by(target, 0, 18, LV_ANIM_OFF);
@@ -3336,7 +3337,8 @@ void on_map_help_modal_key(lv_event_t* e)
     }
     if (key == LV_KEY_DOWN || key == 's' || key == 'S')
     {
-        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        lv_obj_t* panel = s_map_help_modal ? lv_obj_get_child(s_map_help_modal, 0) : nullptr;
+        lv_obj_t* target = panel ? lv_obj_get_child(panel, 1) : nullptr;
         if (target && lv_obj_is_valid(target))
         {
             lv_obj_scroll_by(target, 0, -18, LV_ANIM_OFF);
@@ -3372,7 +3374,8 @@ void open_map_help_modal()
     lv_obj_add_event_cb(s_map_help_modal, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
 
     lv_obj_t* panel = lv_obj_create(s_map_help_modal);
-    lv_obj_set_size(panel, 304, 176);
+    lv_obj_set_size(panel, std::min<lv_coord_t>(304, lv_obj_get_width(s_root) - 12),
+                    std::min<lv_coord_t>(216, lv_obj_get_height(s_root) - 12));
     lv_obj_center(panel);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF3DF), 0);
@@ -3385,17 +3388,48 @@ void open_map_help_modal()
     lv_obj_set_style_pad_top(panel, 5, 0);
     lv_obj_set_style_pad_bottom(panel, 5, 0);
     lv_obj_set_style_pad_row(panel, 2, 0);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(panel, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(panel, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
 
-    lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, "Map Help");
-    lv_obj_set_width(title, LV_PCT(100));
+    auto* header = lv_obj_create(panel);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_size(header, LV_PCT(100), 42);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* title = lv_label_create(header);
+    ::ui::i18n::set_label_text(title, "Map Help");
+    lv_obj_set_width(title, 0);
+    lv_obj_set_flex_grow(title, 1);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), 0);
+    auto* close = lv_btn_create(header);
+    lv_obj_set_size(close, 76, 40);
+    lv_obj_set_style_pad_hor(close, 6, 0);
+    lv_obj_set_style_bg_color(close, lv_color_hex(0xF8E6C3), 0);
+    lv_obj_set_style_border_color(close, lv_color_hex(0x8A6E43), 0);
+    lv_obj_set_style_border_width(close, 1, 0);
+    auto* close_label = lv_label_create(close);
+    ::ui::i18n::set_label_text(close_label, "Close");
+    lv_obj_set_style_text_font(close_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(close_label, lv_color_hex(0x25170D), 0);
+    lv_obj_center(close_label);
+    lv_obj_add_event_cb(
+        close, [](lv_event_t*)
+        { close_map_help_modal(); },
+        LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(close, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
+    auto* body = lv_obj_create(panel);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_size(body, LV_PCT(100), 0);
+    lv_obj_set_flex_grow(body, 1);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(body, 2, 0);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(body, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
 
     auto add_keycap = [](lv_obj_t* parent, const char* text, lv_coord_t width)
     {
@@ -3418,7 +3452,7 @@ void open_map_help_modal()
                             const char* secondary,
                             const char* description)
     {
-        lv_obj_t* row = lv_obj_create(panel);
+        lv_obj_t* row = lv_obj_create(body);
         lv_obj_set_size(row, LV_PCT(100), 15);
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row,
@@ -3483,8 +3517,9 @@ void open_map_help_modal()
     if (app_g)
     {
         lv_group_remove_all_objs(app_g);
-        lv_group_add_obj(app_g, panel);
-        lv_group_focus_obj(panel);
+        lv_group_add_obj(app_g, body);
+        lv_group_add_obj(app_g, close);
+        lv_group_focus_obj(body);
     }
 }
 
