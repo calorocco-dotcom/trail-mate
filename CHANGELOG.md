@@ -52,6 +52,7 @@ and no final release has been published.
 - Configuration controls show meanings, ranges and units instead of unexplained numbers. Brightness/audio use percentages and satellite masks have understandable choices.
 - Browser publication guides signing, network publication and device confirmation in one operation while preserving unconfirmed work.
 - Successive publications of a trail draft retain the same object ID and parent-version chain.
+- After durable device confirmation, browser trail synchronization also releases the exact staged attachment mapping, index and resources using their retained upload IDs, lengths and hashes, so successive package publications do not consume temporary slots indefinitely.
 - Offline map reading and search now consume the independent TMAP SDK v0.1.1, locked to commit `d8fc21550859bce1c242e6330b0e9ae2ddf9eecc`. PlatformIO and CMake share the release pin; the copied reader/search implementation is removed. Native contracts and real world/China map probes validate the integration.
 - Firmware Tracker and Geocaching reuse one browsable item card with previous/next navigation and on-demand details. Main cards show distance and an approximate administrative area through a shared map-search component instead of raw coordinates.
 - Tracker cards prefer KML route names over internal revision filenames, use readable fallbacks for unnamed shared routes, remove the redundant filename status, and place paging and localized Actions in the card footer.
