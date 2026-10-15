@@ -29,6 +29,9 @@ Other changes:
   while retaining the right-side dashboard area on both panels.
 - Restore opaque keyboard focus styling on transparent launcher cards, so
   selecting an app has visible feedback.
+- Let LVGL fit recent-activity names/previews using their pixel width and UTF-8
+  character boundaries. Remove byte-count truncation that could split Chinese
+  characters, and replace abrupt clipping with the label's ellipsis mode.
 
 Before, with the dashboard disabled:
 
