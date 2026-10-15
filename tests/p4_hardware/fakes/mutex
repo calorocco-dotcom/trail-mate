@@ -1,0 +1,15 @@
+#pragma once
+#include_next <mutex>
+// The legacy Windows MinGW host has no gthreads. These hardware simulations
+// are single-threaded; Linux CI uses the standard library's actual mutex.
+#if defined(_WIN32) && defined(__GLIBCXX__) && !defined(_GLIBCXX_HAS_GTHREADS)
+namespace std
+{
+class mutex
+{
+  public:
+    void lock() {}
+    void unlock() {}
+};
+} // namespace std
+#endif

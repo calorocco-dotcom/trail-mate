@@ -37,7 +37,7 @@ namespace
 
 constexpr const char* kTag = "t-display-p4-ui";
 constexpr int kDsiPhyLdoChannel = 3;
-constexpr int kDsiPhyLdoMv = 1830;
+constexpr int kDsiPhyLdoMv = 2500;
 constexpr uint32_t kLvglTimerPeriodMs = 1;
 constexpr int kLvglTaskStackSize = 12288;
 constexpr int kStartupBrightnessPercent = 10;
@@ -510,16 +510,19 @@ bool create_touch_indev()
         return false;
     }
 
+    if (!trail_mate_t_display_p4_display_lock(0)) return false;
     s_touch_indev = lv_indev_create();
     if (s_touch_indev == nullptr)
     {
         ESP_LOGE(kTag, "Failed to create LVGL touch input device");
+        trail_mate_t_display_p4_display_unlock();
         return false;
     }
 
     lv_indev_set_type(s_touch_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(s_touch_indev, touch_read_cb);
     lv_indev_set_display(s_touch_indev, s_display);
+    trail_mate_t_display_p4_display_unlock();
     ESP_LOGI(kTag, "LVGL touch input registered");
     return true;
 }

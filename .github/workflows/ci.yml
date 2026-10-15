@@ -588,6 +588,12 @@ jobs:
           cmake --build .codex-build/p4-keyboard --parallel 2
           ctest --test-dir .codex-build/p4-keyboard --output-on-failure
 
+      - name: Verify P4 hardware failures and recovery
+        run: |
+          cmake -S tests/p4_hardware -B .codex-build/p4-hardware -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build .codex-build/p4-hardware --parallel 2
+          ctest --test-dir .codex-build/p4-hardware --output-on-failure
+
   build_c6:
     needs: firmware_scope
     if: needs.firmware_scope.outputs.build == 'true'

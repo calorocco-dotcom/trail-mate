@@ -184,6 +184,7 @@ bool initialize_sensor()
         std::lock_guard<std::mutex> lock(g_runtime.mutex);
         g_runtime.sensor_ready = true;
         g_runtime.data.sensor_ready = true;
+        g_runtime.data.last_update_ms = now_ms();
     }
     ESP_LOGI(kTag, "ICM20948 + AK09916 ready on external I2C");
     return true;
@@ -196,7 +197,7 @@ bool ensure_sensor_ready()
         return true;
     }
     const uint32_t now = now_ms();
-    if (g_runtime.next_retry_ms != 0 && now < g_runtime.next_retry_ms)
+    if (g_runtime.next_retry_ms != 0 && static_cast<int32_t>(now - g_runtime.next_retry_ms) < 0)
     {
         return false;
     }
@@ -213,12 +214,14 @@ bool ensure_sensor_ready()
 
 bool sample_once()
 {
-    uint8_t sample[8] = {};
+    // ST1, X/Y/Z, temperature and ST2 occupy 0x10..0x18. Reading ST2
+    // terminates the AK09916 data read and releases its measurement latch.
+    uint8_t sample[9] = {};
     if (!read_registers(g_runtime.magnetometer, kAkStatus1, sample, sizeof(sample)))
     {
         return false;
     }
-    if ((sample[0] & 0x01U) == 0 || (sample[7] & 0x08U) != 0)
+    if ((sample[0] & 0x01U) == 0 || (sample[8] & 0x08U) != 0)
     {
         return false;
     }
@@ -256,10 +259,13 @@ void mark_stale_if_needed()
 {
     std::lock_guard<std::mutex> lock(g_runtime.mutex);
     g_runtime.data.sensor_ready = g_runtime.sensor_ready;
-    if (g_runtime.data.available &&
-        now_ms() - g_runtime.data.last_update_ms > kStaleAfterMs)
+    if (now_ms() - g_runtime.data.last_update_ms > kStaleAfterMs)
     {
         g_runtime.data.available = false;
+        // An unplugged or reset sensor must be probed again. Otherwise the
+        // cached readiness bit prevents recovery for the rest of the session.
+        g_runtime.sensor_ready = false;
+        g_runtime.data.sensor_ready = false;
     }
 }
 

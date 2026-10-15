@@ -37,6 +37,8 @@ extern "C"
                                                   const int16_t* pcm,
                                                   size_t sample_count);
     void trail_mate_t_display_p4_audio_set_volume_percent(uint8_t volume_percent);
+    bool trail_mate_t_display_p4_audio_set_input_gain(trail_mate_t_display_p4_audio_owner_t owner,
+                                                      float gain_db);
 
 #ifdef __cplusplus
 }

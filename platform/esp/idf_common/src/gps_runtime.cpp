@@ -641,21 +641,10 @@ void format_raw_diagnostic_sample(const GpsRxDiagnostics& diagnostics,
 }
 
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
-bool raw_diagnostic_sample_is_all_zero(const GpsRxDiagnostics& diagnostics)
+bool should_try_p4_factory_baud(bool attempted, uint8_t configured_baud,
+                                bool valid_nmea_seen, uint32_t elapsed_ms)
 {
-    if (diagnostics.raw_sample_len == 0)
-    {
-        return false;
-    }
-
-    for (std::size_t index = 0; index < diagnostics.raw_sample_len; ++index)
-    {
-        if (diagnostics.raw_sample[index] != 0)
-        {
-            return false;
-        }
-    }
-    return true;
+    return !attempted && configured_baud == 0 && !valid_nmea_seen && elapsed_ms >= kNoDataWarnMs;
 }
 #endif
 
@@ -785,6 +774,7 @@ void worker_task(void*)
     GpsRxDiagnostics rx_diagnostics{};
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
     bool p4_auto_baud_fallback_attempted = false;
+    const uint32_t p4_uart_started_ms = now_ms();
 #endif
 
     while (true)
@@ -855,15 +845,14 @@ void worker_task(void*)
                          static_cast<unsigned>(line_length),
                          raw_sample[0] != '\0' ? raw_sample : "none");
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
-                // A P4 receiver left at a factory L76K rate can look like a
-                // continuously low UART when sampled at the board's 115200
-                // default. Only auto-fallback when Settings requested the
-                // board default (baud=0); an explicit user selection always
-                // remains authoritative.
-                if (!p4_auto_baud_fallback_attempted &&
-                    s_runtime.receiver_init_config.baud == 0 &&
-                    raw_rx_bytes >= kRxBufferSize &&
-                    raw_diagnostic_sample_is_all_zero(rx_diagnostics))
+                // Factory L76K firmware can still use 9600. A baud mismatch
+                // can produce silence, zeroes, or arbitrary framing errors.
+                // Only try the factory rate before ANY valid NMEA was seen;
+                // losing reception later must not change a working baud.
+                if (should_try_p4_factory_baud(p4_auto_baud_fallback_attempted,
+                                               s_runtime.receiver_init_config.baud,
+                                               s_runtime.first_sentence_logged,
+                                               now - p4_uart_started_ms))
                 {
                     p4_auto_baud_fallback_attempted = true;
                     switch_to_p4_fallback_baud = true;
@@ -876,7 +865,7 @@ void worker_task(void*)
         if (switch_to_p4_fallback_baud)
         {
             ESP_LOGW(kTag,
-                     "P4 GNSS auto-baud fallback: raw UART stayed at 0x00 with Settings baud=Auto; cycling wake then trying %lu",
+                     "P4 GNSS auto-baud fallback: no valid NMEA with Settings baud=Auto; cycling wake then trying %lu",
                      static_cast<unsigned long>(kP4GnssFallbackBaud));
             teardown_uart_hardware();
             vTaskDelay(pdMS_TO_TICKS(kP4GnssFallbackWakeCycleMs));

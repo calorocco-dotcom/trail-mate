@@ -87,8 +87,8 @@ struct BoardProfile
     struct IoExpanderPins
     {
         int power_3v3 = -1;
-        int power_5v = -1;
-        int p4_vcca = -1;
+        int power_5v = -1; // Legacy name: XL9535 IO6 is AUDIO_POWER_EN on P4 V1.
+        int p4_vcca = -1;  // Legacy name: XL9535 IO10 is USB_PHY_POWER_EN on P4 V1.
         int screen_rst = -1;
         int touch_rst = -1;
         int touch_int = -1;
@@ -165,7 +165,7 @@ struct BoardProfile
     bool sd_enable_active_low = true;
     bool power_3v3_active_high = false;
     bool power_5v_active_high = true;
-    bool p4_vcca_active_high = false;
+    bool p4_vcca_active_high = true;
     bool gps_wake_active_high = true;
     bool c6_enable_active_high = true;
     bool c6_wake_active_high = true;
@@ -286,7 +286,7 @@ inline constexpr BoardProfile makeBoardProfile()
     profile.sd_enable_active_low = true;
     profile.power_3v3_active_high = false;
     profile.power_5v_active_high = true;
-    profile.p4_vcca_active_high = false;
+    profile.p4_vcca_active_high = true;
     profile.gps_wake_active_high = true;
     profile.c6_enable_active_high = true;
     profile.c6_wake_active_high = true;
