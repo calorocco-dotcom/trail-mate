@@ -1,5 +1,6 @@
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/arduino_common/storage/sd_file_lifetime.h"
+#include "platform/esp/arduino_common/storage/sd_transfer_policy.h"
 #include "platform/esp/common/storage/mount_io_state.h"
 #include "platform/esp/idf_common/hostlink_track_history_scan.h"
 #include <algorithm>
