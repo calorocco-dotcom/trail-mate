@@ -95,6 +95,7 @@ static bool handle_list_back_activate(void* /*ctx*/, lv_obj_t* back_button)
 static Adapter make_adapter()
 {
     Adapter adapter{};
+    adapter.filter_panel = g_state.filter_panel;
     adapter.get_key_target = get_key_target;
     adapter.get_top_back_button = get_top_back_button;
     adapter.get_filter_count = get_filter_count;

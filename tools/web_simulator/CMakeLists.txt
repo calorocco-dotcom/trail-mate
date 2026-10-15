@@ -137,6 +137,7 @@ target_sources(${PREVIEW_TARGET} PRIVATE ${CHAT_VIEW_SOURCES}
   "${UI}/components/two_pane_styles.cpp"
   "${UI}/components/two_pane_layout.cpp"
   "${UI}/components/two_pane_nav.cpp"
+  "${UI}/components/bottom_bar.cpp"
   "${UI}/components/floating_search_box.cpp"
   "${UI}/components/map_poi_search.cpp"
   "${UI}/components/air_status_footer.cpp"

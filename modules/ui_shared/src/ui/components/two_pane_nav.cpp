@@ -1,6 +1,7 @@
 #include "ui/components/two_pane_nav.h"
 
 #include "ui/app_runtime.h"
+#include "ui/page/page_profile.h"
 
 #include <cstdio>
 
@@ -202,6 +203,10 @@ static void set_column(Binding* binding, FocusColumn column)
     if (!binding)
     {
         return;
+    }
+    if (column == FocusColumn::List && binding->menu.is_open())
+    {
+        binding->menu.close();
     }
     if (binding->column == column)
     {
@@ -448,6 +453,11 @@ static bool activate_list_button(Binding* binding, lv_obj_t* obj)
 static void bind_filter_column(Binding* binding)
 {
     if (!binding || !binding->group) return;
+    if (binding->adapter.filter_panel && !binding->menu.is_open())
+    {
+        binding->menu.open();
+        return;
+    }
 
     lv_group_focus_freeze(binding->group, true);
     clear_managed_focus_states(binding);
@@ -461,6 +471,8 @@ static void bind_filter_column(Binding* binding)
     {
         group_add_if_visible(binding, get_filter_button(binding, index));
     }
+    group_add_if_visible(binding, binding->info_button);
+    group_add_if_visible(binding, binding->menu.button());
 
     add_top_back(binding, binding->adapter.filter_top_back_placement, BackPlacement::Trailing);
     lv_group_focus_freeze(binding->group, false);
@@ -517,6 +529,7 @@ static void bind_list_column(Binding* binding)
     }
 
     add_top_back(binding, binding->adapter.list_top_back_placement, BackPlacement::Trailing);
+    group_add_if_visible(binding, binding->menu.button());
     lv_group_focus_freeze(binding->group, false);
 
     lv_obj_t* target = nullptr;
@@ -569,12 +582,78 @@ static void rebind_by_column(Binding* binding)
     }
 }
 
+static void menu_changed(void* context, bool open)
+{
+    auto* binding = static_cast<Binding*>(context);
+    if (!binding_alive(binding)) return;
+    binding->column = open ? FocusColumn::Filter : FocusColumn::List;
+    notify_column_changed(binding);
+    rebind_by_column(binding);
+}
+
+static void menu_item_clicked(lv_event_t* event)
+{
+    auto* binding = static_cast<Binding*>(lv_event_get_user_data(event));
+    if (!binding_alive(binding) || !binding->menu.is_open()) return;
+    auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(event));
+    if (!activate_filter_button(binding, target)) binding->menu.close();
+}
+
+static void info_back_clicked(lv_event_t* event)
+{
+    auto* binding = static_cast<Binding*>(lv_event_get_user_data(event));
+    binding->menu.back();
+}
+
+static void info_clicked(lv_event_t* event)
+{
+    auto* binding = static_cast<Binding*>(lv_event_get_user_data(event));
+    if (!binding_alive(binding) || !binding->adapter.build_info) return;
+    auto* panel = lv_obj_create(get_key_target(binding));
+    auto* back = bottom_bar::add_button(panel, "Back", info_back_clicked, binding);
+    lv_obj_set_height(back, ::ui::page_profile::current().filter_button_height);
+    binding->adapter.build_info(panel);
+    binding->menu.show_submenu(panel);
+    lv_group_remove_all_objs(binding->group);
+    lv_group_add_obj(binding->group, back);
+    lv_group_focus_obj(back);
+}
+
+static void init_menu(Binding* binding)
+{
+    if (!binding->adapter.filter_panel) return;
+    binding->menu_bar = binding->adapter.bottom_bar;
+    binding->owns_menu_bar = !binding->menu_bar;
+    if (!binding->menu_bar) binding->menu_bar = bottom_bar::create(get_key_target(binding));
+    auto* button = bottom_bar::add_button(binding->menu_bar, "Menu");
+    attach_key_handler(binding, button);
+    auto* panel = binding->adapter.filter_panel;
+    const size_t count = get_filter_count(binding);
+    for (size_t index = 0; index < count; ++index)
+    {
+        if (auto* item = get_filter_button(binding, index))
+            lv_obj_add_event_cb(item, menu_item_clicked, LV_EVENT_CLICKED, binding);
+    }
+    if (binding->adapter.build_info)
+    {
+        binding->info_button = bottom_bar::add_button(panel, "Info", info_clicked, binding);
+        lv_obj_set_height(binding->info_button, ::ui::page_profile::current().filter_button_height);
+        attach_key_handler(binding, binding->info_button);
+    }
+    binding->menu.init(get_key_target(binding), button, panel, menu_changed, binding);
+}
+
 static void root_key_event_cb(lv_event_t* e)
 {
     auto* binding = static_cast<Binding*>(lv_event_get_user_data(e));
     if (!binding_alive(binding)) return;
 
     const uint32_t key = lv_event_get_key(e);
+    if (binding->adapter.filter_panel && (key == 'm' || key == 'M'))
+    {
+        binding->menu.toggle();
+        return;
+    }
     if (key == LV_KEY_BACKSPACE || key == LV_KEY_ESC)
     {
         if (lv_obj_t* back = get_top_back_button(binding))
@@ -588,6 +667,11 @@ static void root_key_event_cb(lv_event_t* e)
 
     lv_obj_t* focused = binding->group ? lv_group_get_focused(binding->group) : nullptr;
     if (!focused) return;
+    if (focused == binding->menu.button() || focused == binding->info_button)
+    {
+        lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
+        return;
+    }
 
     if (binding->column == FocusColumn::Filter)
     {
@@ -723,6 +807,8 @@ void init(Binding* binding, const Adapter& adapter)
     binding->encoder = find_encoder_indev();
     binding->column = FocusColumn::Filter;
     binding->bound = true;
+    init_menu(binding);
+    if (adapter.filter_panel) binding->column = FocusColumn::List;
 
     set_default_group(nullptr);
     set_default_group(binding->group);
@@ -745,6 +831,14 @@ void init(Binding* binding, const Adapter& adapter)
 void cleanup(Binding* binding)
 {
     if (!binding || !binding->bound) return;
+    auto* menu_button = binding->menu.button();
+    binding->menu.reset();
+    if (is_valid(menu_button)) lv_obj_del(menu_button);
+    if (is_valid(binding->info_button)) lv_obj_del(binding->info_button);
+    binding->info_button = nullptr;
+    if (binding->owns_menu_bar && is_valid(binding->menu_bar)) lv_obj_del(binding->menu_bar);
+    binding->menu_bar = nullptr;
+    binding->owns_menu_bar = false;
 
     if (binding->group)
     {
@@ -767,6 +861,7 @@ void cleanup(Binding* binding)
 void on_ui_refreshed(Binding* binding)
 {
     if (!binding_alive(binding) || !binding->group) return;
+    if (binding->menu.in_submenu()) return;
     lv_group_set_editing(binding->group, false);
     rebind_by_column(binding);
 }

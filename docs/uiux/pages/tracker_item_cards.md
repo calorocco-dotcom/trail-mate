@@ -3,6 +3,11 @@
 Tracker uses one reusable card for Tracks, Routes and Navigation. It retains the
 filename index but reads display metadata only for the selected file.
 
+Tracks, Routes and the compact localized `Nav` choice are in the shared bottom
+Menu. The card uses the full content width. Recording actions share that bar;
+Menu remains available in Routes. Navigation forms and details keep full labels.
+See [the shared component design](../components/bottom_bar.md).
+
 The title uses the KML Document name, falling back to the first named Placemark.
 XML entities, namespace prefixes and CDATA are supported. Empty names fall back
 to the filename without its extension. Installed shared assets use

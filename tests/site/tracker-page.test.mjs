@@ -9,13 +9,20 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   runtime._native_init(device==='pager'?0:1);
   const tick=()=>{for(let i=0;i<8;i++)runtime._native_tick(50);};
   const snapshot=()=>JSON.parse(runtime.UTF8ToString(runtime._native_snapshot()));
-  const click=text=>{const button=snapshot().find(item=>item.button&&item.text===text);assert.ok(button,`${device}: missing ${text}`);runtime._native_activate(button.id);tick();};
+  const click=text=>{
+    if(['Tracks','Routes','Nav'].includes(text)&&!snapshot().some(item=>item.button&&item.text===text)) {
+      const menu=snapshot().find(item=>item.button&&item.text==='Menu');
+      assert.ok(menu,`${device}: category menu remains available`);runtime._native_activate(menu.id);tick();
+    }
+    const button=snapshot().find(item=>item.button&&item.text===text);assert.ok(button,`${device}: missing ${text}`);runtime._native_activate(button.id);tick();
+  };
   runtime._native_open_page(14);tick();
   assert.ok(snapshot().some(item=>item.text==='No tracks yet'));
   assert.ok(!snapshot().some(item=>item.text==='Back'));
   const action=snapshot().find(item=>item.button&&item.text==='Start recording');
   assert.ok(action);
-  assert.ok(action.x+action.w>=(device==='pager'?480:320)-8,'Primary action aligns to content right edge');
+  const menu=snapshot().find(item=>item.button&&item.text==='Menu');
+  assert.ok(menu&&action.x+action.w<=menu.x,'Primary action leaves room for the right-aligned category menu');
   click('Start recording');
   assert.ok(snapshot().some(item=>item.text==='Recording'));
   const stop=snapshot().find(item=>item.button&&item.text==='Stop recording');

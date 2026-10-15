@@ -192,6 +192,8 @@ static void on_column_changed(void* /*ctx*/, NavFocusColumn column)
 static Adapter make_adapter()
 {
     Adapter adapter{};
+    adapter.filter_panel = tracker::ui::g_tracker_state.filter_panel;
+    adapter.bottom_bar = tracker::ui::g_tracker_state.bottom_bar;
     adapter.is_alive = is_alive;
     adapter.get_key_target = get_key_target;
     adapter.get_top_back_button = get_top_back_button;

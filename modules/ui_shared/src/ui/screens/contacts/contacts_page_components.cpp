@@ -1087,6 +1087,11 @@ static void apply_filter_panel_visibility()
     {
         return;
     }
+    if (lv_obj_has_flag(g_contacts_state.filter_panel, LV_OBJ_FLAG_IGNORE_LAYOUT))
+    {
+        contacts_input_on_ui_refreshed();
+        return;
+    }
     if (g_contacts_state.filter_panel_visible)
     {
         lv_obj_clear_flag(g_contacts_state.filter_panel, LV_OBJ_FLAG_HIDDEN);
@@ -1100,9 +1105,9 @@ static void apply_filter_panel_visibility()
 
 static void toggle_filter_panel_visibility()
 {
-    g_contacts_state.filter_panel_visible = !g_contacts_state.filter_panel_visible;
-    apply_filter_panel_visibility();
-    contacts_focus_to_list();
+    if (g_contacts_state.filter_panel && lv_obj_has_flag(g_contacts_state.filter_panel, LV_OBJ_FLAG_HIDDEN))
+        contacts_focus_to_filter();
+    else contacts_focus_to_list();
 }
 
 // ---------------- Panel creation (public API) ----------------
@@ -4015,7 +4020,6 @@ static void refresh_node_card_ui()
     if (state.card_index + 1 >= state.card_entries.size()) lv_obj_add_state(state.next_btn, LV_STATE_DISABLED);
     else lv_obj_clear_state(state.next_btn, LV_STATE_DISABLED);
     refresh_filter_checked_state();
-    ::ui::components::air_status_footer::refresh(state.air_status_footer);
     state.rendered_data_revision = state.contacts_data_revision;
     if (created) contacts_input_on_ui_refreshed();
 }
@@ -4083,7 +4087,6 @@ void refresh_ui()
     {
         lv_obj_clear_flag(g_contacts_state.sub_container, LV_OBJ_FLAG_SCROLLABLE);
     }
-    ::ui::components::air_status_footer::refresh(g_contacts_state.air_status_footer);
 
     bool team_available = is_team_available() && chat_support::supports_team_chat();
     const bool reticulum_profile = uses_reticulum_filter_profile();

@@ -5,6 +5,7 @@
 
 #include "ui/screens/contacts/contacts_page_input.h"
 
+#include "ui/components/air_status_footer.h"
 #include "ui/components/two_pane_nav.h"
 #include "ui/screens/contacts/contacts_filter_profile.h"
 #include "ui/screens/contacts/contacts_page_components.h"
@@ -221,6 +222,8 @@ static bool handle_list_enter(void* /*ctx*/, lv_obj_t* focused)
 static Adapter make_adapter()
 {
     Adapter adapter{};
+    adapter.filter_panel = contacts::ui::g_contacts_state.filter_panel;
+    adapter.build_info = ::ui::components::air_status_footer::populate_info;
     adapter.get_key_target = get_key_target;
     adapter.get_top_back_button = get_top_back_button;
     adapter.get_filter_count = get_filter_count;

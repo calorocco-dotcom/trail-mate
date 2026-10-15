@@ -21,3 +21,10 @@ target_include_directories(tracker_card_view_contract PRIVATE ${REPO}/tests/cont
 target_link_libraries(tracker_card_view_contract PRIVATE ${LVGL_LIBRARY})
 enable_testing()
 add_test(NAME tracker_card_view_contract COMMAND tracker_card_view_contract)
+add_executable(bottom_bar_contract test_bottom_bar.cpp
+    ${REPO}/modules/ui_shared/src/ui/components/bottom_bar.cpp
+    ${REPO}/modules/ui_shared/src/ui/components/two_pane_nav.cpp)
+target_include_directories(bottom_bar_contract PRIVATE ${REPO}/modules/ui_shared/include ${LVGL_DIR} ${REPO}/tests/contacts_card_view)
+target_compile_definitions(bottom_bar_contract PRIVATE LV_CONF_INCLUDE_SIMPLE)
+target_link_libraries(bottom_bar_contract PRIVATE ${LVGL_LIBRARY})
+add_test(NAME bottom_bar_contract COMMAND bottom_bar_contract)

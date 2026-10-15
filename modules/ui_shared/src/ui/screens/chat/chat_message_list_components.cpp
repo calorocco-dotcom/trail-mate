@@ -49,11 +49,9 @@ static bool show_second_column_back()
 
 static bool use_group_navigation()
 {
-#if defined(USING_INPUT_DEV_TOUCHPAD)
-    return false;
-#else
+    // The shared controller routes both pointer and hardware input. All targets
+    // must create the bottom menu, including touchpad-only products.
     return true;
-#endif
 }
 } // namespace
 
@@ -404,7 +402,6 @@ ChatMessageListScreen::ChatMessageListScreen(lv_obj_t* parent)
     direct_btn_ = w.direct_btn;
     broadcast_btn_ = w.broadcast_btn;
     team_btn_ = w.team_btn;
-    air_status_footer_ = w.air_status_footer;
 
     // ---------- Styles ----------
     chat::ui::message_list::styles::apply_root_container(container_);
@@ -707,7 +704,7 @@ void ChatMessageListScreen::updateBatteryFromBoard()
     {
         return;
     }
-    ::ui::components::air_status_footer::refresh(air_status_footer_);
+    ui_update_top_bar_battery(top_bar_);
 }
 
 bool ChatMessageListScreen::searchActive() const
@@ -796,6 +793,11 @@ void ChatMessageListScreen::applyFilterPanelVisibility()
     {
         return;
     }
+    if (lv_obj_has_flag(filter_panel_, LV_OBJ_FLAG_IGNORE_LAYOUT))
+    {
+        chat::ui::message_list::input::on_ui_refreshed(&input_controller_);
+        return;
+    }
     if (filter_panel_visible_)
     {
         lv_obj_clear_flag(filter_panel_, LV_OBJ_FLAG_HIDDEN);
@@ -816,11 +818,11 @@ void ChatMessageListScreen::toggleFilterPanel()
     {
         return;
     }
-    filter_panel_visible_ = !filter_panel_visible_;
-    applyFilterPanelVisibility();
     if (use_group_navigation())
     {
-        chat::ui::message_list::input::focus_list(&input_controller_);
+        if (filter_panel_ && lv_obj_has_flag(filter_panel_, LV_OBJ_FLAG_HIDDEN))
+            chat::ui::message_list::input::focus_filter(&input_controller_);
+        else chat::ui::message_list::input::focus_list(&input_controller_);
     }
 }
 

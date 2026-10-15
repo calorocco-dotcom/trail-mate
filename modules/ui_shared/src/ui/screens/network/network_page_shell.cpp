@@ -8,6 +8,7 @@
 #include "platform/ui/reticulum_page_runtime.h"
 #include "ui/app_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
+#include "ui/components/bottom_bar.h"
 #include "ui/components/floating_search_box.h"
 #include "ui/components/shortcut_help_modal.h"
 #include "ui/components/two_pane_layout.h"
@@ -220,6 +221,8 @@ struct MicronRenderState
 
 struct NetworkPageState
 {
+    ::ui::components::bottom_bar::Menu menu{};
+    lv_obj_t* bottom_bar = nullptr;
     lv_obj_t* root = nullptr;
     lv_obj_t* header = nullptr;
     lv_obj_t* content = nullptr;
@@ -1686,23 +1689,38 @@ void rebuild_focus_group(lv_obj_t* preferred)
     lv_obj_t* previous = lv_group_get_focused(app_g);
     lv_group_remove_all_objs(app_g);
 
+    if (g_state.menu.is_open())
+    {
+        add_directory_focusables();
+        set_default_group(app_g);
+        lv_group_focus_obj(g_state.directory_mode == DirectoryMode::Favourites ? g_state.favourites_tab : g_state.announces_tab);
+        return;
+    }
+
     if (!g_state.immersive)
     {
         add_visible_to_group(g_state.top_bar.back_btn);
     }
     add_directory_focusables();
     add_browser_focusables();
+    add_visible_to_group(g_state.menu.button());
     set_default_group(app_g);
     (void)focus_preferred_or_fallback(preferred, previous);
 }
 
 void focus_browser_viewport()
 {
+    g_state.menu.close();
     rebuild_focus_group(g_state.viewport);
 }
 
 void focus_directory_panel()
 {
+    if (g_state.menu.button() && !g_state.menu.is_open())
+    {
+        g_state.menu.open();
+        return;
+    }
     if (g_state.directory_collapsed)
     {
         return;
@@ -1732,6 +1750,7 @@ void focus_directory_panel()
 
 void navigate_to_address(const char* address, bool push)
 {
+    g_state.menu.close();
     const char* target = (address && address[0] != '\0') ? address : "home:/";
     if (push)
     {
@@ -4740,13 +4759,13 @@ void apply_layout_state()
 {
     const bool immersive = g_state.immersive;
     const bool hide_directory = immersive || g_state.directory_collapsed;
-    const bool hide_browser = !immersive && g_state.browser_collapsed;
+    const bool hide_browser = !g_state.menu.button() && !immersive && g_state.browser_collapsed;
     if (g_state.header)
     {
         immersive ? lv_obj_add_flag(g_state.header, LV_OBJ_FLAG_HIDDEN)
                   : lv_obj_clear_flag(g_state.header, LV_OBJ_FLAG_HIDDEN);
     }
-    if (g_state.directory_panel)
+    if (g_state.directory_panel && !g_state.menu.button())
     {
         hide_directory ? lv_obj_add_flag(g_state.directory_panel, LV_OBJ_FLAG_HIDDEN)
                        : lv_obj_clear_flag(g_state.directory_panel, LV_OBJ_FLAG_HIDDEN);
@@ -4758,6 +4777,12 @@ void apply_layout_state()
     {
         hide_browser ? lv_obj_add_flag(g_state.browser_panel, LV_OBJ_FLAG_HIDDEN)
                      : lv_obj_clear_flag(g_state.browser_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_state.bottom_bar)
+    {
+        immersive ? lv_obj_add_flag(g_state.bottom_bar, LV_OBJ_FLAG_HIDDEN)
+                  : lv_obj_clear_flag(g_state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
+        if (immersive) g_state.menu.close();
     }
     if (g_state.browser_toolbar)
     {
@@ -4821,6 +4846,11 @@ void open_node_list_page()
 
 void toggle_browser_panel()
 {
+    if (g_state.menu.button())
+    {
+        g_state.menu.toggle();
+        return;
+    }
     if (g_state.immersive)
     {
         g_state.immersive = false;
@@ -5179,6 +5209,12 @@ void page_shortcut_event_cb(lv_event_t* event)
     }
     const uint32_t key = lv_event_get_key(event);
     lv_obj_t* target = lv_event_get_target_obj(event);
+    if (g_state.menu.is_open() && (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE))
+    {
+        g_state.menu.close();
+        lv_event_stop_processing(event);
+        return;
+    }
     if (g_state.viewport_scroll_locked && (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE))
     {
         unlock_viewport_scroll(event);
@@ -5629,6 +5665,17 @@ void enter(void* /*user_data*/, lv_obj_t* parent)
 
     create_directory_panel(g_state.content);
     create_browser_panel(g_state.content);
+    g_state.bottom_bar = ::ui::components::bottom_bar::create(g_state.root);
+    auto* menu_button = ::ui::components::bottom_bar::add_button(g_state.bottom_bar, "Menu");
+    lv_obj_add_event_cb(menu_button, page_shortcut_event_cb, LV_EVENT_KEY, nullptr);
+    lv_obj_set_style_min_width(g_state.directory_panel, 180, LV_PART_MAIN);
+    lv_obj_set_style_min_height(g_state.directory_panel, 160, LV_PART_MAIN);
+    g_state.menu.init(g_state.root, menu_button, g_state.directory_panel,
+                      [](void*, bool open)
+                      {
+                          g_state.directory_collapsed = !open;
+                          rebuild_focus_group(g_state.viewport);
+                      });
 
     lv_obj_add_event_cb(g_state.root, back_event_cb, LV_EVENT_KEY, nullptr);
     lv_obj_add_event_cb(g_state.root, page_shortcut_event_cb, LV_EVENT_KEY, nullptr);
@@ -5659,6 +5706,7 @@ void exit(void* /*user_data*/, lv_obj_t* /*parent*/)
     {
         return;
     }
+    g_state.menu.reset();
 
     NETWORK_PAGE_LOG("exit begin root=%u rows=%u links=%u history=%u\n",
                      g_state.root && lv_obj_is_valid(g_state.root) ? 1U : 0U,

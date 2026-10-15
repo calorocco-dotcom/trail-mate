@@ -10,6 +10,7 @@
 #include "track_sharing/installed_package_path.h"
 #include "ui/app_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
+#include "ui/components/bottom_bar.h"
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/runtime/ui_feedback.h"
@@ -2356,10 +2357,7 @@ void close_route_preview_page()
     state.route_preview_load_btn = nullptr;
     state.route_preview_load_label = nullptr;
     clear_preview_model();
-    if (state.filter_panel)
-    {
-        lv_obj_clear_flag(state.filter_panel, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (state.bottom_bar) lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     if (state.list_panel)
     {
         lv_obj_clear_flag(state.list_panel, LV_OBJ_FLAG_HIDDEN);
@@ -2786,6 +2784,7 @@ void open_route_preview_page()
     {
         lv_obj_add_flag(state.list_panel, LV_OBJ_FLAG_HIDDEN);
     }
+    if (state.bottom_bar) lv_obj_add_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     ::ui::widgets::top_bar_set_title(state.top_bar, ::ui::i18n::tr("Route Preview"));
 
     state.route_preview_page = lv_obj_create(state.content);
@@ -2982,14 +2981,7 @@ void set_mode(TrackerPageState::Mode mode)
     update_mode_buttons();
     if (state.bottom_bar)
     {
-        if (mode != TrackerPageState::Mode::Route)
-        {
-            lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
-        }
-        else
-        {
-            lv_obj_add_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     }
     if (state.start_stop_btn)
     {
@@ -4179,7 +4171,7 @@ void init_page(lv_obj_t* parent)
         lv_obj_set_size(state.mode_navigation_btn, LV_PCT(100), filter_button_height());
         state.mode_navigation_label = lv_label_create(state.mode_navigation_btn);
         lv_obj_add_style(state.mode_navigation_label, &s_btn_label, LV_PART_MAIN);
-        ::ui::i18n::set_label_text(state.mode_navigation_label, "Navigation");
+        ::ui::i18n::set_label_text(state.mode_navigation_label, "Nav");
         lv_obj_center(state.mode_navigation_label);
         lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_FOCUSED, nullptr);
@@ -4198,7 +4190,7 @@ void init_page(lv_obj_t* parent)
     lv_obj_set_scroll_dir(state.list_container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
 
-    state.bottom_bar = layout::create_bottom_bar(state.list_panel);
+    state.bottom_bar = ::ui::components::bottom_bar::create(state.root);
     state.start_stop_btn = lv_btn_create(state.bottom_bar);
     lv_obj_set_size(state.start_stop_btn, bottom_bar_button_width(), filter_button_height());
     state.start_stop_label = lv_label_create(state.start_stop_btn);

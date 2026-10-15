@@ -6,7 +6,6 @@
 
 #include "ui/screens/chat/chat_message_list_layout.h"
 #include "ui/assets/fonts/font_utils.h"
-#include "ui/components/air_status_footer.h"
 #include "ui/components/info_card.h"
 #include "ui/components/two_pane_layout.h"
 #include "ui/localization.h"
@@ -277,7 +276,6 @@ MessageListLayout create_layout(lv_obj_t* parent)
     w.content = create_content(w.root);
     w.filter_panel = create_filter_panel(w.content, &w.direct_btn, &w.broadcast_btn, &w.team_btn);
     w.list_panel = create_list_panel(w.content);
-    w.air_status_footer = ::ui::components::air_status_footer::create(w.root);
     return w;
 }
 

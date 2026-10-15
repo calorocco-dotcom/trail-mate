@@ -14,5 +14,7 @@ struct Footer
 
 Footer create(lv_obj_t* parent);
 void refresh(Footer& footer);
+// Build the same information on demand inside a bottom-menu Info page.
+void populate_info(lv_obj_t* parent);
 
 } // namespace ui::components::air_status_footer
