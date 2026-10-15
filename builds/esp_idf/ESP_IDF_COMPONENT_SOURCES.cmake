@@ -226,6 +226,7 @@ set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/two_pane_layout.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/two_pane_nav.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/bottom_bar.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/dialog_frame.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/two_pane_styles.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/formatters.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/loop_shell.cpp"

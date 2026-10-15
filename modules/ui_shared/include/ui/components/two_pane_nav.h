@@ -76,6 +76,7 @@ void cleanup(Binding* binding);
 void on_ui_refreshed(Binding* binding);
 void focus_filter(Binding* binding);
 void focus_list(Binding* binding);
+void show_submenu(Binding* binding, lv_obj_t* content);
 lv_group_t* get_group(const Binding* binding);
 
 class Controller

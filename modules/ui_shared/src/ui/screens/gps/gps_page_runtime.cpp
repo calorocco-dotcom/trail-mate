@@ -19,6 +19,7 @@ using Projection = gps::ui::shell::Projection;
 #include "track_sharing/installed_package_path.h"
 #include "ui/app_runtime.h"
 #include "ui/components/bottom_bar.h"
+#include "ui/components/dialog_frame.h"
 #include "ui/components/map_poi_search.h"
 #include "ui/formatters.h"
 #include "ui/localization.h"
@@ -96,8 +97,8 @@ namespace
 {
 
 constexpr int kCardputerZeroMapDefaultZoom = gps_ui::kDefaultZoom;
-constexpr lv_coord_t kMapControlBarHeight = 24;
-constexpr lv_coord_t kMapControlButtonHeight = 20;
+constexpr lv_coord_t kMapControlBarHeight = ::ui::components::bottom_bar::kHeight;
+constexpr lv_coord_t kMapControlButtonHeight = ::ui::components::bottom_bar::kButtonHeight;
 constexpr lv_coord_t kMapControlButtonSmallWidth = 26;
 constexpr lv_coord_t kMapControlButtonMediumWidth = 36;
 constexpr lv_coord_t kMapControlButtonWideWidth = 44;
@@ -286,6 +287,7 @@ void refresh_view();
 void root_key_event_cb(lv_event_t* e);
 void open_map_help_modal();
 void open_tracker_modal(bool navigation = false);
+void open_map_management(MapControlAction action);
 void close_map_menu();
 void open_map_menu(bool team = false, bool layers = false);
 void refresh_map_menu_labels();
@@ -2778,6 +2780,31 @@ void keep_only_current_position_overlay(::ui::map::MapOverlaySnapshot& snapshot)
     snapshot.truncated = false;
 }
 
+void clear_map_track_overlay()
+{
+    ::ui::support::KmlNavigationMatch::destroy(s_route_navigation);
+    s_track_overlay_active = false;
+    s_track_points.clear();
+    s_track_file.clear();
+    s_track_overlay_kind = TrackOverlayFileKind::Track;
+    s_track_elevation_metrics = TrackElevationMetrics{};
+    s_route_elevation_samples.clear();
+    s_route_elevation_work_samples.clear();
+    s_route_images.clear();
+    s_route_image_strip_items.clear();
+    s_route_asset_id.clear();
+    s_route_elevation_profile_visible = false;
+    s_route_image_strip_visible = false;
+    s_route_image_saved_state_known = false;
+    s_route_image_cache_state_known = false;
+    s_route_image_cache_build_running = false;
+    s_route_deviation_active = false;
+    s_route_deviation_distance_m = 0.0;
+    s_route_selected_image = 0;
+    s_route_image_strip_items_hash = 0;
+    ::ui::widgets::route_image_strip::destroy(s_route_image_strip);
+}
+
 bool load_map_track_file_impl(const char* path, bool show_fail_toast)
 {
     if (!path || path[0] == '\0')
@@ -2816,26 +2843,7 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
             set_map_notice("No track yet", 1500);
             request_refresh_view();
         }
-        s_track_overlay_active = false;
-        s_track_points.clear();
-        s_track_file.clear();
-        s_track_overlay_kind = TrackOverlayFileKind::Track;
-        s_track_elevation_metrics = TrackElevationMetrics{};
-        s_route_elevation_samples.clear();
-        s_route_elevation_work_samples.clear();
-        s_route_images.clear();
-        s_route_image_strip_items.clear();
-        s_route_asset_id.clear();
-        s_route_elevation_profile_visible = false;
-        s_route_image_strip_visible = false;
-        s_route_image_saved_state_known = false;
-        s_route_image_cache_state_known = false;
-        s_route_image_cache_build_running = false;
-        s_route_deviation_active = false;
-        s_route_deviation_distance_m = 0.0;
-        s_route_selected_image = 0;
-        s_route_image_strip_items_hash = 0;
-        ::ui::widgets::route_image_strip::destroy(s_route_image_strip);
+        clear_map_track_overlay();
         return false;
     }
 
@@ -3360,74 +3368,14 @@ void open_map_help_modal()
         return;
     }
 
-    s_map_help_modal = lv_obj_create(s_root);
-    lv_obj_set_size(s_map_help_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_align(s_map_help_modal, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_add_flag(s_map_help_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_style_bg_color(s_map_help_modal, lv_color_hex(0x1C1812), 0);
-    lv_obj_set_style_bg_opa(s_map_help_modal, LV_OPA_70, 0);
-    lv_obj_set_style_border_width(s_map_help_modal, 0, 0);
-    lv_obj_set_style_pad_all(s_map_help_modal, 4, 0);
-    lv_obj_clear_flag(s_map_help_modal, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_map_help_modal, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* panel = lv_obj_create(s_map_help_modal);
-    lv_obj_set_size(panel, std::min<lv_coord_t>(304, lv_obj_get_width(s_root) - 12),
-                    std::min<lv_coord_t>(216, lv_obj_get_height(s_root) - 12));
-    lv_obj_center(panel);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF3DF), 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0x8A6E43), 0);
-    lv_obj_set_style_radius(panel, 4, 0);
-    lv_obj_set_style_pad_left(panel, 7, 0);
-    lv_obj_set_style_pad_right(panel, 7, 0);
-    lv_obj_set_style_pad_top(panel, 5, 0);
-    lv_obj_set_style_pad_bottom(panel, 5, 0);
-    lv_obj_set_style_pad_row(panel, 2, 0);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(panel, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
-
-    auto* header = lv_obj_create(panel);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, LV_PCT(100), 42);
-    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* title = lv_label_create(header);
-    ::ui::i18n::set_label_text(title, "Map Help");
-    lv_obj_set_width(title, 0);
-    lv_obj_set_flex_grow(title, 1);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), 0);
-    auto* close = lv_btn_create(header);
-    lv_obj_set_size(close, 76, 40);
-    lv_obj_set_style_pad_hor(close, 6, 0);
-    lv_obj_set_style_bg_color(close, lv_color_hex(0xF8E6C3), 0);
-    lv_obj_set_style_border_color(close, lv_color_hex(0x8A6E43), 0);
-    lv_obj_set_style_border_width(close, 1, 0);
-    auto* close_label = lv_label_create(close);
-    ::ui::i18n::set_label_text(close_label, "Close");
-    lv_obj_set_style_text_font(close_label, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(close_label, lv_color_hex(0x25170D), 0);
-    lv_obj_center(close_label);
-    lv_obj_add_event_cb(
-        close, [](lv_event_t*)
-        { close_map_help_modal(); },
-        LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(close, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
-    auto* body = lv_obj_create(panel);
-    lv_obj_remove_style_all(body);
-    lv_obj_set_size(body, LV_PCT(100), 0);
-    lv_obj_set_flex_grow(body, 1);
-    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    const auto frame = ::ui::components::dialog_frame::create(s_root,
+                                                              {"Map Help", 304, 216, [](lv_event_t*)
+                                                               { close_map_help_modal(); },
+                                                               on_map_help_modal_key});
+    s_map_help_modal = frame.overlay;
+    auto* body = frame.body;
+    auto* close = frame.close;
     lv_obj_set_style_pad_row(body, 2, 0);
-    lv_obj_set_scroll_dir(body, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(body, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
 
     auto add_keycap = [](lv_obj_t* parent, const char* text, lv_coord_t width)
     {
@@ -3588,13 +3536,14 @@ void tracker_track_button_event_cb(lv_event_t* e)
 
     const std::string path =
         std::string(s_select_navigation ? ::platform::ui::navigation::directory() : ::platform::ui::tracker::track_dir()) + "/" + s_track_modal_names[index];
-    if (load_map_track_file_impl(path.c_str(), true) && s_select_navigation)
+    if (load_map_track_file_impl(path.c_str(), true))
     {
         auto edit = app::appFacade().beginConfigEdit();
         if (edit && path.size() < sizeof(edit.config().route_path))
         {
-            edit.config().route_enabled = true;
-            std::strcpy(edit.config().route_path, path.c_str());
+            edit.config().route_enabled = s_select_navigation;
+            if (s_select_navigation) std::strcpy(edit.config().route_path, path.c_str());
+            else edit.config().route_path[0] = '\0';
             edit.commit(app::AppConfigChangeSet::route());
         }
     }
@@ -3650,51 +3599,15 @@ void open_tracker_modal(bool navigation)
     }
     s_select_navigation = navigation;
 
-    s_tracker_modal = lv_obj_create(s_root);
-    lv_obj_set_size(s_tracker_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_align(s_tracker_modal, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_add_flag(s_tracker_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_add_flag(s_tracker_modal, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(s_tracker_modal, lv_color_hex(0x1C1812), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_tracker_modal, LV_OPA_70, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_tracker_modal, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_tracker_modal, 4, LV_PART_MAIN);
-    lv_obj_clear_flag(s_tracker_modal, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
-
     const bool touch_layout = ::ui::page_profile::current().large_touch_hitbox;
     const auto size = ::ui::page_profile::resolve_modal_size(touch_layout ? 520 : 300,
                                                              touch_layout ? 520 : 178);
-    lv_obj_t* panel = lv_obj_create(s_tracker_modal);
-    lv_obj_set_size(panel, size.width, size.height);
-    lv_obj_center(panel);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF3DF), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(panel, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0x8A6E43), LV_PART_MAIN);
-    lv_obj_set_style_radius(panel, 4, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(panel, touch_layout ? 12 : 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(panel, touch_layout ? 8 : 3, LV_PART_MAIN);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(panel, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* title = lv_label_create(panel);
-    ::ui::i18n::set_label_text(title, navigation ? "Load navigation" : "Load track");
-    lv_obj_set_width(title, LV_PCT(100));
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), LV_PART_MAIN);
-
-    lv_obj_t* list = lv_obj_create(panel);
-    lv_obj_set_width(list, LV_PCT(100));
-    lv_obj_set_height(list, 0);
-    lv_obj_set_flex_grow(list, 1);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
+    const auto frame = ::ui::components::dialog_frame::create(s_root,
+                                                              {navigation ? "Load navigation" : "Load track", size.width, size.height,
+                                                               tracker_modal_close_event_cb, tracker_modal_key_event_cb});
+    s_tracker_modal = frame.overlay;
+    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
+    auto* list = frame.body;
     lv_obj_set_style_pad_row(list, touch_layout ? 6 : 2, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
@@ -3731,8 +3644,7 @@ void open_tracker_modal(bool navigation)
         }
     }
 
-    lv_obj_t* close_btn =
-        create_tracker_modal_button(panel, "Close", tracker_modal_close_event_cb, nullptr);
+    auto* close_btn = frame.close;
     if (!first_focus)
     {
         first_focus = close_btn;
@@ -3755,6 +3667,96 @@ void open_tracker_modal(bool navigation)
             lv_group_focus_obj(first_focus);
         }
     }
+}
+
+void map_management_action(lv_event_t* event)
+{
+    const auto value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+    const auto action = static_cast<MapControlAction>(value & 0xFF);
+    const bool unload = (value & 0x100) != 0;
+    close_tracker_modal();
+    if (!unload)
+    {
+        open_tracker_modal(action == MapControlAction::Navigation);
+        return;
+    }
+    const auto& cfg = app::appFacade().readConfig();
+    if (action == MapControlAction::Navigation)
+    {
+        const bool clear = s_track_file == cfg.route_path;
+        auto edit = app::appFacade().beginConfigEdit();
+        if (edit)
+        {
+            edit.config().route_enabled = false;
+            edit.config().route_path[0] = '\0';
+            edit.commit(app::AppConfigChangeSet::route());
+            if (clear) clear_map_track_overlay();
+        }
+    }
+    else if (!cfg.route_enabled || s_track_file != cfg.route_path) clear_map_track_overlay();
+    request_refresh_view();
+    open_map_management(action);
+}
+
+void open_map_management(MapControlAction action)
+{
+    close_tracker_modal();
+    const bool contours = action == MapControlAction::Contour;
+    const bool navigation = action == MapControlAction::Navigation;
+    const auto frame = ::ui::components::dialog_frame::create(s_root,
+                                                              {contours ? "Contours" : navigation ? "Navigation"
+                                                                                                  : "Tracks",
+                                                               304, contours ? 116 : 180,
+                                                               tracker_modal_close_event_cb, tracker_modal_key_event_cb});
+    s_tracker_modal = frame.overlay;
+    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
+    if (app_g) lv_group_remove_all_objs(app_g);
+    lv_obj_t* first = frame.close;
+    if (contours)
+    {
+        auto* toggle = lv_checkbox_create(frame.body);
+        lv_checkbox_set_text(toggle, ::ui::i18n::tr("Show contours"));
+        if (::ui::widgets::map::current_layer_state().contour_enabled) lv_obj_add_state(toggle, LV_STATE_CHECKED);
+        lv_obj_add_event_cb(
+            toggle, [](lv_event_t* event)
+            {
+                auto* toggle = static_cast<lv_obj_t*>(lv_event_get_target(event));
+                if (lv_obj_has_state(toggle, LV_STATE_CHECKED) != ::ui::widgets::map::current_layer_state().contour_enabled) toggle_map_contour();
+                if (::ui::widgets::map::current_layer_state().contour_enabled) lv_obj_add_state(toggle, LV_STATE_CHECKED);
+                else lv_obj_clear_state(toggle, LV_STATE_CHECKED); },
+            LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(toggle, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+        if (app_g) lv_group_add_obj(app_g, toggle);
+        first = toggle;
+    }
+    else
+    {
+        const auto& cfg = app::appFacade().readConfig();
+        const bool active = navigation ? cfg.route_enabled && cfg.route_path[0] : s_track_overlay_active && (!cfg.route_enabled || s_track_file != cfg.route_path);
+        const std::string path = navigation ? cfg.route_path : s_track_file;
+        const auto last = path.find_last_of("/\\");
+        const auto status = std::string(::ui::i18n::tr("Current")) + ": " +
+                            (active ? path.substr(last == std::string::npos ? 0 : last + 1) : ::ui::i18n::tr(navigation ? "No route" : "No track yet"));
+        auto* label = lv_label_create(frame.body);
+        ::ui::i18n::set_content_label_text_raw(label, status.c_str());
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+        for (const bool unload : {false, true})
+        {
+            auto* button = create_tracker_modal_button(frame.body, ::ui::i18n::tr(unload ? "Unload" : "Load"), map_management_action,
+                                                       reinterpret_cast<void*>(static_cast<uintptr_t>(action) | (unload ? 0x100 : 0)));
+            lv_obj_set_height(button, ::ui::page_profile::current().filter_button_height);
+            if (unload && !active) lv_obj_add_state(button, LV_STATE_DISABLED);
+            else if (app_g) lv_group_add_obj(app_g, button);
+            if (!unload) first = button;
+        }
+    }
+    if (app_g)
+    {
+        lv_group_add_obj(app_g, frame.close);
+        lv_group_focus_obj(first);
+    }
+    lv_obj_move_foreground(s_tracker_modal);
 }
 
 void show_route_context_notice()
@@ -3879,13 +3881,9 @@ void on_map_control_clicked(lv_event_t* e)
         select_map_layer(static_cast<uint8_t>(action) - static_cast<uint8_t>(MapControlAction::LayerOsm));
         break;
     case MapControlAction::Contour:
-        toggle_map_contour();
-        break;
     case MapControlAction::Tracker:
-        open_tracker_modal();
-        break;
     case MapControlAction::Navigation:
-        open_tracker_modal(true);
+        open_map_management(action);
         break;
     case MapControlAction::Team:
         break;
@@ -4133,14 +4131,7 @@ lv_obj_t* create_map_control_button(lv_obj_t* parent,
 {
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_set_size(btn, width, kMapControlButtonHeight);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xF8E6C3), 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0x8A6E43), 0);
-    lv_obj_set_style_radius(btn, 4, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_set_style_text_color(btn, lv_color_hex(0x25170D), 0);
-    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    ::ui::components::bottom_bar::style_button(btn);
     lv_obj_add_event_cb(btn,
                         on_map_control_clicked,
                         LV_EVENT_CLICKED,
@@ -4217,10 +4208,9 @@ void close_map_menu()
 void refresh_map_menu_labels()
 {
     if (!s_map_menu) return;
-    const auto layers = ::ui::widgets::map::current_layer_state();
     const auto label = std::string(::ui::i18n::tr("Map Layer")) + " " LV_SYMBOL_RIGHT;
     set_button_label(s_map_layer_btn, label.c_str());
-    set_button_label(s_map_contour_btn, ::ui::i18n::tr(layers.contour_enabled ? "Hide contours" : "Show contours"));
+    set_button_label(s_map_contour_btn, ::ui::i18n::tr("Contours"));
 }
 
 void open_map_menu(bool team, bool layers)
@@ -4278,11 +4268,11 @@ void open_map_menu(bool team, bool layers)
     }
     else
     {
-        s_map_contour_btn = item("Show contours", MapControlAction::Contour);
+        s_map_contour_btn = item("Contours", MapControlAction::Contour);
         s_map_layer_btn = item("Map Layer", MapControlAction::Layer);
         s_map_search_btn = item("Search", MapControlAction::Search);
-        s_map_navigation_btn = item("Load navigation", MapControlAction::Navigation);
-        s_map_tracker_btn = item("Load track", MapControlAction::Tracker);
+        s_map_navigation_btn = item("Navigation", MapControlAction::Navigation);
+        s_map_tracker_btn = item("Tracks", MapControlAction::Tracker);
         first = s_map_contour_btn;
     }
     refresh_map_menu_labels();

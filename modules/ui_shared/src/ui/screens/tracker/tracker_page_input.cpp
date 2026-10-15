@@ -244,6 +244,11 @@ void tracker_focus_to_list()
     s_controller.focus_list();
 }
 
+void tracker_show_submenu(lv_obj_t* content)
+{
+    ::ui::components::two_pane_nav::show_submenu(s_controller.raw_binding(), content);
+}
+
 lv_group_t* tracker_input_get_group()
 {
     return s_controller.group();

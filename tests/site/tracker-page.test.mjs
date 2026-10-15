@@ -16,18 +16,18 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
     }
     const button=snapshot().find(item=>item.button&&item.text===text);assert.ok(button,`${device}: missing ${text}`);runtime._native_activate(button.id);tick();
   };
+  const tracks=()=>{click('Tracks');click('View');};
   runtime._native_open_page(14);tick();
   assert.ok(snapshot().some(item=>item.text==='No tracks yet'));
   assert.ok(!snapshot().some(item=>item.text==='Back'));
-  const action=snapshot().find(item=>item.button&&item.text==='Start recording');
-  assert.ok(action);
-  const menu=snapshot().find(item=>item.button&&item.text==='Menu');
-  assert.ok(menu&&action.x+action.w<=menu.x,'Primary action leaves room for the right-aligned category menu');
-  click('Start recording');
+  assert.ok(!snapshot().some(item=>item.button&&['Start recording','New navigation'].includes(item.text)));
+  click('Tracks');
+  assert.ok(['View','New','Current'].every(text=>snapshot().some(item=>item.button&&item.text===text)));
+  click('New');
   assert.ok(snapshot().some(item=>item.text==='Recording'));
   const stop=snapshot().find(item=>item.button&&item.text==='Stop recording');
-  assert.equal(stop.w,action.w,'Start and stop share a stable button width');
-  assert.equal(stop.x,action.x,'Start and stop share a stable right-aligned position');
+  const menu=snapshot().find(item=>item.button&&item.text==='Menu');
+  assert.ok(stop&&menu&&stop.x+stop.w<=menu.x,'Stop recording leaves room for the right-aligned category menu');
   assert.ok(snapshot().some(item=>!item.button&&/^track-\d+$/.test(item.text)),`${device}: new recording has a readable title without the file extension`);
   if(device!=='pager')assert.ok(snapshot().some(item=>item.text==='GPX | Recording'),`${device}: recording card shows file type/status`);
   else {
@@ -37,7 +37,7 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   }
   click('Routes');
   assert.ok(!snapshot().some(item=>['Recording','Stop recording'].includes(item.text)),'Route mode has its own status and actions');
-  click('Tracks');
+  tracks();
   assert.ok(snapshot().some(item=>item.text==='Recording'),'Changing tabs does not stop recording');
   click('Stop recording');
   assert.ok(snapshot().some(item=>item.text==='Not recording'));
@@ -48,6 +48,8 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   assert.ok(!snapshot().some(item=>item.text.includes('sample-route.kml')),`${device}: internal filename is not repeated`);
   click('Actions');
   assert.ok(snapshot().some(item=>item.text==='Route Actions'),`${device}: explicit card action opens the existing route menu`);
+  const dialogClose=snapshot().findLast(item=>item.button&&item.text==='\uf00d');
+  assert.ok(dialogClose&&dialogClose.w===dialogClose.h&&dialogClose.h<=24,`${device}: card actions use a compact title-bar close`);
   click('Cancel');
   const routeCounter=snapshot().find(item=>item.text==='1 / 2');
   assert.ok(routeCounter,`${device}: card shows the selected position`);
@@ -55,7 +57,7 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   const nextCard=snapshot().find(item=>item.text==='Second sample trail');
   assert.equal(nextCard?.id,routeCard.id,`${device}: flipping reuses the route card`);
   assert.ok(snapshot().some(item=>item.text==='2 / 2'));
-  click('Tracks');
+  tracks();
   click('Routes');
   assert.equal(snapshot().find(item=>item.text==='Second sample trail')?.id,routeCard.id,
     `${device}: category switching preserves the selected file and card widget`);
@@ -63,9 +65,31 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   assert.ok(previous,`${device}: previous-card navigation is available`);
   runtime._native_activate(previous.id);tick();
   assert.equal(snapshot().find(item=>item.text==='Sample route')?.id,routeCard.id);
-  click('Tracks');
-  assert.ok(snapshot().some(item=>item.button&&item.text==='Start recording'));
+  tracks();
+  assert.ok(!snapshot().some(item=>item.button&&item.text==='Start recording'));
   click('\uf053');
   assert.equal(runtime._native_page_value(),10,'Top-bar back remains available without a list Back row');
+  runtime._native_open_page(15);tick();
+  const closeDialog=()=>{
+    const close=snapshot().findLast(item=>item.button&&item.text==='\uf00d');
+    assert.ok(close&&close.w===close.h&&close.h<=24,`${device}: modal has a compact square close`);
+    const x=close.x+Math.floor(close.w/2),y=close.y+Math.floor(close.h/2);
+    runtime._native_pointer(x,y,1);runtime._native_tick(50);
+    runtime._native_pointer(x,y,0);tick();
+    assert.ok(!snapshot().some(item=>item.button&&item.text==='\uf00d'),`${device}: touch closes the topmost modal`);
+  };
+  click('Help');
+  assert.ok(snapshot().some(item=>item.text==='Map Help'));
+  closeDialog();
+  for(const section of ['Navigation','Tracks','Contours']) {
+    click('Menu');click(section);
+    assert.ok(snapshot().some(item=>!item.button&&item.text===section),`${device}: stable map entry opens ${section} management`);
+    if(section!=='Contours') {
+      assert.ok(snapshot().some(item=>item.button&&item.text==='Unload'));
+      click('Load');
+      assert.ok(snapshot().some(item=>item.text===(section==='Navigation'?'Load navigation':'Load track')));
+    } else assert.ok(snapshot().some(item=>item.text==='Show contours'));
+    closeDialog();
+  }
   console.log(`${device}: empty state, recording, reused file cards, selection across categories, navigation and top-bar back passed.`);
 }

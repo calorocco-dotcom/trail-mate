@@ -29,6 +29,14 @@ duplicated page-specific popup implementation. `MenuOptions` lets Map retain
 its existing keyboard shortcuts and anchor action dispatch while sharing popup
 layout and outside-click handling.
 
+Bar buttons share Map's outlined chrome and the common 24-pixel bar. Popup
+rows retain their flat style. Tracker's Tracks and Nav categories open a
+View/New/Current submenu; a recording exposes Stop recording in the bar.
+There are no separate New recording or New navigation footer controls.
+Map keeps stable Navigation, Tracks and Contours entries and opens their
+[shared management dialogs](dialog_frame.md). Map Layer retains direct layer
+selection in a submenu.
+
 ## Input and lifetime
 
 - A bar button toggles its menu. Clicking outside closes it.

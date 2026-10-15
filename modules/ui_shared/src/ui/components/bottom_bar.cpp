@@ -25,14 +25,14 @@ void plain(lv_obj_t* object)
 
 lv_obj_t* create(lv_obj_t* parent)
 {
-    const auto& profile = ::ui::page_profile::current();
     auto* bar = lv_obj_create(parent);
     plain(bar);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(bar, LV_PCT(100), std::max<lv_coord_t>(26, profile.filter_button_height));
+    lv_obj_set_size(bar, LV_PCT(100), kHeight);
     lv_obj_set_style_bg_color(bar, lv_color_hex(kBackground), LV_PART_MAIN);
     lv_obj_set_style_pad_all(bar, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(bar, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(bar, 2, LV_PART_MAIN);
     lv_obj_set_style_pad_column(bar, 4, LV_PART_MAIN);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -72,13 +72,26 @@ void style_item(lv_obj_t* item)
     }
 }
 
+void style_button(lv_obj_t* button)
+{
+    lv_obj_set_style_bg_color(button, lv_color_hex(0xF8E6C3), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(button, lv_color_hex(0x8A6E43), LV_PART_MAIN);
+    lv_obj_set_style_radius(button, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(button, 0, LV_PART_MAIN);
+    lv_obj_set_style_text_color(button, lv_color_hex(0x25170D), LV_PART_MAIN);
+    lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+}
+
 lv_obj_t* add_button(lv_obj_t* bar, const char* text, lv_event_cb_t callback, void* context)
 {
     auto* button = lv_btn_create(bar);
     auto* label = lv_label_create(button);
     ::ui::i18n::set_label_text(label, text);
-    style_item(button);
-    lv_obj_set_size(button, LV_SIZE_CONTENT, LV_PCT(100));
+    style_button(button);
+    lv_obj_set_style_pad_hor(button, 6, LV_PART_MAIN);
+    lv_obj_set_size(button, LV_SIZE_CONTENT, kButtonHeight);
     lv_obj_set_width(label, LV_SIZE_CONTENT);
     lv_obj_center(label);
     if (callback) lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, context);

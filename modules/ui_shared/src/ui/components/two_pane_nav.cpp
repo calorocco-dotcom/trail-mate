@@ -594,7 +594,7 @@ static void menu_changed(void* context, bool open)
 static void menu_item_clicked(lv_event_t* event)
 {
     auto* binding = static_cast<Binding*>(lv_event_get_user_data(event));
-    if (!binding_alive(binding) || !binding->menu.is_open()) return;
+    if (!binding_alive(binding) || !binding->menu.is_open() || binding->menu.in_submenu()) return;
     auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(event));
     if (!activate_filter_button(binding, target)) binding->menu.close();
 }
@@ -610,13 +610,8 @@ static void info_clicked(lv_event_t* event)
     auto* binding = static_cast<Binding*>(lv_event_get_user_data(event));
     if (!binding_alive(binding) || !binding->adapter.build_info) return;
     auto* panel = lv_obj_create(get_key_target(binding));
-    auto* back = bottom_bar::add_button(panel, "Back", info_back_clicked, binding);
-    lv_obj_set_height(back, ::ui::page_profile::current().filter_button_height);
     binding->adapter.build_info(panel);
-    binding->menu.show_submenu(panel);
-    lv_group_remove_all_objs(binding->group);
-    lv_group_add_obj(binding->group, back);
-    lv_group_focus_obj(back);
+    show_submenu(binding, panel);
 }
 
 static void init_menu(Binding* binding)
@@ -667,6 +662,11 @@ static void root_key_event_cb(lv_event_t* e)
 
     lv_obj_t* focused = binding->group ? lv_group_get_focused(binding->group) : nullptr;
     if (!focused) return;
+    if (binding->menu.in_submenu())
+    {
+        lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
+        return;
+    }
     if (focused == binding->menu.button() || focused == binding->info_button)
     {
         lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
@@ -683,6 +683,11 @@ static void root_key_event_cb(lv_event_t* e)
 
         if (activate_filter_button(binding, focused))
         {
+            return;
+        }
+        if (binding->menu.is_open() && is_filter_button(binding, focused))
+        {
+            lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
             return;
         }
 
@@ -792,6 +797,22 @@ static void managed_click_event_cb(lv_event_t* e)
 }
 
 } // namespace
+
+void show_submenu(Binding* binding, lv_obj_t* content)
+{
+    if (!binding_alive(binding) || !binding->menu.is_open() || binding->menu.in_submenu() || !is_valid(content)) return;
+    auto* back = bottom_bar::add_button(content, "Back", info_back_clicked, binding);
+    lv_obj_set_height(back, ::ui::page_profile::current().filter_button_height);
+    lv_obj_move_to_index(back, 0);
+    binding->menu.show_submenu(content);
+    lv_group_remove_all_objs(binding->group);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(content); ++i)
+    {
+        auto* item = lv_obj_get_child(content, i);
+        if (lv_obj_has_flag(item, LV_OBJ_FLAG_CLICKABLE) && !lv_obj_has_state(item, LV_STATE_DISABLED)) group_add_if_visible(binding, item);
+    }
+    lv_group_focus_obj(back);
+}
 
 void init(Binding* binding, const Adapter& adapter)
 {

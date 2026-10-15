@@ -28,3 +28,12 @@ target_include_directories(bottom_bar_contract PRIVATE ${REPO}/modules/ui_shared
 target_compile_definitions(bottom_bar_contract PRIVATE LV_CONF_INCLUDE_SIMPLE)
 target_link_libraries(bottom_bar_contract PRIVATE ${LVGL_LIBRARY})
 add_test(NAME bottom_bar_contract COMMAND bottom_bar_contract)
+
+add_executable(dialog_frame_contract test_dialog_frame.cpp
+    ${REPO}/modules/ui_shared/src/ui/components/dialog_frame.cpp
+    ${REPO}/modules/ui_shared/src/ui/components/bottom_bar.cpp
+    ${REPO}/modules/ui_shared/src/ui/widgets/top_bar.cpp)
+target_include_directories(dialog_frame_contract PRIVATE ${REPO}/modules/ui_shared/include ${LVGL_DIR} ${REPO}/tests/contacts_card_view)
+target_compile_definitions(dialog_frame_contract PRIVATE LV_CONF_INCLUDE_SIMPLE)
+target_link_libraries(dialog_frame_contract PRIVATE ${LVGL_LIBRARY})
+add_test(NAME dialog_frame_contract COMMAND dialog_frame_contract)

@@ -382,6 +382,7 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/two_pane_layout.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/two_pane_nav.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/bottom_bar.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/dialog_frame.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/two_pane_styles.cpp"
     # modules/ui_shared �?shell / menu / page
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/app_runtime.cpp"

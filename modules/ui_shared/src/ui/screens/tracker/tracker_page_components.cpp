@@ -11,6 +11,7 @@
 #include "ui/app_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
 #include "ui/components/bottom_bar.h"
+#include "ui/components/dialog_frame.h"
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/runtime/ui_feedback.h"
@@ -174,7 +175,6 @@ const ::ui::page_profile::PageLayoutProfile& page_profile();
 lv_coord_t filter_panel_width();
 lv_coord_t filter_button_height();
 lv_coord_t list_item_height();
-lv_coord_t bottom_bar_button_width();
 lv_coord_t modal_button_width();
 lv_coord_t action_menu_button_height();
 lv_coord_t action_menu_row_gap();
@@ -272,15 +272,6 @@ lv_coord_t list_item_height()
     return page_profile().list_item_height;
 }
 
-lv_coord_t bottom_bar_button_width()
-{
-    if (page_profile().dense)
-    {
-        return ::ui::page_profile::resolve_control_button_min_width();
-    }
-    return page_profile().large_touch_hitbox ? 96 : kBottomBarButtonWidth;
-}
-
 lv_coord_t modal_button_width()
 {
     return ::ui::page_profile::resolve_control_button_min_width();
@@ -345,37 +336,6 @@ void modal_restore_group()
         set_default_group(restore);
     }
     state.prev_group = nullptr;
-}
-
-lv_obj_t* create_modal_root(int width, int height)
-{
-    lv_obj_t* screen = lv_screen_active();
-    lv_coord_t screen_w = lv_obj_get_width(screen);
-    lv_coord_t screen_h = lv_obj_get_height(screen);
-
-    lv_obj_t* bg = lv_obj_create(screen);
-    lv_obj_set_size(bg, screen_w, screen_h);
-    lv_obj_set_pos(bg, 0, 0);
-    lv_obj_set_style_bg_color(bg, lv_color_hex(0x3A2A1A), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bg, LV_OPA_50, LV_PART_MAIN);
-    lv_obj_set_style_border_width(bg, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(bg, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
-
-    const auto modal_size = ::ui::page_profile::resolve_modal_size(width, height, screen);
-    lv_obj_t* win = lv_obj_create(bg);
-    lv_obj_set_size(win, modal_size.width, modal_size.height);
-    lv_obj_center(win);
-    lv_obj_set_style_bg_color(win, lv_color_hex(0xFFF7E9), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(win, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(win, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(win, lv_color_hex(0xD9B06A), LV_PART_MAIN);
-    lv_obj_set_style_radius(win, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(win, ::ui::page_profile::resolve_modal_pad(), LV_PART_MAIN);
-    lv_obj_clear_flag(win, LV_OBJ_FLAG_SCROLLABLE);
-
-    return bg;
 }
 
 void modal_close(lv_obj_t*& modal_obj)
@@ -482,16 +442,12 @@ void style_mode_button(lv_obj_t* btn, lv_obj_t* label, bool active)
     {
         return;
     }
-    lv_color_t bg = active ? lv_color_hex(0xEBA341) : lv_color_hex(0xFAF0D8);
-    lv_color_t fg = lv_color_hex(0x6B4A1E);
-    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0xE7C98F), LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 12, LV_PART_MAIN);
+    ::ui::components::bottom_bar::style_item(btn);
+    if (active) lv_obj_add_state(btn, LV_STATE_CHECKED);
+    else lv_obj_clear_state(btn, LV_STATE_CHECKED);
     if (label)
     {
-        lv_obj_set_style_text_color(label, fg, LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, lv_color_hex(0x6B4A1E), LV_PART_MAIN);
     }
 }
 
@@ -2177,39 +2133,14 @@ void open_route_preview_help_modal()
     }
 
     modal_prepare_group();
-    state.route_preview_help_modal = create_modal_root(304, 176);
-    lv_obj_set_style_bg_color(state.route_preview_help_modal, lv_color_hex(0x1C1812), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(state.route_preview_help_modal, LV_OPA_70, LV_PART_MAIN);
-    lv_obj_t* win = lv_obj_get_child(state.route_preview_help_modal, 0);
-    if (!win)
-    {
-        modal_close(state.route_preview_help_modal);
-        return;
-    }
-
-    lv_obj_set_flex_flow(win, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(win, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_bg_color(win, lv_color_hex(0xFFF3DF), LV_PART_MAIN);
-    lv_obj_set_style_border_width(win, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(win, lv_color_hex(0x8A6E43), LV_PART_MAIN);
-    lv_obj_set_style_radius(win, 4, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(win, 7, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(win, 7, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(win, 5, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(win, 5, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(win, 2, LV_PART_MAIN);
-    lv_obj_add_flag(win, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(win, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(win, LV_SCROLLBAR_MODE_AUTO);
+    const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
+                                                              {"Preview Help", 304, 176, [](lv_event_t*)
+                                                               { close_route_preview_help_modal(); },
+                                                               on_route_preview_help_key});
+    state.route_preview_help_modal = frame.overlay;
+    lv_obj_t* win = frame.body;
     lv_obj_add_flag(win, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(win, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-    lv_obj_add_event_cb(win, on_route_preview_help_key, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* title = lv_label_create(win);
-    ::ui::i18n::set_label_text(title, "Preview Help");
-    lv_obj_set_width(title, LV_PCT(100));
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), LV_PART_MAIN);
 
     auto add_keycap = [](lv_obj_t* parent, const char* text, lv_coord_t width)
     {
@@ -2291,6 +2222,7 @@ void open_route_preview_help_modal()
 
     lv_obj_move_foreground(state.route_preview_help_modal);
     lv_group_add_obj(state.modal_group, win);
+    lv_group_add_obj(state.modal_group, frame.close);
     lv_group_focus_obj(win);
 }
 
@@ -2983,17 +2915,6 @@ void set_mode(TrackerPageState::Mode mode)
     {
         lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     }
-    if (state.start_stop_btn)
-    {
-        if (mode != TrackerPageState::Mode::Route)
-        {
-            lv_obj_clear_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
-        }
-        else
-        {
-            lv_obj_add_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
 
     if (mode == TrackerPageState::Mode::Record)
     {
@@ -3033,28 +2954,9 @@ void update_start_stop_button()
 {
     auto& state = g_tracker_state;
     const bool recording = platform::ui::tracker::is_recording();
-    if (state.start_stop_label)
-    {
-        ::ui::i18n::set_label_text(state.start_stop_label, state.mode == TrackerPageState::Mode::Navigation ? "New navigation" : recording ? "Stop recording"
-                                                                                                                                           : "Start recording");
-        int text_width = 0;
-        for (const char* key : {"Start recording", "Stop recording", "New navigation"})
-        {
-            lv_point_t size;
-            lv_text_get_size(&size, ::ui::i18n::tr(key),
-                             lv_obj_get_style_text_font(state.start_stop_label, LV_PART_MAIN),
-                             lv_obj_get_style_text_letter_space(state.start_stop_label, LV_PART_MAIN),
-                             0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-            text_width = std::max<int>(text_width, size.x);
-        }
-        const int inset = lv_obj_get_style_pad_left(state.start_stop_btn, LV_PART_MAIN) +
-                          lv_obj_get_style_pad_right(state.start_stop_btn, LV_PART_MAIN) +
-                          2 * lv_obj_get_style_border_width(state.start_stop_btn, LV_PART_MAIN);
-        lv_obj_set_width(state.start_stop_btn,
-                         std::max<int>(bottom_bar_button_width(), text_width + inset + 2));
-        lv_obj_set_style_max_width(state.start_stop_btn, LV_PCT(100), 0);
-        lv_label_set_long_mode(state.start_stop_label, LV_LABEL_LONG_DOT);
-    }
+    if (!state.start_stop_btn) return;
+    if (state.mode == TrackerPageState::Mode::Record && recording) lv_obj_clear_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
 }
 
 size_t utf8_count_chars(const std::string& text)
@@ -3506,10 +3408,70 @@ void on_start_stop_clicked(lv_event_t*)
     schedule_deferred_record_list_refresh(120);
 }
 
+enum class CategoryAction : uint8_t
+{
+    View,
+    New,
+    Current
+};
+
+void on_category_action(lv_event_t* event)
+{
+    const auto value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+    const auto mode = static_cast<TrackerPageState::Mode>(value >> 2);
+    const auto action = static_cast<CategoryAction>(value & 3);
+    focus_main_panel();
+    set_mode(mode);
+    if (action == CategoryAction::View) return;
+    if (action == CategoryAction::New)
+    {
+        if (mode == TrackerPageState::Mode::Record && platform::ui::tracker::is_recording()) return;
+        on_start_stop_clicked(nullptr);
+        if (mode == TrackerPageState::Mode::Navigation || !platform::ui::tracker::is_recording()) return;
+    }
+    auto& state = g_tracker_state;
+    if (mode == TrackerPageState::Mode::Record)
+    {
+        std::string path;
+        if (!platform::ui::tracker::current_path(path)) return;
+        refresh_record_list();
+        const auto name = path_basename(path);
+        const auto found = std::find(s_record_names.begin(), s_record_names.end(), name);
+        if (found != s_record_names.end())
+        {
+            state.selected_record_idx = static_cast<int>(found - s_record_names.begin());
+            state.selected_record = name;
+            update_record_page();
+        }
+    }
+    else
+    {
+        state.selected_route = path_basename(app::appFacade().readConfig().route_path);
+        update_route_page();
+        open_route_preview_page();
+    }
+}
+
+void show_category_menu(TrackerPageState::Mode mode)
+{
+    auto* panel = lv_obj_create(g_tracker_state.root);
+    const bool recording = platform::ui::tracker::is_recording();
+    const auto& cfg = app::appFacade().readConfig();
+    const bool current = mode == TrackerPageState::Mode::Record ? recording : cfg.route_enabled && std::string(cfg.route_path).find(std::string(platform::ui::navigation::directory()) + "/") == 0;
+    const char* labels[] = {"View", "New", "Current"};
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        auto* item = ::ui::components::bottom_bar::add_button(panel, labels[i], on_category_action,
+                                                              reinterpret_cast<void*>((static_cast<uintptr_t>(mode) << 2) | i));
+        lv_obj_set_height(item, filter_button_height());
+        if ((i == 1 && mode == TrackerPageState::Mode::Record && recording) || (i == 2 && !current)) lv_obj_add_state(item, LV_STATE_DISABLED);
+    }
+    tracker::ui::input::tracker_show_submenu(panel);
+}
+
 void on_mode_record_clicked(lv_event_t*)
 {
-    set_mode(TrackerPageState::Mode::Record);
-    focus_main_panel();
+    show_category_menu(TrackerPageState::Mode::Record);
 }
 
 void on_mode_route_clicked(lv_event_t*)
@@ -3518,12 +3480,9 @@ void on_mode_route_clicked(lv_event_t*)
     focus_main_panel();
 }
 
-void on_mode_navigation(lv_event_t* event)
+void on_mode_navigation(lv_event_t*)
 {
-    const auto code = lv_event_get_code(event);
-    if (code == LV_EVENT_KEY && lv_event_get_key(event) != LV_KEY_ENTER) return;
-    set_mode(TrackerPageState::Mode::Navigation);
-    if (code != LV_EVENT_FOCUSED) focus_main_panel();
+    show_category_menu(TrackerPageState::Mode::Navigation);
 }
 
 void on_list_item_clicked(lv_event_t* e)
@@ -3701,30 +3660,17 @@ void open_action_menu_modal()
     const int modal_content_h = 56 + static_cast<int>(action_count) *
                                          static_cast<int>(action_menu_button_height() + action_menu_row_gap());
     const int modal_h = std::min<int>(max_modal_h, modal_content_h);
-    state.action_menu_modal = create_modal_root(190, modal_h);
-    lv_obj_t* win = lv_obj_get_child(state.action_menu_modal, 0);
-    if (!win)
-    {
-        modal_close(state.action_menu_modal);
-        return;
-    }
-
-    lv_obj_set_flex_flow(win, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(win, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(win, 4, LV_PART_MAIN);
-
-    lv_obj_t* title_label = lv_label_create(win);
     const char* title = (state.mode == TrackerPageState::Mode::Record) ? "Track Actions" : "Route Actions";
-    ::ui::i18n::set_label_text(title_label, title);
-    lv_obj_set_width(title_label, LV_PCT(100));
-    lv_label_set_long_mode(title_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t* list = lv_obj_create(win);
-    lv_obj_set_width(list, LV_PCT(100));
-    lv_obj_set_height(list, 0);
-    lv_obj_set_flex_grow(list, 1);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
+                                                              {title, 190, static_cast<lv_coord_t>(modal_h), [](lv_event_t*)
+                                                               {
+                                                                   modal_close(g_tracker_state.action_menu_modal);
+                                                                   focus_main_panel();
+                                                               },
+                                                               on_action_menu_key});
+    state.action_menu_modal = frame.overlay;
+    lv_group_add_obj(state.modal_group, frame.close);
+    lv_obj_t* list = frame.body;
     lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
@@ -3862,42 +3808,9 @@ void on_list_item_defocused(lv_event_t* e)
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
 }
 
-void on_mode_record_focused(lv_event_t*)
-{
-    set_mode(TrackerPageState::Mode::Record);
-}
-
 void on_mode_route_focused(lv_event_t*)
 {
     set_mode(TrackerPageState::Mode::Route);
-}
-
-void on_mode_record_key(lv_event_t* e)
-{
-    if (!e)
-    {
-        return;
-    }
-    uint32_t key = lv_event_get_key(e);
-    if (key != LV_KEY_ENTER)
-    {
-        return;
-    }
-    on_mode_record_clicked(e);
-}
-
-void on_mode_route_key(lv_event_t* e)
-{
-    if (!e)
-    {
-        return;
-    }
-    uint32_t key = lv_event_get_key(e);
-    if (key != LV_KEY_ENTER)
-    {
-        return;
-    }
-    on_mode_route_clicked(e);
 }
 
 void on_route_load_clicked(lv_event_t*)
@@ -4074,13 +3987,24 @@ void open_delete_confirm_modal()
     }
 
     modal_prepare_group();
-    state.del_confirm_modal = create_modal_root(280, 140);
-    lv_obj_t* win = lv_obj_get_child(state.del_confirm_modal, 0);
+    const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
+                                                              {"Delete", 280, 140, on_del_cancel_clicked, [](lv_event_t* event)
+                                                               {
+                                                                   if (lv_event_get_key(event) == LV_KEY_ESC || lv_event_get_key(event) == LV_KEY_BACKSPACE)
+                                                                   {
+                                                                       lv_event_stop_bubbling(event);
+                                                                       on_del_cancel_clicked(event);
+                                                                   }
+                                                               }});
+    state.del_confirm_modal = frame.overlay;
+    lv_obj_t* win = frame.body;
+    lv_group_add_obj(state.modal_group, frame.close);
 
     const std::string msg = ::ui::i18n::format("Delete %s?", state.pending_delete_name.c_str());
     lv_obj_t* label = lv_label_create(win);
     ::ui::i18n::set_label_text_raw(label, msg.c_str());
-    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
 
     lv_obj_t* btn_row = lv_obj_create(win);
     lv_obj_set_size(btn_row, LV_PCT(100), LV_SIZE_CONTENT);
@@ -4174,8 +4098,6 @@ void init_page(lv_obj_t* parent)
         ::ui::i18n::set_label_text(state.mode_navigation_label, "Nav");
         lv_obj_center(state.mode_navigation_label);
         lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_CLICKED, nullptr);
-        lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_FOCUSED, nullptr);
-        lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_KEY, nullptr);
     }
 
     state.status_label = lv_label_create(state.list_panel);
@@ -4191,13 +4113,8 @@ void init_page(lv_obj_t* parent)
     lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
 
     state.bottom_bar = ::ui::components::bottom_bar::create(state.root);
-    state.start_stop_btn = lv_btn_create(state.bottom_bar);
-    lv_obj_set_size(state.start_stop_btn, bottom_bar_button_width(), filter_button_height());
-    state.start_stop_label = lv_label_create(state.start_stop_btn);
-    lv_obj_set_width(state.start_stop_label, LV_PCT(100));
-    lv_label_set_long_mode(state.start_stop_label, LV_LABEL_LONG_DOT);
-    lv_obj_center(state.start_stop_label);
-    apply_action_button(state.start_stop_btn, state.start_stop_label);
+    state.start_stop_btn = ::ui::components::bottom_bar::add_button(state.bottom_bar, "Stop recording", on_start_stop_clicked);
+    state.start_stop_label = lv_obj_get_child(state.start_stop_btn, 0);
 
     ::ui::widgets::TopBarConfig cfg;
     cfg.height = page_profile().top_bar_height;
@@ -4207,11 +4124,7 @@ void init_page(lv_obj_t* parent)
 
     lv_obj_add_event_cb(state.mode_record_btn, on_mode_record_clicked, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(state.mode_route_btn, on_mode_route_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(state.mode_record_btn, on_mode_record_focused, LV_EVENT_FOCUSED, nullptr);
     lv_obj_add_event_cb(state.mode_route_btn, on_mode_route_focused, LV_EVENT_FOCUSED, nullptr);
-    lv_obj_add_event_cb(state.mode_record_btn, on_mode_record_key, LV_EVENT_KEY, nullptr);
-    lv_obj_add_event_cb(state.mode_route_btn, on_mode_route_key, LV_EVENT_KEY, nullptr);
-    lv_obj_add_event_cb(state.start_stop_btn, on_start_stop_clicked, LV_EVENT_CLICKED, nullptr);
 
     set_mode(TrackerPageState::Mode::Record);
     refresh_page();

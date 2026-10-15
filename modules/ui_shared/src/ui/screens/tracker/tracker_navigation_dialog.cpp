@@ -3,6 +3,7 @@
 #include "platform/ui/gps_runtime.h"
 #include "platform/ui/navigation_runtime.h"
 #include "ui/app_runtime.h"
+#include "ui/components/dialog_frame.h"
 #include "ui/components/map_poi_search.h"
 #include "ui/components/two_pane_styles.h"
 #include "ui/localization.h"
@@ -213,37 +214,14 @@ bool open(lv_obj_t* parent, Completed completed, void* context)
         return false;
     }
     ::set_default_group(state.group);
-    state.root = lv_obj_create(parent);
-    lv_obj_add_flag(state.root, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_size(state.root, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(state.root, lv_color_hex(0xFFF8EE), 0);
-    lv_obj_set_style_bg_opa(state.root, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(state.root, 8, 0);
-    lv_obj_set_flex_flow(state.root, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(state.root, 4, 0);
-    lv_obj_clear_flag(state.root, LV_OBJ_FLAG_SCROLLABLE);
-    auto* header = lv_obj_create(state.root);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, LV_PCT(100), ::ui::page_profile::current().large_touch_hitbox ? 44 : 32);
-    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-    auto* title = lv_label_create(header);
-    lv_obj_set_width(title, 0);
-    lv_obj_set_flex_grow(title, 1);
-    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-    ::ui::i18n::set_label_text(title, "New navigation");
-    auto* cancel = button(header, "Cancel", [](lv_event_t* event)
-                          { if (activate(event)) close(); });
-    lv_obj_set_width(cancel, 84);
-    auto* body = lv_obj_create(state.root);
-    lv_obj_remove_style_all(body);
-    lv_obj_set_size(body, LV_PCT(100), 0);
-    lv_obj_set_flex_grow(body, 1);
-    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(body, 4, 0);
-    lv_obj_set_scroll_dir(body, LV_DIR_VER);
-    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    const auto frame = ::ui::components::dialog_frame::create(parent,
+                                                              {"New navigation", lv_obj_get_width(parent), lv_obj_get_height(parent),
+                                                               [](lv_event_t*)
+                                                               { close(); },
+                                                               key});
+    state.root = frame.overlay;
+    lv_group_add_obj(state.group, frame.close);
+    auto* body = frame.body;
     auto* origin_title = lv_label_create(body);
     ::ui::i18n::set_label_text(origin_title, "Origin");
     state.origin = button(body, "Current location", search, 0);

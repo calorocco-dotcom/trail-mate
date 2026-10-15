@@ -60,5 +60,10 @@ void top_bar_set_right_text_ascii(TopBar& bar, const char* text);
  */
 void top_bar_set_back_callback(TopBar& bar, void (*cb)(void*), void* user_data);
 
+// Same title-bar metrics and theme as a page, with a compact right-side close.
+lv_obj_t* top_bar_create_dialog_header(lv_obj_t* parent, const char* title,
+                                       lv_event_cb_t on_close, void* context = nullptr,
+                                       lv_obj_t** close_button = nullptr);
+
 } // namespace widgets
 } // namespace ui
