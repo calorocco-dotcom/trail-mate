@@ -11,6 +11,7 @@ describe the candidate workflow rather than an announced stable release.
 | `21-Trails.md` | `21. Trails and Decentralized Sharing` |
 | `22-Web-Device-Management.md` | `22. Web Device Management` |
 | `23-Identity-and-Privacy.md` | `23. Device Identity and Sharing Privacy` |
+| `24-Offline-Navigation.md` | `24. Offline Navigation and Map Controls` |
 
 Related existing pages: Quick Start, Installation & Flashing, Configuration
 Guide, SD Configuration Lifecycle, Offline Maps, Trail Mate Center, Reticulum

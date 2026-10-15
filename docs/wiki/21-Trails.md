@@ -80,6 +80,11 @@ depends on a reachable directory that has the requested content.
 4. Let device confirmation finish before starting another publication. If it is
    incomplete, continue the retained task rather than discarding its identity.
 
+Synchronization also cleans the exact temporary KML, manifest, receipt and
+attachment uploads after the device acknowledgement has been retained. Keep
+the browser draft and signing bindings until this finishes. Cleanup removes
+temporary transfer files, not the stored route package or published content.
+
 Updating a confirmed draft keeps its publication ID and references the previous
 signed version. Archiving publishes an archive state; it does not erase copies
 held by recipients. Only your author identity can maintain its publication.
@@ -93,6 +98,11 @@ routes can provide map overlays, elevation previews and supported waypoint
 images. Package installation depends on firmware capabilities, storage and the
 resources included in the package. A successful browser preview is not proof
 that every KML presentation feature can render on every embedded target.
+
+The Navigation filter adds locally calculated origin-to-destination foot routes
+on supported targets with routing data. It reuses the existing POI picker and
+saves KML plans separately from recordings and imported routes. See
+[[24. Offline Navigation and Map Controls]] for the complete device workflow.
 
 See the existing Offline Maps and Trail Mate Center guides for preparing map
 coverage around a route. See Device Identity and Sharing Privacy before
