@@ -902,10 +902,15 @@ extern "C" bool trail_mate_t_display_p4_display_runtime_init(void)
 
     create_boot_screen();
     (void)start_app_lifecycle_ui_timer();
-    // The P2 keyboard delivers keys directly to the active Trail UI route.
-    // Start its LVGL timer only after the boot screen and lifecycle dispatcher
-    // exist, matching the P4 keyboard's single-threaded UI ownership model.
-    if (!keyboard_controller_ready || !trail_mate_t_display_p4_keyboard_start())
+    // Start the keypad and recovery timer even if the early controller probe
+    // failed. A missing keyboard can attach later without restarting the UI.
+    bool keyboard_ready = false;
+    if (trail_mate_t_display_p4_display_lock(0))
+    {
+        keyboard_ready = trail_mate_t_display_p4_keyboard_start();
+        trail_mate_t_display_p4_display_unlock();
+    }
+    if (!keyboard_ready)
     {
         ESP_LOGI(kTag, "T-Display-P4 keyboard module is not available");
     }

@@ -13,6 +13,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+// LVGL 9 exposes callback/user-data getters but no event-filter getter.
+// Inspect the descriptor only to distinguish explicit page KEY contracts from
+// unrelated DELETE, draw and click callbacks.
+#include "src/misc/lv_event_private.h"
 #include "ui/app_runtime.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/ui_common.h"
@@ -32,6 +36,7 @@ constexpr uint32_t kResetDelayMs = 10;
 constexpr uint32_t kPollIntervalMs = 30;
 constexpr uint32_t kI2cFailureBackoffMs = 500;
 constexpr uint32_t kI2cFailureLogIntervalMs = 2000;
+constexpr uint32_t kAttachRetryMs = 5000;
 constexpr uint8_t kTca8418FifoDepth = 10;
 constexpr uint32_t kAltDoublePressMs = 350;
 
@@ -43,7 +48,7 @@ constexpr uint32_t kKeyWin = 0x8F;
 constexpr uint32_t kKeyShift = 0x90;
 constexpr uint32_t kKeyF11 = 0x91;
 constexpr uint32_t kKeyRecord = 0x92;
-constexpr size_t kEventQueueCapacity = 16;
+constexpr size_t kEventQueueCapacity = 32;
 
 // These are the LilyGO TCA8418 scan maps used by the K270 keyboard example.
 // The controller reports a key number (1-based), not a matrix coordinate.
@@ -70,7 +75,6 @@ constexpr std::array<uint32_t, 68> kShiftKeyMap = {
     0x9F, '(', LV_KEY_BACKSPACE, LV_KEY_ENTER, 0xA2, LV_KEY_ENTER, ')', LV_KEY_RIGHT};
 
 bool s_ready = false;
-bool s_initialization_attempted = false;
 bool s_caps_lock = false;
 bool s_shift = false;
 bool s_fn = false;
@@ -78,9 +82,26 @@ lv_timer_t* s_poll_timer = nullptr;
 uint32_t s_next_i2c_attempt_ms = 0;
 uint32_t s_last_i2c_failure_log_ms = 0;
 uint32_t s_last_alt_press_ms = 0;
-std::array<uint32_t, kEventQueueCapacity> s_event_queue{};
+struct KeyEvent
+{
+    uint8_t number = 0;
+    bool pressed = false;
+};
+std::array<KeyEvent, kEventQueueCapacity> s_event_queue{};
 size_t s_event_queue_head = 0;
 size_t s_event_queue_count = 0;
+lv_indev_t* s_keypad = nullptr;
+lv_group_t* s_route_group = nullptr;
+lv_obj_t* s_route_proxy = nullptr;
+lv_obj_t* s_pressed_screen = nullptr;
+lv_obj_t* s_pressed_focus = nullptr;
+lv_obj_t* s_route_page = nullptr;
+uint8_t s_pressed_number = 0;
+uint32_t s_pressed_key = 0;
+bool s_pressed_consumed = false;
+bool s_release_pending = false;
+uint8_t s_i2c_failures = 0;
+uint32_t s_next_attach_ms = 0;
 std::shared_ptr<cpp_bus_driver::SoftwareI2c> s_xl9555_bus;
 std::shared_ptr<cpp_bus_driver::SoftwareI2c> s_tca8418_bus;
 std::unique_ptr<cpp_bus_driver::Xl95x5> s_xl9555;
@@ -103,14 +124,8 @@ bool reset_tca8418_via_xl9555()
 {
     using Xl95x5 = cpp_bus_driver::Xl95x5;
     if (s_xl9555 == nullptr ||
-        !s_xl9555->SetGpioMode(Xl95x5::Pin::kIo6, Xl95x5::Mode::kOutput) ||
-        !s_xl9555->GpioWrite(Xl95x5::Pin::kIo6, 1))
-    {
-        return false;
-    }
-    vTaskDelay(pdMS_TO_TICKS(kResetDelayMs));
-
-    if (!s_xl9555->GpioWrite(Xl95x5::Pin::kIo6, 0))
+        !s_xl9555->GpioWrite(Xl95x5::Pin::kIo6, 0) ||
+        !s_xl9555->SetGpioMode(Xl95x5::Pin::kIo6, Xl95x5::Mode::kOutput))
     {
         return false;
     }
@@ -182,6 +197,7 @@ bool initialize_controller()
     s_next_i2c_attempt_ms = 0;
     s_last_i2c_failure_log_ms = 0;
     s_last_alt_press_ms = 0;
+    s_i2c_failures = 0;
     board.setKeyboardReady(true);
     // Board startup owns the independent GPIO47 backlight. Input detection
     // must neither gate that output nor reset a brightness already selected.
@@ -279,26 +295,26 @@ uint32_t translate_key(uint8_t key_number)
     return base;
 }
 
-void enqueue_key(uint32_t key)
+void enqueue_key(KeyEvent event)
 {
-    if (key == 0 || s_event_queue_count == s_event_queue.size())
+    if (s_event_queue_count == s_event_queue.size())
     {
         return;
     }
 
     const size_t tail = (s_event_queue_head + s_event_queue_count) % s_event_queue.size();
-    s_event_queue[tail] = key;
+    s_event_queue[tail] = event;
     ++s_event_queue_count;
 }
 
-uint32_t dequeue_key()
+KeyEvent dequeue_key()
 {
     if (s_event_queue_count == 0)
     {
-        return 0;
+        return {};
     }
 
-    const uint32_t key = s_event_queue[s_event_queue_head];
+    const KeyEvent key = s_event_queue[s_event_queue_head];
     s_event_queue_head = (s_event_queue_head + 1U) % s_event_queue.size();
     --s_event_queue_count;
     return key;
@@ -403,23 +419,47 @@ bool route_to_textarea(uint32_t key)
 bool route_to_group(uint32_t key)
 {
     lv_group_t* group = ui_get_active_app() != nullptr ? app_g : menu_g;
-    if (group == nullptr || lv_group_get_focused(group) == nullptr)
+    lv_obj_t* focus = group != nullptr ? lv_group_get_focused(group) : nullptr;
+    if (focus == nullptr || !lv_obj_is_valid(focus))
     {
         return false;
     }
-    return lv_group_send_data(group, key) == LV_RESULT_OK;
+    // Groups can retain objects from an inactive page. Never bind the physical
+    // keypad to one of those objects, even if sending an event would return OK.
+    lv_obj_t* root = focus;
+    while (lv_obj_get_parent(root) != nullptr)
+    {
+        root = lv_obj_get_parent(root);
+    }
+    if (root != lv_screen_active())
+    {
+        return false;
+    }
+    (void)key;
+    lv_indev_set_group(s_keypad, group);
+    return true;
+}
+
+bool has_key_handler(lv_obj_t* object)
+{
+    if (object == nullptr || !lv_obj_is_valid(object)) return false;
+    for (uint32_t index = 0; index < lv_obj_get_event_count(object); ++index)
+    {
+        const auto filter = lv_obj_get_event_dsc(object, index)->filter & ~LV_EVENT_PREPROCESS;
+        if (filter == LV_EVENT_KEY) return true;
+    }
+    return false;
 }
 
 bool route_to_screen(uint32_t key)
 {
-    lv_obj_t* const screen = lv_screen_active();
-    if (screen == nullptr || !lv_obj_is_valid(screen) || lv_obj_get_event_count(screen) == 0)
+    if (!has_key_handler(s_route_page))
     {
         return false;
     }
 
     uint32_t parameter = key;
-    (void)lv_obj_send_event(screen, LV_EVENT_KEY, &parameter);
+    (void)lv_obj_send_event(s_route_page, LV_EVENT_KEY, &parameter);
     return true;
 }
 
@@ -441,6 +481,7 @@ void route_key(uint32_t key)
         if (ui::menu_runtime::handleWalkieKey(character, 1) ||
             ui::menu_runtime::handleShortcutKey(character, 1))
         {
+            s_pressed_consumed = true;
             return;
         }
     }
@@ -455,28 +496,151 @@ void route_key(uint32_t key)
     // failure mode of the former generic keypad-device integration.
     if (key == LV_KEY_ESC && ui_get_active_app() != nullptr)
     {
+        s_pressed_consumed = true;
         ui_request_exit_to_menu();
         return;
     }
 
-    if (route_to_group(key))
+    (void)route_to_screen(key);
+}
+
+void route_proxy_cb(lv_event_t* event)
+{
+    if (!s_pressed_consumed) route_key(lv_event_get_key(event));
+}
+
+void reset_pressed_key()
+{
+    if (s_keypad != nullptr)
     {
+        lv_indev_reset(s_keypad, nullptr);
+        lv_indev_wait_release(s_keypad);
+        s_release_pending = true;
+    }
+    if (s_pressed_focus != nullptr && lv_obj_is_valid(s_pressed_focus))
+    {
+        lv_obj_remove_state(s_pressed_focus, LV_STATE_PRESSED);
+    }
+    s_pressed_number = 0;
+    s_pressed_key = 0;
+    s_pressed_screen = nullptr;
+    s_pressed_focus = nullptr;
+    s_pressed_consumed = false;
+    s_route_page = nullptr;
+}
+
+lv_obj_t* find_page_key_target(lv_obj_t* root)
+{
+    if (root == nullptr || !lv_obj_is_valid(root) || lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return nullptr;
+    // Page roots are plain containers with explicit KEY handlers. Do not pick
+    // arbitrary buttons or textareas, and do not steal a grouped input target.
+    if (lv_obj_check_type(root, &lv_obj_class) && lv_obj_get_group(root) == nullptr && has_key_handler(root)) return root;
+    for (uint32_t index = lv_obj_get_child_count(root); index > 0; --index)
+    {
+        if (auto* target = find_page_key_target(lv_obj_get_child(root, index - 1))) return target;
+    }
+    return nullptr;
+}
+
+void select_key_route(uint32_t key)
+{
+    s_route_page = find_page_key_target(lv_screen_active());
+    lv_indev_set_group(s_keypad, s_route_group);
+    // Explicit text and menu shortcuts retain their Trail semantics through a
+    // proxy. All other controls use LVGL's real keypad state machine, including
+    // Enter click/release, Tab focus movement and long-press repetition.
+    if ((key_is_text_input(key) && find_focused_textarea(lv_screen_active()) != nullptr) ||
+        (key == LV_KEY_ESC && ui_get_active_app() != nullptr)) return;
+    if (key >= 0x20U && key <= 0x7EU)
+    {
+        TextareaSearch search{};
+        find_visible_textareas(lv_screen_active(), &search);
+        if (search.count == 1 || ui_get_active_app() == nullptr) return;
+    }
+    lv_group_t* group = ui_get_active_app() != nullptr ? app_g : menu_g;
+    lv_obj_t* focus = group != nullptr ? lv_group_get_focused(group) : nullptr;
+    // A root KEY listener owns ordinary keys when the focused control has no
+    // KEY listener. Activation and focus traversal still belong to the group.
+    if (key != LV_KEY_ENTER && key != LV_KEY_NEXT && key != LV_KEY_PREV &&
+        s_route_page != nullptr && !has_key_handler(focus)) return;
+    (void)route_to_group(key);
+}
+
+void keypad_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+{
+    data->continue_reading = false;
+    data->key = s_pressed_key;
+    data->state = LV_INDEV_STATE_RELEASED;
+    if (s_release_pending)
+    {
+        s_release_pending = false;
+        return;
+    }
+    if (!s_ready) return;
+
+    if (s_pressed_number != 0 &&
+        (s_pressed_screen != lv_screen_active() ||
+         (s_route_page != nullptr && s_route_page != find_page_key_target(lv_screen_active())) ||
+         (s_pressed_key != LV_KEY_NEXT && s_pressed_key != LV_KEY_PREV &&
+          s_pressed_focus != lv_group_get_focused(lv_indev_get_group(indev)))))
+    {
+        // Do not deliver a release/click to a replacement page or focus target.
+        reset_pressed_key();
+        s_release_pending = false;
         return;
     }
 
-    // Several Trail pages intentionally register their root as the keyboard
-    // target instead of adding it to app_g. This direct, same-thread route
-    // preserves that contract without reviving a global default-group input.
-    if (route_to_screen(key))
+    if (s_event_queue_count != 0)
     {
-        return;
+        const KeyEvent next = s_event_queue[s_event_queue_head];
+        if (next.pressed && s_pressed_number != 0)
+        {
+            // LVGL keypad is a single-key device. Release the previous key on
+            // its own turn before accepting a second key; retain the FIFO item.
+            s_pressed_number = 0;
+            return;
+        }
+        const KeyEvent event = dequeue_key();
+        if (event.pressed)
+        {
+            const uint32_t key = translate_key(event.number);
+            if (key != 0)
+            {
+                s_pressed_number = event.number;
+                s_pressed_key = key;
+                select_key_route(key);
+                s_pressed_screen = lv_screen_active();
+                s_pressed_focus = lv_group_get_focused(lv_indev_get_group(indev));
+                s_pressed_consumed = false;
+                lv_display_trigger_activity(nullptr);
+                trail_mate_idf_note_user_activity();
+            }
+        }
+        else if (event.number == s_pressed_number)
+        {
+            s_pressed_number = 0;
+        }
     }
+    data->key = s_pressed_key;
+    data->state = s_pressed_number != 0 && !s_pressed_consumed
+                      ? LV_INDEV_STATE_PRESSED
+                      : LV_INDEV_STATE_RELEASED;
 }
 
 void note_i2c_failure(const char* operation)
 {
     const uint32_t now = lv_tick_get();
     s_next_i2c_attempt_ms = now + kI2cFailureBackoffMs;
+    if (++s_i2c_failures >= 3)
+    {
+        s_ready = false;
+        boards::t_display_p4::TDisplayP4Board::instance().setKeyboardReady(false);
+        reset_pressed_key();
+        s_event_queue_count = 0;
+        s_event_queue_head = 0;
+        reset_vendor_driver_state();
+        s_next_attach_ms = now + kAttachRetryMs;
+    }
     if (s_last_i2c_failure_log_ms == 0 ||
         static_cast<uint32_t>(now - s_last_i2c_failure_log_ms) >= kI2cFailureLogIntervalMs)
     {
@@ -493,6 +657,9 @@ void drain_fifo()
     {
         return;
     }
+    // Leave hardware events in the controller until there is space for a full
+    // FIFO. Dropping a release here would leave LVGL repeating a stuck key.
+    if (s_event_queue.size() - s_event_queue_count < kTca8418FifoDepth) return;
 
     if (s_tca8418 == nullptr)
     {
@@ -502,6 +669,27 @@ void drain_fifo()
 
     // Do not read TCA8418 registers in Trail. The vendor driver's API owns
     // FIFO count, event decoding, and interrupt acknowledgement semantics.
+    const uint8_t irq_flags = s_tca8418->GetIrqFlag();
+    cpp_bus_driver::Tca8418::IrqStatus irq_status{};
+    if (!s_tca8418->ParseIrqStatus(irq_flags, irq_status))
+    {
+        note_i2c_failure("LilyGO TCA8418 IRQ status");
+        return;
+    }
+    if (irq_status.fifo_overflow_flag)
+    {
+        // An overflow can lose a release edge. Discard that incomplete chord
+        // instead of leaving a key repeating forever.
+        reset_pressed_key();
+        s_event_queue_head = s_event_queue_count = 0;
+        s_shift = s_fn = false;
+        if (!s_tca8418->ClearEventFifo() || !s_tca8418->ClearIrqFlag(irq_flags))
+        {
+            note_i2c_failure("LilyGO TCA8418 FIFO overflow recovery");
+        }
+        ESP_LOGW(kTag, "P4 keyboard FIFO overflow; cancelled incomplete key state");
+        return;
+    }
     const uint8_t reported_count = s_tca8418->GetFingerCount();
     if (reported_count == 0xFFU)
     {
@@ -511,6 +699,7 @@ void drain_fifo()
 
     if (reported_count == 0)
     {
+        s_i2c_failures = 0;
         return;
     }
     if (reported_count > kTca8418FifoDepth)
@@ -528,20 +717,20 @@ void drain_fifo()
             return;
         }
 
-        // The controller reports both edges. Queue only press edges, and do
-        // not route them here: a route may replace the active page tree, so
-        // the timer must deliver at most one semantic action per turn.
-        if (event.event_type != cpp_bus_driver::Tca8418::EventType::kKeypad ||
-            !event.press_flag)
+        if (event.event_type != cpp_bus_driver::Tca8418::EventType::kKeypad)
         {
             continue;
         }
-        enqueue_key(translate_key(event.num));
+        enqueue_key({event.num, event.press_flag});
     }
 
     if (!s_tca8418->ClearIrqFlag(cpp_bus_driver::Tca8418::IrqFlag::kKeyEvents))
     {
         note_i2c_failure("LilyGO TCA8418 IRQ acknowledgement");
+    }
+    else
+    {
+        s_i2c_failures = 0;
     }
 }
 
@@ -550,22 +739,13 @@ void poll_timer_cb(lv_timer_t* timer)
     (void)timer;
     if (!s_ready)
     {
+        if (static_cast<int32_t>(lv_tick_get() - s_next_attach_ms) >= 0)
+        {
+            (void)trail_mate_t_display_p4_keyboard_initialize();
+        }
         return;
     }
-
-    uint32_t key = dequeue_key();
-    if (key != 0)
-    {
-        route_key(key);
-        return;
-    }
-
     drain_fifo();
-    key = dequeue_key();
-    if (key != 0)
-    {
-        route_key(key);
-    }
 }
 
 } // namespace
@@ -582,18 +762,14 @@ extern "C" bool trail_mate_t_display_p4_keyboard_initialize(void)
         return false;
     }
 
-    // Do not silently fall back to probing from the running LVGL task.  The
-    // official P4 keyboard example performs this 5 us software-I2C exchange
-    // before it starts LVGL, and a failed early attach must remain observable
-    // rather than being retried later under the display workload.
-    if (s_initialization_attempted)
+    if (static_cast<int32_t>(lv_tick_get() - s_next_attach_ms) < 0)
     {
         return false;
     }
 
-    s_initialization_attempted = true;
     boards::t_display_p4::TDisplayP4Board::instance().setKeyboardReady(false);
     s_ready = initialize_controller();
+    if (!s_ready) s_next_attach_ms = lv_tick_get() + kAttachRetryMs;
     return s_ready;
 }
 
@@ -604,22 +780,44 @@ extern "C" bool trail_mate_t_display_p4_keyboard_start(void)
         return s_ready;
     }
 
-    if (!trail_mate_t_display_p4_keyboard_initialize())
+    if (!boards::t_display_p4::TDisplayP4Board::profile().supports_keyboard_module)
     {
         return false;
     }
 
-    s_poll_timer = lv_timer_create(poll_timer_cb, kPollIntervalMs, nullptr);
+    // Keep the UI adapter alive when an optional keyboard is absent. Recovery
+    // and FIFO access share the LVGL task, so no vendor driver is used concurrently.
+    (void)trail_mate_t_display_p4_keyboard_initialize();
+    s_route_group = lv_group_create();
+    s_route_proxy = lv_obj_create(lv_layer_sys());
+    s_keypad = lv_indev_create();
+    if (s_route_group != nullptr && s_route_proxy != nullptr && s_keypad != nullptr)
+    {
+        lv_obj_add_flag(s_route_proxy, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(s_route_proxy, route_proxy_cb, LV_EVENT_KEY, nullptr);
+        lv_group_add_obj(s_route_group, s_route_proxy);
+        lv_group_focus_obj(s_route_proxy);
+        lv_indev_set_type(s_keypad, LV_INDEV_TYPE_KEYPAD);
+        lv_indev_set_read_cb(s_keypad, keypad_read_cb);
+        lv_indev_set_group(s_keypad, s_route_group);
+        lv_timer_set_period(lv_indev_get_read_timer(s_keypad), kPollIntervalMs);
+        s_poll_timer = lv_timer_create(poll_timer_cb, kPollIntervalMs, nullptr);
+    }
     if (s_poll_timer == nullptr)
     {
         boards::t_display_p4::TDisplayP4Board::instance().setKeyboardReady(false);
         s_ready = false;
-        s_initialization_attempted = false;
+        if (s_keypad != nullptr) lv_indev_delete(s_keypad);
+        if (s_route_proxy != nullptr) lv_obj_delete(s_route_proxy);
+        if (s_route_group != nullptr) lv_group_delete(s_route_group);
+        s_keypad = nullptr;
+        s_route_proxy = nullptr;
+        s_route_group = nullptr;
         reset_vendor_driver_state();
         ESP_LOGW(kTag, "P4 keyboard could not create the LVGL polling timer");
         return false;
     }
-    return true;
+    return s_ready;
 }
 
 extern "C" bool trail_mate_t_display_p4_keyboard_is_ready(void)

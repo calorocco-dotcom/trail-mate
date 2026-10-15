@@ -1,8 +1,12 @@
+#include "platform/esp/arduino_common/storage/sd_transfer_policy.h"
 #include "platform/esp/common/storage/mount_io_state.h"
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <vector>
 using Sector_t = uint32_t;
 using esp_err_t = int;
 constexpr int ESP_OK = 0;
@@ -34,26 +38,29 @@ struct FsBlockDeviceInterface
 };
 static bool fail = false;
 static unsigned transfers = 0;
+static std::vector<size_t> batches;
 int sdmmc_read_sectors(sdmmc_card_t*, void* output, Sector_t, size_t count)
 {
     ++transfers;
+    batches.push_back(count);
     if (fail) return 1;
     std::memset(output, 0x55, count * 512);
     return 0;
 }
-int sdmmc_write_sectors(sdmmc_card_t*, const void*, Sector_t, size_t)
+int sdmmc_write_sectors(sdmmc_card_t*, const void*, Sector_t, size_t count)
 {
     ++transfers;
+    batches.push_back(count);
     return fail ? 1 : 0;
 }
 namespace platform::esp::arduino_common::storage::detail
 {
 static platform::esp::storage::MountIoState s_mounted;
 constexpr size_t kSdSectorSize = 512;
-static uint8_t s_dma_sector[512];
+alignas(64) static uint8_t s_dma_sector[SdmmcSdTransferPolicy::dma_buffer_bytes];
 #include "idf_sd_block_error_actual.inc"
 } // namespace platform::esp::arduino_common::storage::detail
-static uint8_t buffer[1024];
+alignas(64) static uint8_t buffer[65 * 512 + 64];
 int main()
 {
     using namespace platform::esp::arduino_common::storage::detail;
@@ -88,6 +95,34 @@ int main()
         }
         assert(!result && scope.error() && transfers == before + 1 && s_mounted);
     }
+    fail = false;
+    batches.clear();
+    assert(device.readSectors(0, buffer, 65));
+    assert((batches == std::vector<size_t>{32, 32, 1}));
+    batches.clear();
+    assert(device.writeSectors(0, buffer, 65));
+    assert((batches == std::vector<size_t>{32, 32, 1}));
+    card.host.check_buffer_alignment = [](int, const void*, size_t)
+    { return false; };
+    batches.clear();
+    assert(device.readSectors(0, buffer + 1, 19));
+    assert((batches == std::vector<size_t>{8, 8, 3}));
+    assert(buffer[0] == 0x55 && buffer[19 * 512] == 0x55);
+    batches.clear();
+    assert(device.writeSectors(0, buffer + 1, 19));
+    assert((batches == std::vector<size_t>{8, 8, 3}));
+    card.host.check_buffer_alignment = nullptr;
+    batches.clear();
+    assert(device.readSectors(0, buffer, 19));
+    assert((batches == std::vector<size_t>{8, 8, 3}));
+    batches.clear();
+    assert(device.readSectors(128, nullptr, 0));
+    assert(device.writeSectors(128, nullptr, 0));
+    assert(!device.readSectors(127, buffer, 2));
+    assert(!device.writeSectors(129, buffer, 1));
+    assert(!device.readSectors(0, nullptr, 1));
+    assert(!device.writeSectors(0, buffer, std::numeric_limits<size_t>::max()));
+    assert(batches.empty());
     device.end();
     {
         platform::esp::storage::MountIoErrorScope scope(s_mounted);

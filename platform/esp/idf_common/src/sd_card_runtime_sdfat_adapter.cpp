@@ -2,6 +2,7 @@
 
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/arduino_common/storage/sd_file_lifetime.h"
+#include "platform/esp/arduino_common/storage/sd_transfer_policy.h"
 #include "platform/esp/common/storage/mount_io_state.h"
 
 #include "esp_attr.h"
@@ -75,7 +76,9 @@ volatile bool s_external_block_owner_active = false;
 SemaphoreHandle_t s_storage_mutex = nullptr;
 uint32_t s_last_sd_io_log_ms = 0;
 uint32_t s_suppressed_sd_io_logs = 0;
-alignas(4) DRAM_ATTR uint8_t s_dma_sector[kSdSectorSize];
+// Shared under SdRuntimeBusGuard, never allocated on an ESP task stack. Match
+// L2's bounded bounce batches; P4 additionally needs cache-line alignment.
+alignas(64) DRAM_ATTR uint8_t s_dma_sector[SdmmcSdTransferPolicy::dma_buffer_bytes];
 
 uint32_t now_ms()
 {
@@ -301,57 +304,38 @@ class SdmmcBlockDevice final : public FsBlockDeviceInterface
 
     bool readSector(Sector_t sector, uint8_t* dst) override
     {
-        if (!card_ || !dst)
-        {
-            s_mounted.markFailure();
-            return false;
-        }
-        const esp_err_t err = sdmmc_read_sectors(card_, s_dma_sector, sector, 1);
-        if (err != ESP_OK)
-        {
-            s_mounted.markFailure();
-            ESP_LOGW(kTag,
-                     "raw read sector=%lu failed: %s",
-                     static_cast<unsigned long>(sector),
-                     esp_err_to_name(err));
-            return false;
-        }
-        std::memcpy(dst, s_dma_sector, kSdSectorSize);
-        return true;
+        return readSectors(sector, dst, 1);
     }
 
     bool readSectors(Sector_t sector, uint8_t* dst, size_t ns) override
     {
-        if (!card_ || (!dst && ns > 0))
+        if (!validTransfer(sector, dst, ns))
         {
             s_mounted.markFailure();
             return false;
         }
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || \
-    defined(TRAIL_MATE_ESP_BOARD_TAB5)
-        if (canUseMultiSectorDma(dst, ns))
+        while (ns != 0)
         {
-            const esp_err_t err = sdmmc_read_sectors(card_, dst, sector, ns);
+            size_t batch = std::min(ns, SdmmcSdTransferPolicy::max_direct_sectors);
+            const bool direct = canUseMultiSectorDma(dst, batch);
+            if (!direct) batch = std::min<size_t>(ns, sizeof(s_dma_sector) / kSdSectorSize);
+            uint8_t* target = direct ? dst : s_dma_sector;
+            const esp_err_t err = sdmmc_read_sectors(card_, target, sector, batch);
             if (err != ESP_OK)
             {
                 s_mounted.markFailure();
                 ESP_LOGW(kTag,
                          "raw multi-read sector=%lu count=%u failed: %s",
                          static_cast<unsigned long>(sector),
-                         static_cast<unsigned>(ns),
+                         static_cast<unsigned>(batch),
                          esp_err_to_name(err));
                 return false;
             }
-            return true;
-        }
-#endif
-        for (size_t i = 0; i < ns; ++i)
-        {
-            if (!readSector(sector + static_cast<Sector_t>(i),
-                            dst + (i * kSdSectorSize)))
-            {
-                return false;
-            }
+            const size_t bytes = batch * kSdSectorSize;
+            if (!direct) std::memcpy(dst, target, bytes);
+            dst += bytes;
+            sector += static_cast<Sector_t>(batch);
+            ns -= batch;
         }
         return true;
     }
@@ -369,67 +353,54 @@ class SdmmcBlockDevice final : public FsBlockDeviceInterface
 
     bool writeSector(Sector_t sector, const uint8_t* src) override
     {
-        if (!card_ || !src)
-        {
-            s_mounted.markFailure();
-            return false;
-        }
-        std::memcpy(s_dma_sector, src, kSdSectorSize);
-        const esp_err_t err = sdmmc_write_sectors(card_, s_dma_sector, sector, 1);
-        if (err != ESP_OK)
-        {
-            s_mounted.markFailure();
-            ESP_LOGW(kTag,
-                     "raw write sector=%lu failed: %s",
-                     static_cast<unsigned long>(sector),
-                     esp_err_to_name(err));
-            return false;
-        }
-        return true;
+        return writeSectors(sector, src, 1);
     }
 
     bool writeSectors(Sector_t sector, const uint8_t* src, size_t ns) override
     {
-        if (!card_ || (!src && ns > 0))
+        if (!validTransfer(sector, src, ns))
         {
             s_mounted.markFailure();
             return false;
         }
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || \
-    defined(TRAIL_MATE_ESP_BOARD_TAB5)
-        if (canUseMultiSectorDma(src, ns))
+        while (ns != 0)
         {
-            const esp_err_t err = sdmmc_write_sectors(card_, src, sector, ns);
+            size_t batch = std::min(ns, SdmmcSdTransferPolicy::max_direct_sectors);
+            const bool direct = canUseMultiSectorDma(src, batch);
+            if (!direct) batch = std::min<size_t>(ns, sizeof(s_dma_sector) / kSdSectorSize);
+            const size_t bytes = batch * kSdSectorSize;
+            if (!direct) std::memcpy(s_dma_sector, src, bytes);
+            const esp_err_t err = sdmmc_write_sectors(card_, direct ? src : s_dma_sector, sector, batch);
             if (err != ESP_OK)
             {
                 s_mounted.markFailure();
                 ESP_LOGW(kTag,
                          "raw multi-write sector=%lu count=%u failed: %s",
                          static_cast<unsigned long>(sector),
-                         static_cast<unsigned>(ns),
+                         static_cast<unsigned>(batch),
                          esp_err_to_name(err));
                 return false;
             }
-            return true;
-        }
-#endif
-        for (size_t i = 0; i < ns; ++i)
-        {
-            if (!writeSector(sector + static_cast<Sector_t>(i),
-                             src + (i * kSdSectorSize)))
-            {
-                return false;
-            }
+            src += bytes;
+            sector += static_cast<Sector_t>(batch);
+            ns -= batch;
         }
         return true;
     }
 
   private:
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || \
-    defined(TRAIL_MATE_ESP_BOARD_TAB5)
+    bool validTransfer(Sector_t sector, const void* buffer, size_t count) const
+    {
+        const auto address = reinterpret_cast<uintptr_t>(buffer);
+        return card_ != nullptr && (buffer != nullptr || count == 0) &&
+               sector <= card_->csd.capacity && count <= card_->csd.capacity - sector &&
+               count <= SIZE_MAX / kSdSectorSize &&
+               (count == 0 || count * kSdSectorSize - 1 <= UINTPTR_MAX - address);
+    }
+
     bool canUseMultiSectorDma(const void* buffer, size_t sector_count) const
     {
-        if (!card_ || !buffer || sector_count < 2 ||
+        if (!card_ || !buffer || sector_count == 0 ||
             sector_count > (SIZE_MAX / kSdSectorSize) ||
             card_->host.check_buffer_alignment == nullptr)
         {
@@ -441,7 +412,6 @@ class SdmmcBlockDevice final : public FsBlockDeviceInterface
             buffer,
             sector_count * kSdSectorSize);
     }
-#endif
 
     sdmmc_card_t* card_ = nullptr;
 };
@@ -787,7 +757,7 @@ SdFileReadResult sd_read_file(const char* path,
     while (total_read < target_size)
     {
         const std::size_t chunk_size =
-            std::min<std::size_t>(2048U, target_size - total_read);
+            std::min<std::size_t>(SdmmcSdTransferPolicy::file_slice_bytes, target_size - total_read);
         int bytes_read = -1;
         {
             SdRuntimeBusGuard guard("sd_map_file_read_chunk");
