@@ -834,6 +834,12 @@ int main(int argc, char** argv)
         std::vector<uint8_t> signed_record;
         while (signed_record.size() < total)
         {
+            if (signature_busy)
+            {
+                test::busy_author_reads = 1;
+                require(rt::readWebSignature(operation.data(), owner.data(), false, static_cast<uint32_t>(signed_record.size()), 320, scratch.data(), scratch.size(), written) == rt::WebReadResult::Pending,
+                        "busy identity read destroyed a ready signature");
+            }
             require(rt::readWebSignature(operation.data(), owner.data(), false, static_cast<uint32_t>(signed_record.size()), 320, scratch.data(), scratch.size(), written) == rt::WebReadResult::Ready, "signature chunk missing");
             geocaching::protocol::CmpReader reader({scratch.data(), written});
             size_t fields = 0;

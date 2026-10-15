@@ -51,7 +51,7 @@ export class GeocachingHardwareExchange{
   }
   const reply=await new Promise((resolve,reject)=>{this.pending={resolve,reject};this.child.stdin.write(JSON.stringify({hex:hex(bytes),sequence:frame.sequence,response})+'\n',error=>{if(error){this.pending=null;reject(error);}});});
   const result=Uint8Array.from(Buffer.from(reply.hex,'hex')),responseFrames=new FrameDecoder().push(result);assert.equal(responseFrames.length,1);assert.equal(responseFrames[0].type,response);assert.equal(responseFrames[0].sequence,frame.sequence);
-  if(request){const value=decodeManagement(responseFrames[0].payload);assert.ok(equal(value.session,request.session)&&equal(value.request,request.request));this.responses??=[];this.responses.push({operation:request.code,status:value.code});if(value.code===0)await this.observe(request,value.body);}
+  if(request){const value=decodeManagement(responseFrames[0].payload);assert.ok(equal(value.session,request.session)&&equal(value.request,request.request));this.responses??=[];this.responses.push({operation:request.code,status:value.code,...(request.code===72&&value.code===0?{phase:value.body[3]}:{})});if(value.code===0)await this.observe(request,value.body);}
   return [...result];
  }
  guard({code,body}){
@@ -97,7 +97,20 @@ export class GeocachingHardwareExchange{
   if(code===33){const row=this.transfers.get(hex(body[0]));row.content.set(body[2],body[1]);row.offset=Math.max(row.offset,body[1]+body[2].length);}
   if(code===35){const row=this.transfers.get(hex(body[0]));assert.equal(row.offset,row.total);assert.ok(equal(new Uint8Array(await crypto.subtle.digest('SHA-256',row.content)),row.hash));row.sealed=true;}
   if(code===66)this.drafts.add(hex(body[1]));
-  if(code===64&&value[3]&&hex(value[3][0])===this.resumeDraftId&&!this.drafts.has(this.resumeDraftId)){const row=value[3];assert.equal(row[3],this.namePrefix+(this.resumeSignature?'-v2':''));assert.equal(row[5],310000000);assert.equal(row[6],1210000000);assert.equal(row[4],0);assert.equal(row[8][0],this.resumeBaseHash?1:0);if(this.resumeBaseHash){assert.equal(row[8][1],1);assert.equal(row[8][2]&7,this.resumeSignature?4:0);assert.ok(equal(row[7],this.resumeBaseHash));}if(this.resumeSignature)assert.equal(BigInt(row[1]),BigInt(this.resumeSignature.draftGeneration));assert.ok(row[2]===null||equal(row[2],this.author.publicKey));this.drafts.add(this.resumeDraftId);}
+  if(code===64&&value[3]&&hex(value[3][0])===this.resumeDraftId&&!this.drafts.has(this.resumeDraftId)){
+   const row=value[3];assert.equal(row[3],this.namePrefix+(this.resumeSignature?'-v2':''));assert.equal(row[5],310000000);assert.equal(row[6],1210000000);assert.equal(row[4],0);assert.equal(row[8][0],this.resumeBaseHash?1:0);
+   if(this.resumeBaseHash){
+    assert.equal(row[8][1],1);assert.equal(row[8][2]&7,this.resumeSignature?4:0);
+    if(this.resumeSignature&&BigInt(row[1])===BigInt(this.resumeSignature.draftGeneration)+1n){
+     // The real device may already have durably reserved this exact input.
+     // Mirror its idempotent reservation check; never advance the saved input.
+     const prefix=new TextEncoder().encode('trailmate.geocache/revision/v1\0'),raw=this.resumeSignature.raw;
+     assert.ok(raw instanceof Uint8Array);const input=new Uint8Array(prefix.length+raw.length);input.set(prefix);input.set(raw,prefix.length);
+     assert.ok(equal(row[7],new Uint8Array(await crypto.subtle.digest('SHA-256',input))));
+    }else{assert.ok(equal(row[7],this.resumeBaseHash));if(this.resumeSignature)assert.equal(BigInt(row[1]),BigInt(this.resumeSignature.draftGeneration));}
+   }
+   assert.ok(row[2]===null||equal(row[2],this.author.publicKey));this.drafts.add(this.resumeDraftId);
+  }
   if(code===71)this.signatures.add(hex(body[4]));
   if(code===75)this.confirmations.add(hex(body[0]));
   if([75,76].includes(code)&&value[3]===1&&value[7]===1)this.confirmed.add(hex(body[0]));

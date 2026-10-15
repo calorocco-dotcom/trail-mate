@@ -44,6 +44,7 @@ their own scrim, header and close control.
 `tests/tracker_card_view/test_dialog_frame.cpp` runs the real LVGL layout,
 frame, TopBar and bottom-button implementations at 240, 320 and 480 pixels.
 It checks header-height parity, panel bounds, compact close placement, fixed
-header while scrolling, exactly-once touch/Enter close, and widget cleanup.
+header while scrolling, content-sized action lists, exactly-once touch/Enter/X/x
+close, and widget cleanup.
 Native preview tests exercise the real page flows separately. Native rendering
 is not a physical-device capture.

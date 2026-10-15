@@ -3341,14 +3341,22 @@ WebReadResult queueWebSignature(const uint8_t operation[16], const uint8_t owner
     return WebReadResult::Ready;
 }
 
-bool validWebSignature(Session::WebSignature& job)
+WebReadResult validWebSignature(Session::WebSignature& job)
 {
-    if (job.failed || !router || job.media != storage::sd_media_session() || !storage::sd_card_ready() || storage::sd_external_block_owner_active() ||
-        now(nullptr).monotonic_ms - job.started >= 120000) return false;
+    if (job.failed || !router || job.media != storage::sd_media_session() || !storage::sd_card_ready() ||
+        now(nullptr).monotonic_ms - job.started >= 120000) return WebReadResult::StaleIdentity;
+    if (storage::sd_external_block_owner_active()) return WebReadResult::Pending;
     std::array<uint8_t, 64> author{};
     uint32_t generation = 0;
-    return router->readDeviceAuthorKey(author.data(), generation) == chat::DeviceAuthorResult::Ok &&
-           generation == job.generation && !std::memcmp(author.data(), job.author.data(), 64);
+    const auto result = router->readDeviceAuthorKey(author.data(), generation);
+    // A nonblocking router lock cannot establish an identity change. Keep the
+    // signed output available for the next read, as confirmation already does.
+    if (result == chat::DeviceAuthorResult::Unavailable) return WebReadResult::Pending;
+    if (result == chat::DeviceAuthorResult::StorageError) return WebReadResult::Unavailable;
+    return result == chat::DeviceAuthorResult::Ok && generation == job.generation &&
+                   !std::memcmp(author.data(), job.author.data(), 64)
+               ? WebReadResult::Ready
+               : WebReadResult::StaleIdentity;
 }
 void advanceWebSignature(Session& s)
 {
@@ -3358,8 +3366,12 @@ void advanceWebSignature(Session& s)
         return;
     }
     auto& job = *s.web_signature;
-    if (!validWebSignature(job))
+    if (job.failed) return;
+    const auto validity = validWebSignature(job);
+    if (validity == WebReadResult::Pending) return;
+    if (validity != WebReadResult::Ready)
     {
+        Serial.printf("[Geocaching][WebSign] failed validity=%u\n", static_cast<unsigned>(validity));
         job.fail();
         return;
     }
@@ -3436,7 +3448,9 @@ WebReadResult readWebSignature(const uint8_t operation[16], const uint8_t owner[
     auto& job = *session->web_signature;
     if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
     if (std::memcmp(job.operation.data(), operation, 16)) return WebReadResult::NotFound;
-    if (!validWebSignature(job)) job.fail();
+    const auto validity = validWebSignature(job);
+    if (validity == WebReadResult::Pending) return WebReadResult::Pending;
+    if (validity != WebReadResult::Ready) job.fail();
     const auto signed_record = job.issue.signedRecord();
     const uint8_t phase = job.failed ? 2 : signed_record.size ? 1
                                                               : 0;

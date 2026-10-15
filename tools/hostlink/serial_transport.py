@@ -29,7 +29,7 @@ try:
                     if diagnostics:
                         byte = buffered[0]
                         if byte == 10:
-                            if diagnostic_line.startswith(b'[Geocaching][WebConfirm]'):
+                            if diagnostic_line.startswith((b'[Geocaching][WebConfirm]', b'[Geocaching][WebSign]')):
                                 print(diagnostic_line.decode('ascii', errors='replace').strip(), file=sys.stderr, flush=True)
                             diagnostic_line.clear()
                         elif 32 <= byte <= 126 and len(diagnostic_line) < 256:

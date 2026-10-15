@@ -61,3 +61,13 @@ test('sealed draft reconnect retains only the exact planned edit of the read phy
  await assert.rejects(observe.call(device,{code:32,body:[other,2,source.length,wrongHash]},[other,320,source.length,1]));
  assert.equal(device.transfers.get(Buffer.from(other).toString('hex')).sealed,false);
 });
+
+test('Signature continuation recognizes only its exact already-reserved input',async()=>{
+ const raw=encode(['retained acceptance input']),base=new Uint8Array(32).fill(7),prefix=new TextEncoder().encode('trailmate.geocache/revision/v1\0');
+ const input=new Uint8Array(prefix.length+raw.length);input.set(prefix);input.set(raw,prefix.length);
+ const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',input));
+ const make=()=>Object.assign(fixture(),{resumeBaseHash:base,resumeSignature:{draftGeneration:3n,raw}});
+ const row=[id,4,publicKey,'Wio网页验收-test-v2',0,310000000,1210000000,hash,[1,1,4]],observe=GeocachingHardwareExchange.prototype.observe;
+ for(const changed of [[id,5,...row.slice(2)],[...row.slice(0,7),base,row[8]]])await assert.rejects(observe.call(make(),{code:64,body:[]},[1,0,1,changed]));
+ const device=make();await observe.call(device,{code:64,body:[]},[1,0,1,row]);assert.ok(device.drafts.has(idHex));
+});
