@@ -199,7 +199,8 @@ int main(int argc, char** argv)
     assert(contains(gps_runtime, "show_team_overlay_notice"));
     assert(contains(gps_runtime, "route_context_available"));
     assert(contains(gps_runtime, "config.route_enabled && config.route_path[0] != '\\0'"));
-    assert(contains(gps_runtime, "open_map_menu(bool team)"));
+    assert(contains(gps_runtime, "void open_map_menu("));
+    assert(contains(gps_runtime, "s_map_popup.init("));
     assert(contains(gps_runtime, "load_team_snapshot(snapshot)"));
     assert(contains(gps_runtime, "create_member_button(member, panel)"));
     assert(contains(gps_runtime, "select_member(member_id)"));
