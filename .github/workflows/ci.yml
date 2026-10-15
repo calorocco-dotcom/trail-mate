@@ -579,6 +579,15 @@ jobs:
       - name: Run P4 product contract tests
         run: ctest --test-dir build.p4-contract --output-on-failure
 
+      - name: Verify P4 keyboard with the real LVGL input state machine
+        run: |
+          mkdir -p .codex-build/p4-keyboard-deps/lvgl
+          curl --fail --location --retry 3 https://codeload.github.com/lvgl/lvgl/tar.gz/85aa60d18b3d5e5588d7b247abf90198f07c8a63 --output "$RUNNER_TEMP/p4-keyboard-lvgl.tar.gz"
+          tar --extract --gzip --file "$RUNNER_TEMP/p4-keyboard-lvgl.tar.gz" --directory .codex-build/p4-keyboard-deps/lvgl --strip-components=1
+          cmake -S tests/p4_keyboard -B .codex-build/p4-keyboard -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLVGL_DIR="$PWD/.codex-build/p4-keyboard-deps/lvgl"
+          cmake --build .codex-build/p4-keyboard --parallel 2
+          ctest --test-dir .codex-build/p4-keyboard --output-on-failure
+
   build_c6:
     needs: firmware_scope
     if: needs.firmware_scope.outputs.build == 'true'
