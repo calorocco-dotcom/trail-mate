@@ -104,3 +104,8 @@ if(TRAIL_MATE_IDF_TARGET STREQUAL "tdeck")
 endif()
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
+if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    include("${TRAILMATE_ROOT}/cmake/TrailMateTmap.cmake")
+    trailmate_add_tmap()
+    target_link_libraries(${COMPONENT_LIB} PUBLIC tmap::tmap)
+endif()

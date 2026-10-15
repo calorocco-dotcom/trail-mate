@@ -621,6 +621,8 @@ function(trailmate_apply_linux_common_warnings target_name)
 endfunction()
 
 function(trailmate_add_linux_common target_name)
+    include("${TRAIL_MATE_REPO_ROOT}/cmake/TrailMateTmap.cmake")
+    trailmate_add_tmap()
     find_package(CURL REQUIRED)
     find_package(SQLite3 REQUIRED)
     find_package(OpenSSL QUIET)
@@ -640,6 +642,7 @@ function(trailmate_add_linux_common target_name)
     )
     target_link_libraries(${target_name}
         PUBLIC
+            tmap::tmap
             Threads::Threads
             CURL::libcurl
             SQLite::SQLite3

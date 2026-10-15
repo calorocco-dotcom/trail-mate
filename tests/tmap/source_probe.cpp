@@ -127,7 +127,11 @@ int main(int argc, char** argv)
     assert(tmap::Reader::crc32c(pixels, first.size) == 0x3ef54c05);
     assert(source.packageCount() == 2);
     const auto bytes = source.allocatedBytes();
-    assert(bytes < 24 * 1024 && storage.allocations == 2);
+    std::printf("catalog bytes=%u allocations=%u\n", unsigned(bytes), unsigned(storage.allocations));
+    std::fflush(stdout);
+    // Catalog metadata includes three retained annotation continuation slots.
+    // Budget that metadata separately from the unchanged v1 reader workspace.
+    assert(bytes < sizeof(tmap::Workspace) + 12 * 1024 && storage.allocations == 2);
     const auto opens = storage.opens;
     assert(source.read(world, pixels, 256 * 1024).status == MapTileReadStatus::Ready);
     assert(storage.opens == opens);
@@ -138,6 +142,13 @@ int main(int argc, char** argv)
     auto poi = china;
     poi.layer = MapTileLayer::Poi;
     auto annotations = source.read(poi, pixels, 256 * 1024);
+    unsigned annotation_steps = 0;
+    while (annotation_steps++ < 2000 &&
+           (annotations.status == MapTileReadStatus::RetryLater ||
+            (annotations.status == MapTileReadStatus::Ready &&
+             reinterpret_cast<const ui::map_poi::TileHeader*>(pixels)->partial)))
+        annotations = source.read(poi, pixels, 256 * 1024);
+    assert(annotation_steps < 2000);
     const auto poi_info = source.lookup(poi);
     assert(poi_info.status == MapTileStatus::Available && poi_info.format == MapTileFormat::PoiRecords && poi_info.size == 0);
     assert(annotations.status == MapTileReadStatus::Ready && annotations.format == MapTileFormat::PoiRecords);
@@ -172,7 +183,10 @@ int main(int argc, char** argv)
         ++catalog_steps;
     } while (overflow.status == MapTileReadStatus::RetryLater && catalog_steps < 40);
     assert(overflow.status == MapTileReadStatus::Invalid && source.packageCount() == 256);
-    assert(source.allocatedBytes() < 96 * 1024);
+    // The first block is already counted in bytes; 256 packages add 15 more
+    // blocks. Bound metadata explicitly rather than an outdated total constant.
+    const auto block_budget = 16 * (sizeof(tmap::Package) + 13 * sizeof(uint32_t) + 192 + 16) + 16;
+    assert(source.allocatedBytes() < bytes + 15 * block_budget);
     source.reset();
     assert(storage.allocations == 0);
     storage.package_limit = 2;
