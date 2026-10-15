@@ -26,6 +26,22 @@ test('Hardware signature read permits an identical prefix retry while binding to
  assert.equal(device.outputs.get(idHex).offset,2);
 });
 
+test('Signature continuation admits only the saved v2 edit over its confirmed v1 base',async()=>{
+ const base=new Uint8Array(32).fill(7),observe=GeocachingHardwareExchange.prototype.observe;
+ const current=[id,3,publicKey,'Wio网页验收-test-v2',0,310000000,1210000000,base,[1,1,4]];
+ const make=()=>Object.assign(fixture(),{resumeBaseHash:base,resumeSignature:{draftGeneration:3n}});
+ for(const changed of [
+  [id,4,...current.slice(2)],
+  [...current.slice(0,3),'Wio网页验收-test',...current.slice(4)],
+  [...current.slice(0,7),new Uint8Array(32),current[8]],
+  [...current.slice(0,8),[1,1,0]],
+ ]){
+  const device=make();await assert.rejects(observe.call(device,{code:64,body:[]},[1,0,1,changed]));
+  assert.equal(device.drafts.size,0);
+ }
+ const device=make();await observe.call(device,{code:64,body:[]},[1,0,1,current]);assert.ok(device.drafts.has(idHex));
+});
+
 test('sealed draft reconnect retains only the exact planned edit of the read physical fixture',async()=>{
  const device=Object.assign(fixture(),{outputs:new Map(),transfers:new Map(),fingerprint:'expected'});
  device.author.fingerprint='expected';device.drafts.add(idHex);

@@ -12,10 +12,13 @@ import {locales} from '../../site/i18n/registry.js';
 import {geocachingIpPublicationText} from '../../site/i18n/geocaching-ip-publication-labels.js';
 import {geocachingDeviceSyncText} from '../../site/i18n/geocaching-device-sync-labels.js';
 import {GeocachingHardwareExchange} from '../../tools/hostlink/geocaching_hardware_exchange.mjs';
+import {saveIPPublication} from '../../site/geocaching/src/ip-publication-journal.js';
 const args=process.argv.slice(2),option=name=>args[args.indexOf(name)+1],hardwarePort=args.includes('--hardware-port')?option('--hardware-port'):null;
 if(hardwarePort&&(!/^COM\d+$/.test(hardwarePort)||!args.includes('--serial-python')||!args.includes('--expected-author')||!/^[a-f0-9]{64}$/.test(option('--expected-author'))))throw Error('Hardware mode requires --hardware-port COMxx --serial-python <pyserial Python> --expected-author <fingerprint>');
 const resumeDraftId=args.includes('--resume-draft')?option('--resume-draft'):null;
 const resumeConfirmed=args.includes('--resume-confirmed-record');
+const signatureCheckpoint=args.includes('--resume-signature-checkpoint')?option('--resume-signature-checkpoint'):null;
+if(signatureCheckpoint&&!resumeConfirmed)throw Error('Signature resume requires the original verified v1 record and receipt');
 if(resumeConfirmed&&(!resumeDraftId||!args.includes('--resume-confirmed-receipt')))throw Error('Confirmed resume requires the exact draft, signed v1 record and directory receipt');
 if(resumeDraftId&&(!hardwarePort||!args.includes('--resume-name')||!/^Wio网页验收-[a-z0-9]+$/.test(option('--resume-name'))||!/^[a-f0-9]{32}$/.test(resumeDraftId)))throw Error('Resume requires explicit hardware, isolated acceptance name and ID');
 const testName=hardwarePort?(resumeDraftId?option('--resume-name'):'Wio网页验收-'+Date.now().toString(36)):'真实网络网页藏宝点',updatedName=hardwarePort?testName+'-v2':'第二版网络藏宝点';
@@ -28,13 +31,35 @@ async function freePort(){const socket=net.createServer();await new Promise(reso
 const server=http.createServer(async(req,res)=>{try{const name=new URL(req.url,'http://localhost').pathname;if(name==='/trail-mate/geocaching/network.json'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({endpoint,discoverySeeds:seeds}));return;}if(!name.startsWith('/trail-mate/'))throw Error('prefix');const file=path.resolve(root,name.slice(12)+(name.endsWith('/')?'index.html':''));if(!file.startsWith(root+path.sep))throw Error('path');res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2','.ttf':'font/ttf'})[path.extname(file)]??'application/octet-stream');res.end(await fs.readFile(file));}catch{res.writeHead(404).end();}});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
 const author=await Identity.generate(),publicKey=await author.getPublicKey(),nameHash=(await Identity.fullHash(new TextEncoder().encode('lxmf.delivery'))).slice(0,10),destination=await Identity.truncatedHash(Uint8Array.from([...nameHash,...author.identityHash])),info=[publicKey,author.identityHash,destination,7];
 const drafts=new Map(),transfers=new Map(),signatures=new Map(),confirmations=new Map(),signedVersions=[],calls=[];let catalog=0,signCount=0,confirmCount=0;
-let resumeBaseHash=null;
+let resumeBaseHash=null,resumeSignature=null,publicationSeed=[];
 if(resumeConfirmed){
  const signed=JSON.parse(await fs.readFile(option('--resume-confirmed-record'),'utf8')).map(value=>Uint8Array.from(value)),verified=await verifySigned(signed),record=verified.record;
  assert.ok(equal(record[2],Uint8Array.from(Buffer.from(resumeDraftId,'hex'))));assert.equal(record[3],1);assert.equal(record[5],0);assert.equal(record[8],testName);assert.equal(record[6],310000000);assert.equal(record[7],1210000000);
  assert.equal(Buffer.from(await crypto.subtle.digest('SHA-256',record[1])).toString('hex'),option('--expected-author'));
  const receipt=Object.fromEntries(Object.entries(JSON.parse(await fs.readFile(option('--resume-confirmed-receipt'),'utf8'))).map(([key,value])=>[key,Uint8Array.from(value)]));await verifyPublicationReceipt([receipt.raw,receipt.signature],signed,receipt);
  resumeBaseHash=verified.summary[2].slice();signedVersions.push(signed);
+ if(signatureCheckpoint){
+  const checkpoint=JSON.parse(await fs.readFile(signatureCheckpoint,'utf8'));
+  const raw=Uint8Array.from(Buffer.from(checkpoint.unsignedInput,'base64')),recordV2=decode(raw,4096);
+  assert.equal(checkpoint.version,1);assert.equal(checkpoint.authorFingerprint,option('--expected-author'));
+  assert.equal(checkpoint.testName,testName);assert.equal(checkpoint.draftId,resumeDraftId);
+  assert.equal(raw.length,checkpoint.bytes);assert.equal(Buffer.from(raw).toString('base64'),checkpoint.unsignedInput);
+  assert.equal(Buffer.from(await crypto.subtle.digest('SHA-256',raw)).toString('hex'),checkpoint.hash);
+  assert.ok(equal(recordV2[1],record[1])&&equal(recordV2[2],record[2])&&equal(recordV2[4],resumeBaseHash));
+  assert.equal(recordV2[3],2);assert.equal(recordV2[5],0);assert.equal(recordV2[6],310000000);assert.equal(recordV2[7],1210000000);
+  assert.equal(recordV2[8],updatedName);assert.equal(recordV2[14],record[14]);assert.ok(recordV2[15]>=record[15]);
+  for(const key of ['operationId','transferId','owner'])assert.ok(/^[a-f0-9]{32}$/.test(checkpoint[key])&&!/^0+$/.test(checkpoint[key]));
+  resumeSignature={raw,hash:Uint8Array.from(Buffer.from(checkpoint.hash,'hex')),transferId:Uint8Array.from(Buffer.from(checkpoint.transferId,'hex')),
+   draftGeneration:BigInt(checkpoint.draftGeneration),authorGeneration:checkpoint.authorGeneration};
+  const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
+  saveIPPublication({stage:'signing',authorKey:recordV2[1],authorGeneration:checkpoint.authorGeneration,draftId:recordV2[2],draftGeneration:resumeSignature.draftGeneration,
+   operationId:Uint8Array.from(Buffer.from(checkpoint.operationId,'hex')),transferId:resumeSignature.transferId,hash:resumeSignature.hash,raw,signature:null,directoryKey:Buffer.from(receipt.delivery).toString('hex')},{storage});
+  publicationSeed=[...values];
+ }
+}
+if(args.includes('--verify-signature-fixture-only')){
+ assert.ok(resumeSignature,'Exact signature fixture required');await new Promise(resolve=>server.close(resolve));
+ console.log(JSON.stringify({verified:true,draft:resumeDraftId,revision:2,bytes:resumeSignature.raw.length,originalUnsignedInput:true}));process.exit(0);
 }
 const countSignatures=()=>hardware?.signCount??signCount,countConfirmations=()=>hardware?.confirmCount??confirmCount;
 const hex=bytes=>Buffer.from(bytes).toString('hex');
@@ -58,16 +83,31 @@ async function usbReply(raw){const frame=new FrameDecoder().push(Uint8Array.from
  else assert.fail('Unexpected USB operation '+request.code);
  return [...encodeFrame(FRAME.MANAGEMENT_RESPONSE,frame.sequence,encodeManagement(request.session,request.request,0,response))];}
 try{
- if(hardwarePort)hardware=new GeocachingHardwareExchange({port:hardwarePort,python:option('--serial-python'),fingerprint:option('--expected-author'),namePrefix:testName,resumeDraftId,resumeBaseHash,calls,signedVersions,checkpointPath:path.join(work,'signature-recovery.json')});
+ if(hardwarePort)hardware=new GeocachingHardwareExchange({port:hardwarePort,python:option('--serial-python'),fingerprint:option('--expected-author'),namePrefix:testName,resumeDraftId,resumeBaseHash,resumeSignature,calls,signedVersions,checkpointPath:path.join(work,'signature-recovery.json')});
  await fs.rm(path.join(work,'result.json'),{force:true});
  await fs.rm(path.join(state,'stop'),{force:true});const tcp=await freePort();service=start('directory',['tools/geocaching/browser_test_service.py','--state',state,'--port',String(tcp),'--empty','--startup-delay','0','--run-seconds','600']);const directory=await ready(service,'ready');seeds=[directory.discovery];bridge=start('bridge',['tools/geocaching/packet_bridge.py','--port','0','--tcp-port',String(tcp),'--origin',origin,'--run-seconds','600']);endpoint='ws://127.0.0.1:'+(await ready(bridge,'bridge_ready')).port;
  browser=await chromium.launch({channel:process.env.TRAIL_MATE_TEST_BROWSER_CHANNEL,headless:true});const context=await browser.newContext({viewport:{width:1440,height:960}});await context.exposeFunction('deviceReply',hardware?raw=>hardware.exchange(raw):usbReply);await context.addInitScript(()=>{let input;const port={async open(){this.readable=new ReadableStream({start(controller){input=controller;}});this.writable=new WritableStream({async write(bytes){input.enqueue(Uint8Array.from(await window.deviceReply([...bytes])));}});},async setSignals(){},async close(){}};Object.defineProperty(navigator,'serial',{configurable:true,value:{requestPort:async()=>port}});});await context.route('https://tile.openstreetmap.org/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#dceae4"/></svg>'}));
+ if(publicationSeed.length)await context.addInitScript(entries=>{if(location.protocol==='http:')for(const [key,value] of entries)if(localStorage.getItem(key)===null)localStorage.setItem(key,value);},publicationSeed);
  let page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(String(error)));await page.goto(origin+'/trail-mate/geocaching/?lang=zh-Hans');await page.waitForFunction(()=>document.querySelector('#search')&&!document.querySelector('#search').disabled,{},{timeout:60000});await page.getByRole('button',{name:'草稿',exact:true}).click();await page.getByRole('button',{name:'连接设备',exact:true}).click();await page.getByText('USB 作者已验证',{exact:true}).waitFor();
- if(resumeDraftId){if(resumeConfirmed)await page.getByRole('button',{name:'我的藏宝点',exact:true}).click();await page.getByRole('button',{name:'刷新设备列表',exact:true}).click();await openTestDraft(testName);assert.ok(hardware.drafts.has(resumeDraftId));}
+ if(resumeDraftId){if(resumeConfirmed)await page.getByRole('button',{name:'我的藏宝点',exact:true}).click();await page.getByRole('button',{name:'刷新设备列表',exact:true}).click();await openTestDraft(resumeSignature?updatedName:testName);assert.ok(hardware.drafts.has(resumeDraftId));}
  else{await page.getByRole('button',{name:'新建草稿',exact:true}).click();await page.getByLabel('名称',{exact:true}).fill(testName);await page.getByLabel('正文',{exact:true}).fill('网页中文正文 <script>window.__geoNetworkInjection=true</script>\n'.repeat(25));await page.getByLabel('提示',{exact:true}).fill('&< >'.repeat(80));await page.getByLabel('纬度',{exact:true}).fill('31');await page.getByLabel('经度',{exact:true}).fill('121');await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor({timeout:45000});}
  async function publishAndSync(){await page.getByRole('button',{name:'刷新 IP 目录',exact:true}).click();await page.getByRole('button',{name:'检查并确认发布',exact:true}).click();assert.equal(await page.locator('dialog[open] script').count(),0);await page.locator('dialog[open]').getByRole('button',{name:'通过 IP 网络发布',exact:true}).click();await page.locator('.geo-publication-task').getByText('发布内容与目录签名证明已归档到设备。',{exact:true}).waitFor({timeout:60000});}
  async function openTestDraft(name){for(let index=0;index<128;index++){await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='刷新设备列表'&&!button.disabled),{},{timeout:45000});const row=page.locator('.geo-draft-row').filter({hasText:name});if(await row.count()){await row.click();await page.getByLabel('名称',{exact:true}).waitFor();return;}const more=page.getByRole('button',{name:'加载更多设备草稿',exact:true});if(!await more.count())throw Error('Isolated acceptance draft not present in current device catalogue');await more.click();}throw Error('Device catalogue acceptance search exceeded bounded page count');}
- if(!resumeConfirmed){await publishAndSync();assert.equal(countSignatures(),1);assert.equal(countConfirmations(),1);}await page.getByRole('button',{name:'我的藏宝点',exact:true}).click();await openTestDraft(testName);await page.getByLabel('名称',{exact:true}).fill(updatedName);await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor();await publishAndSync();await openTestDraft(updatedName);await page.getByLabel('状态',{exact:true}).selectOption('2');await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor();await publishAndSync();assert.equal(countSignatures(),resumeConfirmed?2:3);assert.equal(countConfirmations(),resumeConfirmed?2:3);assert.equal((await verifySigned(signedVersions[2])).record[5],2);if(hardware)await page.locator('.geo-publication-panel').screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/images/geocaching-wio-network-archive.png'});else await page.screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/images/geocaching-real-network-archive.png',fullPage:true});
+ if(resumeSignature){
+  await page.locator('.geo-publication-task').getByRole('button',{name:geocachingIpPublicationText('zh-Hans').resume,exact:true}).click();
+  await page.locator('.geo-publication-task').getByText('发布内容与目录签名证明已归档到设备。',{exact:true}).waitFor({timeout:90000});
+ }else{
+  if(!resumeConfirmed){await publishAndSync();assert.equal(countSignatures(),1);assert.equal(countConfirmations(),1);}
+  await page.getByRole('button',{name:'我的藏宝点',exact:true}).click();await openTestDraft(testName);
+  await page.getByLabel('名称',{exact:true}).fill(updatedName);await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();
+  await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor();await publishAndSync();
+ }
+ await openTestDraft(updatedName);await page.getByLabel('状态',{exact:true}).selectOption('2');
+ await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor();
+ await publishAndSync();assert.equal(countSignatures(),resumeConfirmed?2:3);assert.equal(countConfirmations(),resumeConfirmed?2:3);
+ assert.equal((await verifySigned(signedVersions[2])).record[5],2);
+ if(hardware)await page.locator('.geo-publication-panel').screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/images/geocaching-wio-network-archive.png'});
+ else await page.screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/images/geocaching-real-network-archive.png',fullPage:true});
  await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});const expectedId=(await verifySigned(signedVersions[2])).cacheId;await page.getByRole('button',{name:'复制藏宝点 ID',exact:true}).click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),expectedId);
  const priorCalls=calls.length;for(const {id} of locales){await page.locator('.management-language select').selectOption(id);await page.locator('.geo-publication-task').getByText(geocachingIpPublicationText(id).confirmed,{exact:true}).waitFor();await page.locator('.geo-publication-task').getByText(geocachingDeviceSyncText(id).confirmed,{exact:true}).waitFor();await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);assert.equal(calls.length,priorCalls);}await page.locator('.management-language select').selectOption('zh-Hans');await page.setViewportSize({width:1440,height:960});
  const native=spawnSync(python,['tools/geocaching/verify_browser_publication.py','--database',path.join(state,'service','directory.sqlite')],{input:JSON.stringify(signedVersions.map(item=>item.map(part=>[...part]))),windowsHide:true,maxBuffer:1048576});assert.equal(native.status,0,String(native.stderr));const nativeCheck=JSON.parse(native.stdout);assert.equal(nativeCheck.transportDiffersFromAuthor,true);
