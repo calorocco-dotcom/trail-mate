@@ -42,7 +42,7 @@ for(const [device,width,height] of [['pager',480,222],['tdeck',320,240],['wio-tr
     }
     runtime._native_key(27);tick();
     assert.equal(runtime._native_page_value(),page,`${device}:${page}: Escape closes the menu before leaving the page`);
-    assert.ok(!snapshot().some(item=>item.button&&item.text===filterText));
+    assert.ok(!snapshot().some(item=>item.button&&item.text===filterText),`${device}:${page}: Escape hides the filter menu`);
   }
   console.log(`${device}: six former two-pane pages use bottom menus, full-width content and menu-first back navigation.`);
 }

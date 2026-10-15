@@ -36,7 +36,19 @@ EM_JS(void, request_menu, (), {
     if (Module.onExit) Module.onExit();
 });
 
-void set_default_group(lv_group_t* group) { lv_group_set_default(group); }
+void set_default_group(lv_group_t* group)
+{
+    if (pointer_device) lv_indev_set_group(pointer_device, group);
+    lv_group_set_default(group);
+}
+
+static lv_group_t* input_group()
+{
+    // Pages may clear LVGL's auto-add default after binding their input group.
+    // Read the bound device just as the firmware input drivers do.
+    auto* group = pointer_device ? lv_indev_get_group(pointer_device) : nullptr;
+    return group ? group : lv_group_get_default();
+}
 void ui_request_exit_to_menu()
 {
     // Do not destroy the current page while its LVGL event is being dispatched.
@@ -157,7 +169,7 @@ extern "C"
     {
         if (key == LV_KEY_ENTER && preview_current_page() == 10)
         {
-            auto* group = lv_group_get_default();
+            auto* group = input_group();
             auto* focused = group ? lv_group_get_focused(group) : nullptr;
             if (focused && !lv_obj_has_state(focused, LV_STATE_DISABLED))
             {
@@ -166,7 +178,7 @@ extern "C"
             return;
         }
         if (key < 128 && ui::menu_runtime::handleShortcutKey(static_cast<char>(key), 1)) return;
-        if (auto* group = lv_group_get_default()) lv_group_send_data(group, key);
+        if (auto* group = input_group()) lv_group_send_data(group, key);
     }
     EMSCRIPTEN_KEEPALIVE void native_focus(uint32_t id)
     {
@@ -196,7 +208,7 @@ extern "C"
     }
     EMSCRIPTEN_KEEPALIVE void native_encoder(int delta)
     {
-        if (auto* group = lv_group_get_default())
+        if (auto* group = input_group())
         {
             if (delta < 0) lv_group_focus_prev(group);
             else lv_group_focus_next(group);
