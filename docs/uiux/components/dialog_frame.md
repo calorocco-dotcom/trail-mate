@@ -11,8 +11,17 @@ and an optional callback context. The returned `Frame` is a view of LVGL
 widgets, not a retained controller. Pages add their content to `frame.body`,
 put `frame.close` in their existing focus group, and delete `frame.overlay`
 when closing. They retain responsibility for restoring focus and stopping
-their own timers or tasks. The close button supports touch and Enter; page
-key callbacks retain their existing Escape/Back behavior.
+their own timers or tasks. The close button supports touch and Enter. After
+building the focus group, pages call `bind_close_shortcuts(frame, group)` so
+X/x closes from any of this dialog's controls. The shared handler runs before
+page key handlers. Page callbacks retain their existing Escape/Back behavior.
+Controls in a separate nested dialog do not inherit the parent shortcut.
+
+Short action lists reuse the flat popup-row style and call
+`fit_content_height(frame)` after adding rows. This preserves the frame's
+padding and removes unused vertical space while retaining viewport bounds
+and scrolling. Closing is available in the title bar without a duplicate
+Cancel row.
 
 This uses composition rather than a hierarchy of dialog subclasses. There is
 no global modal registry, copied business model, persistent dialog cache or

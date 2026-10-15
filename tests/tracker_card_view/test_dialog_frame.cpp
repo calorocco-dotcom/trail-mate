@@ -1,4 +1,5 @@
 #include "ui/assets/fonts/font_utils.h"
+#include "ui/components/bottom_bar.h"
 #include "ui/components/dialog_frame.h"
 #include "ui/widgets/top_bar.h"
 #include <cassert>
@@ -54,7 +55,7 @@ int main()
         bar_config.power_indicator = false;
         ui::widgets::top_bar_init(page_bar, screen, bar_config);
         const auto retained = lv_obj_get_child_count(screen);
-        for (const bool keyboard : {false, true})
+        for (const uint32_t key : {0U, uint32_t(LV_KEY_ENTER), uint32_t('x'), uint32_t('X')})
         {
             struct Context
             {
@@ -73,6 +74,17 @@ int main()
             context.overlay = frame.overlay;
             for (unsigned line = 0; line < 20; ++line)
                 lv_label_set_text(lv_label_create(frame.body), "Scrollable route details");
+            auto* nested = lv_btn_create(frame.body);
+            auto* group = lv_group_create();
+            lv_group_add_obj(group, nested);
+            bool normal_handler_called = false;
+            lv_obj_add_event_cb(
+                nested, [](lv_event_t* event)
+                {
+                *static_cast<bool*>(lv_event_get_user_data(event)) = true;
+                lv_event_stop_processing(event); },
+                LV_EVENT_KEY, &normal_handler_called);
+            ui::components::dialog_frame::bind_close_shortcuts(frame, group);
             lv_obj_update_layout(screen);
             auto* header = lv_obj_get_child(frame.panel, 0);
             assert(lv_obj_get_height(header) == lv_obj_get_height(page_bar.container));
@@ -89,16 +101,35 @@ int main()
             lv_obj_scroll_to_y(frame.body, 120, LV_ANIM_OFF);
             lv_obj_update_layout(screen);
             assert(lv_obj_get_y(header) == 0);
-            if (keyboard)
+            if (key)
             {
-                uint32_t enter = LV_KEY_ENTER;
-                lv_obj_send_event(frame.close, LV_EVENT_KEY, &enter);
+                auto value = key;
+                lv_obj_send_event(key == LV_KEY_ENTER ? frame.close : nested, LV_EVENT_KEY, &value);
             }
             else lv_obj_send_event(frame.close, LV_EVENT_CLICKED, nullptr);
             assert(context.closed == 1 && !context.overlay);
+            assert(!normal_handler_called);
             assert(lv_obj_get_child_count(screen) == retained);
+            lv_group_del(group);
         }
+        const auto compact = ui::components::dialog_frame::create(screen, {"Route Actions", 200, 180});
+        for (const auto text : {"Load", "Preview", "Delete"})
+        {
+            auto* row = ui::components::bottom_bar::add_button(compact.body, text);
+            ui::components::bottom_bar::style_item(row);
+            lv_obj_set_size(row, LV_PCT(100), 28);
+        }
+        ui::components::dialog_frame::fit_content_height(compact);
+        lv_obj_update_layout(screen);
+        assert(lv_obj_get_height(compact.panel) < 140);
+        assert(lv_obj_get_style_pad_top(compact.body, LV_PART_MAIN) == 6);
+        auto* last = lv_obj_get_child(compact.body, -1);
+        lv_area_t body_area{}, last_area{};
+        lv_obj_get_coords(compact.body, &body_area);
+        lv_obj_get_coords(last, &last_area);
+        assert(body_area.y2 - last_area.y2 == 6);
+        lv_obj_del(compact.overlay);
         lv_display_delete(display);
-        std::printf("%dpx: shared title-bar metrics, bounded body, fixed header and touch/key close passed.\n", width);
+        std::printf("%dpx: shared header, bounded body, compact action list and touch/Enter/X/x close passed.\n", width);
     }
 }

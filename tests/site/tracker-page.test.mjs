@@ -50,7 +50,11 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   assert.ok(snapshot().some(item=>item.text==='Route Actions'),`${device}: explicit card action opens the existing route menu`);
   const dialogClose=snapshot().findLast(item=>item.button&&item.text==='\uf00d');
   assert.ok(dialogClose&&dialogClose.w===dialogClose.h&&dialogClose.h<=24,`${device}: card actions use a compact title-bar close`);
-  click('Cancel');
+  assert.ok(!snapshot().some(item=>item.button&&item.text==='Cancel'),`${device}: title-bar close avoids a duplicate cancel row`);
+  const lastAction=snapshot().find(item=>item.button&&item.text==='Delete');
+  assert.ok(lastAction&&lastAction.y+lastAction.h-dialogClose.y<140,`${device}: action list fits its contents`);
+  runtime._native_key('X'.charCodeAt(0));tick();
+  assert.ok(!snapshot().some(item=>item.text==='Route Actions'),`${device}: uppercase X closes from the focused action`);
   const routeCounter=snapshot().find(item=>item.text==='1 / 2');
   assert.ok(routeCounter,`${device}: card shows the selected position`);
   click('\uf054');
@@ -70,12 +74,15 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   click('\uf053');
   assert.equal(runtime._native_page_value(),10,'Top-bar back remains available without a list Back row');
   runtime._native_open_page(15);tick();
-  const closeDialog=()=>{
+  const closeDialog=(keyboard=false)=>{
     const close=snapshot().findLast(item=>item.button&&item.text==='\uf00d');
     assert.ok(close&&close.w===close.h&&close.h<=24,`${device}: modal has a compact square close`);
     const x=close.x+Math.floor(close.w/2),y=close.y+Math.floor(close.h/2);
-    runtime._native_pointer(x,y,1);runtime._native_tick(50);
-    runtime._native_pointer(x,y,0);tick();
+    if(keyboard) {runtime._native_key('x'.charCodeAt(0));tick();}
+    else {
+      runtime._native_pointer(x,y,1);runtime._native_tick(50);
+      runtime._native_pointer(x,y,0);tick();
+    }
     assert.ok(!snapshot().some(item=>item.button&&item.text==='\uf00d'),`${device}: touch closes the topmost modal`);
   };
   click('Help');
@@ -91,7 +98,7 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
     }
     // Checkbox text is drawn by the checkbox widget itself and is not a label
     // in native_snapshot. The shared title and real pointer-close remain visible.
-    closeDialog();
+    closeDialog(section!=='Contours');
   }
   console.log(`${device}: empty state, recording, reused file cards, selection across categories, navigation and top-bar back passed.`);
 }

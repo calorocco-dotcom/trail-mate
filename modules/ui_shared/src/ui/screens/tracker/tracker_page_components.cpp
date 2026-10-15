@@ -2218,11 +2218,12 @@ void open_route_preview_help_modal()
     add_help_row("W/S", "Up/Dn", "Select image");
     add_help_row("Enter", nullptr, "Open/close image");
     add_help_row("Pin", nullptr, "Select image point");
-    add_help_row("H", "Back", "Close help");
+    add_help_row("X/H", "Back", "Close help");
 
     lv_obj_move_foreground(state.route_preview_help_modal);
     lv_group_add_obj(state.modal_group, win);
     lv_group_add_obj(state.modal_group, frame.close);
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.modal_group);
     lv_group_focus_obj(win);
 }
 
@@ -3555,7 +3556,7 @@ lv_obj_t* create_action_menu_button(lv_obj_t* parent, const char* text)
     lv_obj_t* label = lv_label_create(btn);
     ::ui::i18n::set_label_text(label, text);
     lv_obj_center(label);
-    apply_action_button(btn, label);
+    ::ui::components::bottom_bar::style_item(btn);
     return btn;
 }
 
@@ -3617,38 +3618,9 @@ void open_action_menu_modal()
         return;
     }
 
-    bool has_item = false;
-    int action_count = 1; // Cancel
-    if (state.mode == TrackerPageState::Mode::Record)
-    {
-        has_item = state.selected_record_idx >= 0 &&
-                   state.selected_record_idx < static_cast<int>(s_record_names.size());
-        if (can_delete_selected_item())
-        {
-            ++action_count;
-        }
-    }
-    else
-    {
-        has_item = state.selected_route_idx >= 0 &&
-                   state.selected_route_idx < static_cast<int>(s_route_names.size());
-        if (can_load_selected_route())
-        {
-            ++action_count;
-        }
-        if (can_unload_active_route())
-        {
-            ++action_count;
-        }
-        if (can_preview_selected_route())
-        {
-            ++action_count;
-        }
-        if (can_delete_selected_item())
-        {
-            ++action_count;
-        }
-    }
+    const bool has_item = state.mode == TrackerPageState::Mode::Record
+                              ? state.selected_record_idx >= 0 && state.selected_record_idx < static_cast<int>(s_record_names.size())
+                              : state.selected_route_idx >= 0 && state.selected_route_idx < static_cast<int>(s_route_names.size());
 
     if (!has_item)
     {
@@ -3656,13 +3628,9 @@ void open_action_menu_modal()
     }
 
     modal_prepare_group();
-    const int max_modal_h = page_profile().large_touch_hitbox ? 320 : 220;
-    const int modal_content_h = 56 + static_cast<int>(action_count) *
-                                         static_cast<int>(action_menu_button_height() + action_menu_row_gap());
-    const int modal_h = std::min<int>(max_modal_h, modal_content_h);
     const char* title = (state.mode == TrackerPageState::Mode::Record) ? "Track Actions" : "Route Actions";
     const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
-                                                              {title, 190, static_cast<lv_coord_t>(modal_h), [](lv_event_t*)
+                                                              {title, 200, 180, [](lv_event_t*)
                                                                {
                                                                    modal_close(g_tracker_state.action_menu_modal);
                                                                    focus_main_panel();
@@ -3671,12 +3639,7 @@ void open_action_menu_modal()
     state.action_menu_modal = frame.overlay;
     lv_group_add_obj(state.modal_group, frame.close);
     lv_obj_t* list = frame.body;
-    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_row(list, action_menu_row_gap(), LV_PART_MAIN);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
     lv_obj_t* first_focus = nullptr;
     auto add_action = [&](ActionMenuCommand cmd, const char* text)
@@ -3702,7 +3665,7 @@ void open_action_menu_modal()
         }
         if (can_unload_active_route())
         {
-            add_action(ActionMenuCommand::Unload, "Off");
+            add_action(ActionMenuCommand::Unload, "Unload");
         }
         if (can_preview_selected_route())
         {
@@ -3713,7 +3676,8 @@ void open_action_menu_modal()
     {
         add_action(ActionMenuCommand::Delete, "Delete");
     }
-    add_action(ActionMenuCommand::Cancel, "Cancel");
+    ::ui::components::dialog_frame::fit_content_height(frame);
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.modal_group);
 
     if (first_focus)
     {
@@ -4035,6 +3999,7 @@ void open_delete_confirm_modal()
 
     lv_group_add_obj(state.modal_group, confirm_btn);
     lv_group_add_obj(state.modal_group, cancel_btn);
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.modal_group);
     lv_group_focus_obj(cancel_btn);
 }
 

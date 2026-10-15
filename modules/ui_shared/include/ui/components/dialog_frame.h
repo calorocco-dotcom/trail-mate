@@ -25,4 +25,8 @@ struct Frame
 // The page owns the returned widgets and focus group. No retained controller or
 // business data: the fixed title bar and scrolling body are just shared chrome.
 Frame create(lv_obj_t* parent, const Config& config);
+// Call after populating the body for a compact, content-sized action dialog.
+void fit_content_height(const Frame& frame);
+// Register X/x on this dialog's controls after the page builds its focus group.
+void bind_close_shortcuts(const Frame& frame, lv_group_t* group);
 } // namespace ui::components::dialog_frame

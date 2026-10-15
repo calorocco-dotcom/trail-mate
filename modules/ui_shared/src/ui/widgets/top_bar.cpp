@@ -9,8 +9,6 @@
 #include <cstring>
 
 #include "ui/assets/fonts/font_utils.h"
-#include "ui/components/bottom_bar.h"
-#include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/ui_theme.h"
 #include "ui/widgets/top_bar_power_presenter.h"
@@ -267,25 +265,6 @@ void top_bar_set_back_callback(TopBar& bar, void (*cb)(void*), void* user_data)
 {
     bar.back_cb = cb;
     bar.back_user_data = user_data;
-}
-
-lv_obj_t* top_bar_create_dialog_header(lv_obj_t* parent, const char* title,
-                                       lv_event_cb_t on_close, void* context, lv_obj_t** close_button)
-{
-    TopBar bar{};
-    TopBarConfig config{};
-    // Neither a back callback nor the power presenter retains this local view.
-    config.create_back = false;
-    config.power_indicator = false;
-    top_bar_init(bar, parent, config);
-    lv_obj_del(bar.right_label);
-    top_bar_set_title(bar, ::ui::i18n::tr(title));
-    auto* close = ::ui::components::bottom_bar::add_button(bar.container, LV_SYMBOL_CLOSE, on_close, context);
-    const auto size = std::max<lv_coord_t>(16, resolve_top_bar_height(config) - 4);
-    lv_obj_set_size(close, size, size);
-    lv_obj_set_style_pad_all(close, 0, LV_PART_MAIN);
-    if (close_button) *close_button = close;
-    return bar.container;
 }
 
 } // namespace widgets

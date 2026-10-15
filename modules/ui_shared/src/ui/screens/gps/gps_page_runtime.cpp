@@ -3457,7 +3457,7 @@ void open_map_help_modal()
     add_help_row("I", nullptr, "Hide info, keep route");
     add_help_row("Route", nullptr, "Shown when route active");
     add_help_row("Members", nullptr, "Shown when team active");
-    add_help_row(help_key_label(), "Back", "Close help");
+    add_help_row("X/H", "Back", "Close help");
 
     lv_obj_move_foreground(s_map_help_modal);
     if (app_g)
@@ -3465,6 +3465,7 @@ void open_map_help_modal()
         lv_group_remove_all_objs(app_g);
         lv_group_add_obj(app_g, body);
         lv_group_add_obj(app_g, close);
+        ::ui::components::dialog_frame::bind_close_shortcuts(frame, app_g);
         lv_group_focus_obj(body);
     }
 }
@@ -3662,6 +3663,7 @@ void open_tracker_modal(bool navigation)
                 lv_group_add_obj(app_g, obj);
             }
         }
+        ::ui::components::dialog_frame::bind_close_shortcuts(frame, app_g);
         if (first_focus)
         {
             lv_group_focus_obj(first_focus);
@@ -3754,6 +3756,7 @@ void open_map_management(MapControlAction action)
     if (app_g)
     {
         lv_group_add_obj(app_g, frame.close);
+        ::ui::components::dialog_frame::bind_close_shortcuts(frame, app_g);
         lv_group_focus_obj(first);
     }
     lv_obj_move_foreground(s_tracker_modal);

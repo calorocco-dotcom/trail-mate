@@ -241,6 +241,7 @@ bool open(lv_obj_t* parent, Completed completed, void* context)
     lv_obj_add_state(state.save, LV_STATE_DISABLED);
     state.timer = lv_timer_create(poll, 150, nullptr);
     platform::ui::gps::acquire_power_lease("navigation");
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.group);
     lv_group_focus_obj(state.destination);
     return true;
 }
