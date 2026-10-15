@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {TrackHardwareSession} from '../../tools/hostlink/track_hardware_session.mjs';
 import {decodeManagement,encodeManagement} from '../../site/device/src/management-protocol.js';
 import {FRAME} from '../../site/device/src/hostlink.js';
+import fs from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
 
 const id=value=>new Uint8Array(16).fill(value);
 const hash=value=>new Uint8Array(32).fill(value);
@@ -50,4 +53,29 @@ test('hardware harness rejects unrelated uploads and configuration writes before
  session.author={...session.author,fingerprint:'cd'.repeat(32)};
  await assert.rejects(session.request(38,[8,null]));
  assert.equal(calls.length,0);
+});
+
+test('physical attachment IDs survive reopening before a failed publication is retried',async t=>{
+ const root=fileURLToPath(new URL('../../.codex-build/hostlink-codec/',import.meta.url));
+ await fs.mkdir(root,{recursive:true});const folder=await fs.mkdtemp(path.join(root,'attachment-bindings-'));
+ const checkpoint=path.join(folder,'device-confirmation.json'),file=checkpoint+'.attachments.json';
+ t.after(async()=>{await fs.unlink(file).catch(error=>{if(error.code!=='ENOENT')throw error;});await fs.rmdir(folder);});
+ const {session}=fixture();session.checkpointPath=checkpoint;
+ const manifest=new Uint8Array([1,2,3]),first=await session.attachmentBindings(manifest);
+ const saved=await fs.readFile(file,'utf8');
+ const reopened=fixture().session;reopened.checkpointPath=checkpoint;
+ assert.deepEqual(await reopened.attachmentBindings(manifest),first);
+ assert.equal(await fs.readFile(file,'utf8'),saved,'Retry does not replace its retained random IDs');
+ const next=await reopened.attachmentBindings(new Uint8Array([1,2,4]));
+ assert.notDeepEqual(next,first);assert.deepEqual(await reopened.attachmentBindings(manifest),first);
+ reopened.author={...reopened.author,generation:3};
+ const unchanged=await fs.readFile(file,'utf8');
+ await assert.rejects(reopened.attachmentBindings(manifest),/different identity/);
+ assert.equal(await fs.readFile(file,'utf8'),unchanged);
+});
+
+test('physical upload errors identify the failing operation and upload kind',async()=>{
+ const {session}=fixture();
+ session.exchange=async(type,payload)=>{const request=decodeManagement(payload);return encodeManagement(request.session,request.request,7,[]);};
+ await assert.rejects(session.request(32,[id(2),10,38,hash(3)]),error=>error.code===7&&error.operation===32&&error.uploadKind===10);
 });

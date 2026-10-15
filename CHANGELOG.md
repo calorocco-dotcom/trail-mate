@@ -68,6 +68,7 @@ and no final release has been published.
 - Read-only bzip2 tables use read-only storage. Protocol operations use bounded transfers, borrowed views and explicit scratch ownership instead of large ESP task-stack objects.
 - Configuration, identity and publication operations retain device-owned authorization and persistent confirmation state. Real-hardware evidence is distinguished from simulated or native checks.
 - Browser Geocaching draft saves yield and retry when the shared SD filesystem is busy opening, sizing, seeking or reading the staged edit, preserving the last complete input slice instead of treating contention as a storage failure.
+- Reconnecting after a failed Geocaching draft save can resume the exact staged edit under a new USB session after checking the device author generation, draft ownership and version. Active saves remain protected; recovery reuses existing scratch storage.
 
 ### Pending final release acceptance
 

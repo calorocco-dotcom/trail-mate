@@ -60,7 +60,8 @@ export class TrackHardwareSession {
   const id=randomId(),response=decodeManagement(await this.exchange(FRAME.MANAGEMENT_REQUEST,
     encodeManagement(this.id,id,operation,body),FRAME.MANAGEMENT_RESPONSE));
   assert.ok(equal(response.session,this.id)&&equal(response.request,id));
-  if(response.code!==0)throw Object.assign(Error('Device status '+response.code),{code:response.code});
+  if(response.code!==0)throw Object.assign(Error('Device status '+response.code+' (operation '+operation+(operation===32?', kind '+body[1]:'')+')'),
+    {code:response.code,operation,uploadKind:operation===32?body[1]:undefined});
   return response.body;
  }
  async open() {
@@ -73,15 +74,44 @@ export class TrackHardwareSession {
   this.author=await proveDeviceAuthor(this);assert.equal(this.author.fingerprint,this.fingerprint);
   return this.author;
  }
+ async attachmentBindings(manifest) {
+  assert.ok(this.author?.verified&&this.author.fingerprint===this.fingerprint&&this.checkpointPath);
+  const manifestHash=hex(new Uint8Array(await crypto.subtle.digest('SHA-256',manifest)));
+  const file=this.checkpointPath+'.attachments.json';let journal;
+  try{journal=JSON.parse(await fs.readFile(file,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+  if(journal){
+   assert.ok(journal.version===1&&journal.author===this.fingerprint&&journal.generation===this.author.generation,
+     'Retained physical attachment inputs belong to a different identity');
+   assert.ok(Array.isArray(journal.entries)&&journal.entries.length<=3);
+   const hashes=new Set();
+   for(const row of journal.entries){
+    assert.match(row.manifestHash,/^[a-f0-9]{64}$/);assert.ok(!hashes.has(row.manifestHash));hashes.add(row.manifestHash);
+    for(const value of [row.index,row.package,row.photo])assert.match(value,/^[a-f0-9]{32}$/);
+    assert.equal(new Set([row.index,row.package,row.photo]).size,3);
+   }
+  }else journal={version:1,author:this.fingerprint,generation:this.author.generation,entries:[]};
+  let binding=journal.entries.find(row=>row.manifestHash===manifestHash);
+  if(!binding){
+   assert.ok(journal.entries.length<3,'Physical lifecycle only admits its three retained revisions');
+   binding={manifestHash,index:hex(randomId()),package:hex(randomId()),photo:hex(randomId())};
+   journal.entries.push(binding);
+   // Retain the same random IDs before any device upload, as the actual page
+   // does in its draft store. Failed/reopened tests must not leak new slots.
+   await fs.writeFile(file,JSON.stringify(journal,null,2));
+  }
+  const id=value=>Uint8Array.from(Buffer.from(value,'hex'));
+  return {indexUploadId:id(binding.index),packageUploadId:id(binding.package),attachmentUploadIds:[{id:'photo',uploadId:id(binding.photo)}]};
+ }
  async sign(raw) {
   const [encodedPlan,kml,index,photo]=decode(Uint8Array.from(raw),16384),plan=decodeTrackPublicationPlan(encodedPlan);
   const manifest=decode(plan.manifest,4096);
   assert.ok(['Network trail','Updated network trail'].includes(manifest[9]),'Only the isolated test trail may be signed');
   assert.ok(equal(manifest[1],this.author.publicKey));
+  const bindings=await this.attachmentBindings(plan.manifest);
   await this.cleanupExactStaging(4,plan.manifest.length,new Uint8Array(await crypto.subtle.digest('SHA-256',plan.manifest)));
   const result=await signDeviceTrackManifest(this,{...plan,kml,author:this.author,
     attachmentIndex:index,attachmentFiles:[{id:'photo',content:photo}],
-    indexUploadId:randomId(),packageUploadId:randomId(),attachmentUploadIds:[{id:'photo',uploadId:randomId()}]},
+    ...bindings},
     {operations:this.operations});
   this.last={plan,signed:result.signed};return [...encode(result.signed)];
  }

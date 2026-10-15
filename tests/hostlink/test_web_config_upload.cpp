@@ -22,7 +22,8 @@ WebReadResult readWebDirectories(uint32_t, uint8_t*, size_t, size_t& written)
     written = 0;
     return WebReadResult::Unavailable;
 }
-bool releaseWebDraftSave() { return true; }
+bool fake_release_draft_save = true;
+bool releaseWebDraftSave() { return fake_release_draft_save; }
 WebReadResult fake_owner_result = WebReadResult::Unavailable;
 WebReadResult checkWebDraftEditOwner(const uint8_t*, uint64_t, const uint8_t*, const uint8_t*) { return fake_owner_result; }
 WebReadResult queueWebDraftFile(const uint8_t*, uint32_t, uint64_t, const uint8_t*, const uint8_t*, uint32_t) { return WebReadResult::Unavailable; }
@@ -146,6 +147,7 @@ int main()
     assert(invoke(Operation::TransferFinish, only_id) == 0);
     web_config::Metadata metadata;
     assert(web_config::load(metadata, scratch) && metadata.kind == 2 && metadata.phase == 1 && metadata.offset == draft_size);
+    const auto original_draft_input = fake_files.at(web_config::candidate_path(2));
     assert(fake_files[web_config::kMetaPath].size() == 111);
     assert(invoke(Operation::ConfigCommit, commit) == 3);
     assert(invoke(Operation::ConfigValidate, only_id) == 3);
@@ -364,4 +366,57 @@ int main()
     assert(invoke(Operation::TransferBegin, draft_begin) == 0);
     assert(web_config::load(metadata, scratch) && metadata.kind == 2 && metadata.phase == 0);
     assert(fake_file == config_after_commit && app::sd_tms::fake_commits == 1);
+
+    // A failed draft save leaves bound input in phase 2. A new browser must be
+    // able to retry those exact bytes without knowing the abandoned session ID.
+    recovery.result = chat::DeviceAuthorResult::Ok;
+    recovery.generation = 7;
+    app::fake_messaging.adapter = &recovery;
+    fake_files[web_config::candidate_path(2)] = original_draft_input;
+    mbedtls_sha256_context retry_hash;
+    platform::esp::common::crypto::sha256_update(&retry_hash,
+                                                 reinterpret_cast<const uint8_t*>(original_draft_input.data()), original_draft_input.size());
+    platform::esp::common::crypto::sha256_finish(&retry_hash, hash);
+    const auto new_owner = owner;
+    const auto new_transfer = id;
+    for (const uint8_t phase : {uint8_t(2), uint8_t(3)})
+    {
+        metadata = {};
+        metadata.kind = 2;
+        metadata.phase = phase;
+        metadata.total = metadata.offset = static_cast<uint32_t>(original_draft_input.size());
+        std::memcpy(metadata.owner, new_owner.data(), 16);
+        metadata.owner[0] ^= 0x40;
+        std::memcpy(metadata.id, new_transfer.data(), 16);
+        metadata.id[0] ^= 0x40;
+        std::memcpy(metadata.hash, hash, 32);
+        metadata.base_hash[0] = 17; // Original draft and compare-and-swap version.
+        metadata.base_hash[16] = 1;
+        web_config::put32(metadata.base_hash + 24, 7);
+        assert(web_config::save(metadata, scratch));
+        const auto bound = metadata;
+        const auto pending_files = fake_files;
+        runtime::fake_owner_result = runtime::WebReadResult::Ready;
+        runtime::fake_release_draft_save = false;
+        assert(invoke(Operation::TransferBegin, draft_begin) == 5 && fake_files == pending_files);
+        runtime::fake_release_draft_save = true;
+        hash[0] ^= 1;
+        assert(invoke(Operation::TransferBegin, draft_begin) == 5 && fake_files == pending_files);
+        hash[0] ^= 1;
+        runtime::fake_owner_result = runtime::WebReadResult::Forbidden;
+        assert(invoke(Operation::TransferBegin, draft_begin) == 2 && fake_files == pending_files);
+        runtime::fake_owner_result = runtime::WebReadResult::Ready;
+        recovery.generation = 8;
+        assert(invoke(Operation::TransferBegin, draft_begin) == 9 && fake_files == pending_files);
+        recovery.generation = 7;
+        assert(invoke(Operation::TransferBegin, draft_begin) == 0);
+        assert(web_config::load(metadata, scratch) && metadata.phase == 2);
+        assert(!std::memcmp(metadata.owner, new_owner.data(), 16) && !std::memcmp(metadata.id, new_transfer.data(), 16));
+        assert(!std::memcmp(metadata.base_hash, bound.base_hash, 32) && !std::memcmp(metadata.hash, hash, 32));
+        assert(metadata.total == bound.total && metadata.offset == bound.offset);
+        assert(fake_files.at(web_config::candidate_path(2)) == original_draft_input);
+        assert(invoke(Operation::TransferBegin, draft_begin) == 0); // Exact retry is idempotent.
+        assert(fake_file == config_after_commit && app::sd_tms::fake_commits == 1);
+    }
+    app::fake_messaging.adapter = nullptr;
 }
