@@ -853,9 +853,7 @@ void refresh_poi_overlay(RuntimeImpl& impl, bool force)
     options.width = metadata.width;
     options.height = metadata.height;
     const int zoom = impl.anchor.z;
-    options.max_labels = zoom <= 6 ? 8 : zoom <= 11 ? 16
-                                     : zoom <= 15   ? 24
-                                                    : 32;
+    options.max_labels = ui::map_poi::annotation_label_budget(zoom);
     options.road_reservation = zoom <= 6 ? 0 : zoom <= 11 ? 3
                                                           : 8;
     options.place_reservation = zoom <= 11 ? 6 : 2;

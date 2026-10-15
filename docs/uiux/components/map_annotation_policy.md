@@ -100,6 +100,14 @@ remainder for places and POIs. These are debugging targets when data and space
 permit, not promised or mandatory counts. The actual map viewport is smaller
 than the screen; adjust to usable area and measured device timings.
 
+The user's density adjustment on 2026-10-15 raises the zoom-band named-label
+budgets from 8/16/24/32 to 11/22/34/45 (approximately 40%). POI reservation rises
+from 12 to 17 while road/place reservations and collision avoidance stay intact.
+The existing 48-placement frame, 192-candidate cap, snapshot buffers and draw
+objects are not enlarged. Actual visible counts still depend on source coverage
+and available non-overlapping space; this is not a guarantee of 40% more labels
+in every viewport. The runtime and native replay use the same budget function.
+
 ## Road-name data and layout
 
 - Center retains road identity, name/number, road class, zoom eligibility,

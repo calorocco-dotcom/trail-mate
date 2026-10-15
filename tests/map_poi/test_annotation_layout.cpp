@@ -134,6 +134,38 @@ void unnamed_clusters_only_join_the_same_category()
     assert(result.unnamed_markers == 2 && placed[0].cluster_count == 2 && placed[1].cluster_count == 1);
 }
 
+void denser_zoom_policy_uses_existing_storage_without_overlapping_labels()
+{
+    std::vector<AnnotationCandidate> candidates;
+    for (int row = 0; row < 7; ++row)
+        for (int column = 0; column < 8; ++column)
+            candidates.push_back(point(1 + row * 8 + column, 18 + column * 38, 16 + row * 27, "P"));
+    std::vector<AnnotationPlacement> placed(AnnotationLayoutOptions::kMaxPlacements);
+    AnnotationLayoutOptions options;
+    options.width = 320;
+    options.height = 210;
+    for (const int zoom : {6, 11, 15, 16})
+    {
+        const unsigned old_budget = zoom <= 6 ? 8 : zoom <= 11 ? 16
+                                                : zoom <= 15   ? 24
+                                                               : 32;
+        options.max_labels = static_cast<uint8_t>(old_budget);
+        const auto before = layout_annotations(candidates.data(), candidates.size(), nullptr, 0, placed.data(), placed.size(), options, measure, nullptr);
+        options.max_labels = annotation_label_budget(zoom);
+        const auto after = layout_annotations(candidates.data(), candidates.size(), nullptr, 0, placed.data(), placed.size(), options, measure, nullptr);
+        assert(after.poi_labels * 100 >= before.poi_labels * 135 && after.poi_labels * 100 <= before.poi_labels * 145);
+        assert(after.count <= placed.size());
+        for (size_t first = 0; first < after.count; ++first)
+            for (size_t second = first + 1; second < after.count; ++second)
+            {
+                const auto& a = placed[first];
+                const auto& b = placed[second];
+                assert(a.text_x + a.text_width + options.padding <= b.text_x || b.text_x + b.text_width + options.padding <= a.text_x ||
+                       a.text_y + a.text_height + options.padding <= b.text_y || b.text_y + b.text_height + options.padding <= a.text_y);
+            }
+    }
+}
+
 int main()
 {
     named_points_own_their_marker_space();
@@ -143,4 +175,5 @@ int main()
     long_utf8_names_are_shortened_instead_of_removed();
     reservations_prevent_facilities_from_removing_all_roads();
     unnamed_clusters_only_join_the_same_category();
+    denser_zoom_policy_uses_existing_storage_without_overlapping_labels();
 }
