@@ -5,6 +5,15 @@ set(REPO "${CMAKE_CURRENT_LIST_DIR}/../..")
 include("${REPO}/cmake/TrailMateTmap.cmake")
 trailmate_add_tmap()
 enable_testing()
+get_target_property(trailmate_tmap_source tmap SOURCE_DIR)
+add_test(NAME tmap_platform_link_isolation
+    COMMAND "${CMAKE_COMMAND}"
+        -S "${CMAKE_CURRENT_LIST_DIR}/export_context"
+        -B "${CMAKE_CURRENT_BINARY_DIR}/export-context"
+        -G "${CMAKE_GENERATOR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+        "-DFETCHCONTENT_SOURCE_DIR_TRAILMATE_TMAP=${trailmate_tmap_source}")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME tmap_dependency_contract COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/test_dependency_contract.py")
 add_executable(tmap_released_sdk_smoke released_sdk_smoke.cpp)

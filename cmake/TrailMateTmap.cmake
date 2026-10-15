@@ -22,5 +22,11 @@ function(trailmate_add_tmap)
     FetchContent_Declare(trailmate_tmap
         URL "https://github.com/vicliu624/tmap/releases/download/v${TRAILMATE_TMAP_VERSION}/tmap-${TRAILMATE_TMAP_VERSION}-source.tar.gz"
         URL_HASH "SHA256=${TRAILMATE_TMAP_ARCHIVE_SHA256}")
+    # ESP-IDF adds its runtime through directory-level link_libraries(). Keep
+    # those private platform dependencies out of the portable SDK's exports,
+    # then restore them for the application's subsequent targets.
+    get_directory_property(trailmate_tmap_parent_links LINK_LIBRARIES)
+    set_property(DIRECTORY PROPERTY LINK_LIBRARIES "")
     FetchContent_MakeAvailable(trailmate_tmap)
+    set_property(DIRECTORY PROPERTY LINK_LIBRARIES "${trailmate_tmap_parent_links}")
 endfunction()
