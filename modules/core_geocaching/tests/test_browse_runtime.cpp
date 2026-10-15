@@ -1124,6 +1124,24 @@ int main(int argc, char** argv)
             };
             require(staged(staged_id, 7) == rt::WebReadResult::AlreadySaved, "web file was not saved through the existing editor transaction");
             require(permission(staged_id.data(), 1, router.identity.public_key.data()) == rt::WebReadResult::Ready, "web file save generation was not persisted");
+            // Ordinary SD contention during any selected-input operation must
+            // preserve the staged edit and resume at its last complete slice.
+            for (unsigned operation = 0; operation < 4; ++operation)
+            {
+                staged_id.fill(static_cast<uint8_t>(20 + operation));
+                test::file_busy_cycles = 1;
+                test::file_busy_remaining.fill(1);
+                test::file_busy_remaining[operation] = 0;
+                const auto hits = test::file_busy_hits[operation];
+                require(rt::queueWebDraftFile(staged_id.data(), static_cast<uint32_t>(edit_size), 0, edit_hash.data(), router.identity.public_key.data(), 7) == rt::WebReadResult::Pending,
+                        "busy file test could not queue its edit");
+                until([&]
+                      { return test::file_busy_hits[operation] > hits; },
+                      "staged input did not exercise SD contention");
+                test::file_busy_cycles = 0;
+                require(staged(staged_id, 7) == rt::WebReadResult::AlreadySaved, "SD contention rejected the staged web edit");
+                require(permission(staged_id.data(), 1, router.identity.public_key.data()) == rt::WebReadResult::Ready, "busy web edit was not persisted");
+            }
             staged_id.fill(10);
             test::files[rt::kWebDraftCandidatePath][0] ^= 1;
             require(staged(staged_id, 7) == rt::WebReadResult::HashMismatch, "corrupted web candidate was committed");

@@ -2945,6 +2945,13 @@ static bool advanceWebDraftFile(Session& s)
     if (!file.open(kWebDraftCandidatePath, "r") || file.size() != total || !file.seek(job.size) ||
         file.read(job.bytes + job.size, count) != static_cast<int>(count))
     {
+        // Map/other SD readers can own the filesystem briefly. Keep the edit
+        // and retry this same slice; only a real read failure rejects it.
+        if (file.read_busy())
+        {
+            next_step.store(millis() + 20);
+            return true;
+        }
         failWebDraftSave(job, WebReadResult::Unavailable);
         return true;
     }

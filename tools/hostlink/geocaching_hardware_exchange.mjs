@@ -6,10 +6,12 @@ import path from 'node:path';
 import {FrameDecoder,FRAME} from '../../site/device/src/hostlink.js';import {decodeManagement} from '../../site/device/src/management-protocol.js';import {decode,verifySigned,equal} from '../../site/geocaching/src/protocol.js';import {validateAuthorInfo} from '../../site/device/src/author-identity.js';
 const allowed=new Set([0,1,2,3,32,33,34,35,36,37,38,64,65,66,71,72,73,74,75,76,77]),hex=value=>Buffer.from(value).toString('hex');
 export class GeocachingHardwareExchange{
- constructor({port,python,fingerprint,namePrefix,resumeDraftId=null,calls=[],signedVersions=[],checkpointPath=null}){
+ constructor({port,python,fingerprint,namePrefix,resumeDraftId=null,resumeBaseHash=null,calls=[],signedVersions=[],checkpointPath=null}){
   if(!/^COM\d+$/.test(port)||!/^[a-f0-9]{64}$/.test(fingerprint)||!namePrefix)throw Error('Explicit port, expected author and isolated test-name prefix required');
   this.fingerprint=fingerprint;this.namePrefix=namePrefix;this.calls=calls;this.signedVersions=signedVersions;this.signatures=new Set();this.confirmations=new Set();this.confirmed=new Set();this.drafts=new Set();this.transfers=new Map();this.outputs=new Map();this.completed=new Set();this.pending=null;this.queue=Promise.resolve();this.broken=null;
   if(resumeDraftId!==null&&(!/^[a-f0-9]{32}$/.test(resumeDraftId)||!/^Wio网页验收-[a-z0-9]+$/.test(namePrefix)))throw Error('Resume requires an explicit isolated acceptance ID and name');this.resumeDraftId=resumeDraftId;
+  if(resumeBaseHash!==null)assert.ok(resumeDraftId&&resumeBaseHash instanceof Uint8Array&&resumeBaseHash.length===32,'Confirmed resume requires an exact signed base');
+  this.resumeBaseHash=resumeBaseHash?.slice()??null;
   this.checkpointPath=checkpointPath;
   this.child=spawn(python,[fileURLToPath(new URL('./serial_transport.py',import.meta.url)),port],{windowsHide:true,stdio:['pipe','pipe','pipe']});this.stderr='';this.child.stderr.on('data',bytes=>{this.stderr=(this.stderr+bytes).slice(-4096);});
   this.done=new Promise((resolve,reject)=>{this.child.on('error',error=>{this.broken=error;this.pending?.reject(error);this.pending=null;reject(error);});this.child.on('exit',code=>{if(this.pending){this.pending.reject(Error('Hardware serial process exited: '+code));this.pending=null;}resolve(code);});});this.done.catch(()=>{});
@@ -61,7 +63,7 @@ export class GeocachingHardwareExchange{
   if(code===33){const row=this.transfers.get(hex(body[0]));row.content.set(body[2],body[1]);row.offset=Math.max(row.offset,body[1]+body[2].length);}
   if(code===35){const row=this.transfers.get(hex(body[0]));assert.equal(row.offset,row.total);assert.ok(equal(new Uint8Array(await crypto.subtle.digest('SHA-256',row.content)),row.hash));row.sealed=true;}
   if(code===66)this.drafts.add(hex(body[1]));
-  if(code===64&&value[3]&&hex(value[3][0])===this.resumeDraftId&&!this.drafts.has(this.resumeDraftId)){const row=value[3];assert.equal(row[3],this.namePrefix);assert.equal(row[5],310000000);assert.equal(row[6],1210000000);assert.equal(row[4],0);assert.equal(row[8][0],0);assert.ok(row[2]===null||equal(row[2],this.author.publicKey));this.drafts.add(this.resumeDraftId);}
+  if(code===64&&value[3]&&hex(value[3][0])===this.resumeDraftId&&!this.drafts.has(this.resumeDraftId)){const row=value[3];assert.equal(row[3],this.namePrefix);assert.equal(row[5],310000000);assert.equal(row[6],1210000000);assert.equal(row[4],0);assert.equal(row[8][0],this.resumeBaseHash?1:0);if(this.resumeBaseHash){assert.equal(row[8][1],1);assert.equal(row[8][2]&7,0);assert.ok(equal(row[7],this.resumeBaseHash));}assert.ok(row[2]===null||equal(row[2],this.author.publicKey));this.drafts.add(this.resumeDraftId);}
   if(code===71)this.signatures.add(hex(body[4]));
   if(code===75)this.confirmations.add(hex(body[0]));
   if([75,76].includes(code)&&value[3]===1&&value[7]===1)this.confirmed.add(hex(body[0]));
