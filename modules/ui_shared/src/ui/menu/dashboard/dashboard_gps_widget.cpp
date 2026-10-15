@@ -159,8 +159,8 @@ void create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
     auto& gps_ui = dashboard_state().gps;
     gps_ui.chrome = create_card_chrome(parent, ::ui::i18n::tr("GPS Status"), card_w, card_h);
 
-    const lv_coord_t body_w = lv_obj_get_width(gps_ui.chrome.body);
-    const lv_coord_t body_h = lv_obj_get_height(gps_ui.chrome.body);
+    const lv_coord_t body_w = lv_obj_get_content_width(gps_ui.chrome.body);
+    const lv_coord_t body_h = lv_obj_get_content_height(gps_ui.chrome.body);
     const lv_coord_t radar_d = std::min<lv_coord_t>(body_h - 8, std::max<lv_coord_t>(74, body_w / 2));
 
     gps_ui.radar = lv_obj_create(gps_ui.chrome.body);

@@ -78,8 +78,8 @@ lv_display_t* s_display = nullptr;
 lv_indev_t* s_touch_indev = nullptr;
 lv_timer_t* s_app_lifecycle_ui_timer = nullptr;
 i2c_master_dev_handle_t s_touch_i2c_handle = nullptr;
-bool s_lvgl_ready = false;
-bool s_ready = false;
+std::atomic<bool> s_lvgl_ready{false};
+std::atomic<bool> s_ready{false};
 bool s_backlight_ready = false;
 int s_brightness_percent = 0;
 uint32_t s_hi8561_touch_info_start_address = 0;
@@ -733,13 +733,19 @@ bool create_display()
     lvgl_port_display_dsi_cfg_t dsi_cfg{};
     dsi_cfg.flags.avoid_tearing = false;
 
+    // add_disp starts using this display in the already-running LVGL task.
+    // Hold its recursive lock through rotation so no frame/input observes a
+    // half-configured coordinate system.
+    if (!trail_mate_t_display_p4_display_lock(0)) return false;
     s_display = lvgl_port_add_disp_dsi(&display_cfg, &dsi_cfg);
     if (s_display == nullptr)
     {
         ESP_LOGE(kTag, "Failed to create P4 DSI LVGL display");
+        trail_mate_t_display_p4_display_unlock();
         return false;
     }
     lv_display_set_rotation(s_display, LV_DISPLAY_ROTATION_90);
+    trail_mate_t_display_p4_display_unlock();
     return true;
 }
 
@@ -767,6 +773,8 @@ void create_boot_screen()
         lv_label_set_text(subtitle, panel_variant_label());
         lv_obj_set_style_text_color(subtitle, lv_color_hex(0x6DB8E8), 0);
         lv_obj_align(subtitle, LV_ALIGN_CENTER, 0, 14);
+        // Submit the initial scene while the backlight is still dark.
+        lv_refr_now(s_display);
     }
 
     trail_mate_t_display_p4_display_unlock();
@@ -833,7 +841,6 @@ void log_display_lock_timeout(TaskHandle_t requester, uint32_t timeout_ms)
 esp_err_t set_brightness_percent(int brightness_percent)
 {
     const int clamped = std::clamp(brightness_percent, 0, 100);
-    s_brightness_percent = clamped;
 
     if (use_hi8561_panel())
     {
@@ -848,6 +855,7 @@ esp_err_t set_brightness_percent(int brightness_percent)
         {
             return ESP_FAIL;
         }
+        s_brightness_percent = clamped;
         return ESP_OK;
     }
 
@@ -857,7 +865,9 @@ esp_err_t set_brightness_percent(int brightness_percent)
     }
 
     const uint8_t raw = static_cast<uint8_t>((255U * static_cast<uint32_t>(clamped)) / 100U);
-    return set_rm69a10_brightness(s_panel, raw);
+    const esp_err_t result = set_rm69a10_brightness(s_panel, raw);
+    if (result == ESP_OK) s_brightness_percent = clamped;
+    return result;
 }
 
 } // namespace
@@ -898,12 +908,12 @@ extern "C" bool trail_mate_t_display_p4_display_runtime_init(void)
     {
         return false;
     }
+    create_boot_screen();
     if (set_brightness_percent(kStartupBrightnessPercent) != ESP_OK)
     {
         ESP_LOGW(kTag, "Initial brightness update failed");
     }
 
-    create_boot_screen();
     (void)start_app_lifecycle_ui_timer();
     // Start the keypad and recovery timer even if the early controller probe
     // failed. A missing keyboard can attach later without restarting the UI.
@@ -918,12 +928,12 @@ extern "C" bool trail_mate_t_display_p4_display_runtime_init(void)
         ESP_LOGI(kTag, "T-Display-P4 keyboard module is not available");
     }
 
-    s_ready = true;
     ESP_LOGI(kTag,
-             "Display runtime ready buffer_pixels=%lu buffer_mode=three-surface-vsync brightness=%d",
+             "Display runtime ready buffer_pixels=%lu buffer_mode=partial-ppa-owned brightness=%d",
              static_cast<unsigned long>(static_cast<uint32_t>(active_panel().width) *
                                         static_cast<uint32_t>(active_panel().height)),
              s_brightness_percent);
+    s_ready.store(true, std::memory_order_release);
     return true;
 }
 
@@ -969,5 +979,9 @@ extern "C" void trail_mate_t_display_p4_display_unlock(void)
 
 extern "C" esp_err_t trail_mate_t_display_p4_display_set_brightness_percent(int brightness_percent)
 {
-    return set_brightness_percent(brightness_percent);
+    if (!s_ready.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
+    if (!trail_mate_t_display_p4_display_lock(1000)) return ESP_ERR_TIMEOUT;
+    const esp_err_t result = set_brightness_percent(brightness_percent);
+    trail_mate_t_display_p4_display_unlock();
+    return result;
 }

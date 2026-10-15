@@ -29,11 +29,22 @@ bool is_tab5_profile()
     return std::strcmp(ui::menu_profile::current().name, "tab5") == 0;
 }
 
+bool dashboard_enabled()
+{
+    return std::strcmp(ui::menu_profile::current().name, "t_display_p4") == 0 ||
+           (kEnableTab5Dashboard && is_tab5_profile());
+}
+
+void panel_deleted(lv_event_t* event)
+{
+    if (lv_event_get_target(event) == dashboard_state().panel) dashboard_reset();
+}
+
 void refresh_dashboard(lv_timer_t* timer)
 {
     (void)timer;
     auto& dashboard = dashboard_state();
-    if (!is_tab5_profile() || dashboard.panel == nullptr)
+    if (!dashboard_enabled() || dashboard.panel == nullptr || !lv_obj_is_visible(dashboard.panel))
     {
         return;
     }
@@ -58,21 +69,27 @@ void refresh_dashboard(lv_timer_t* timer)
 void init(lv_obj_t* menu_panel, lv_obj_t* grid_panel, const ui::menu_layout::InitOptions& options)
 {
     (void)options;
-    if (!kEnableTab5Dashboard || !is_tab5_profile() || menu_panel == nullptr || grid_panel == nullptr)
+    if (!dashboard_enabled() || menu_panel == nullptr || grid_panel == nullptr)
     {
         return;
     }
 
+    auto* old_panel = dashboard_state().panel;
     dashboard_reset();
+    if (old_panel != nullptr && lv_obj_is_valid(old_panel)) lv_obj_delete(old_panel);
+    // Resolve percentage sizes before computing any child geometry.
+    lv_obj_update_layout(menu_panel);
     auto& dashboard = dashboard_state();
-    const lv_coord_t screen_w = lv_display_get_physical_horizontal_resolution(nullptr);
-    const lv_coord_t screen_h = lv_display_get_physical_vertical_resolution(nullptr);
+    const lv_coord_t screen_w = lv_obj_get_content_width(menu_panel);
+    const lv_coord_t screen_h = lv_obj_get_content_height(menu_panel);
     const lv_coord_t grid_w = lv_obj_get_width(grid_panel);
     const lv_coord_t right_gap = static_cast<lv_coord_t>(screen_w - grid_w - 16);
-    const lv_coord_t top = 56;
+    const auto& profile = ui::menu_profile::current();
+    const lv_coord_t top = profile.grid_top_offset;
 
     dashboard.dock_right = right_gap >= 240;
     dashboard.panel = lv_obj_create(menu_panel);
+    lv_obj_add_event_cb(dashboard.panel, panel_deleted, LV_EVENT_DELETE, nullptr);
     lv_obj_set_style_bg_color(dashboard.panel, ui::theme::page_bg(), 0);
     lv_obj_set_style_bg_opa(dashboard.panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(dashboard.panel, 0, 0);
@@ -87,7 +104,7 @@ void init(lv_obj_t* menu_panel, lv_obj_t* grid_panel, const ui::menu_layout::Ini
     if (dashboard.dock_right)
     {
         panel_w = right_gap;
-        panel_h = std::max<lv_coord_t>(screen_h - top - 10, 220);
+        panel_h = std::max<lv_coord_t>(screen_h - top - profile.top_bar_height - 8, 220);
         lv_obj_set_size(dashboard.panel, panel_w, panel_h);
         lv_obj_align(dashboard.panel, LV_ALIGN_TOP_RIGHT, -8, top);
     }

@@ -7,7 +7,7 @@ root, output = map(pathlib.Path, sys.argv[1:])
 
 
 def extract(source, name):
-    match = re.search(r"^[\w:*<> ]+\b" + re.escape(name) + r"\([^;]*?\)\s*\{", source, re.M)
+    match = re.search(r'^[\w:*<>" ]+\b' + re.escape(name) + r"\([^;]*?\)\s*\{", source, re.M)
     if not match:
         raise RuntimeError(f"Cannot locate production function {name}")
     start = source.index("{", match.start())
@@ -31,8 +31,11 @@ for name in ("kDsiPhyLdoChannel", "kDsiPhyLdoMv"):
 power += extract(display, "ensure_dsi_phy_power")
 power += extract(gps, "should_try_p4_factory_baud")
 power += extract(board, "configure_l76k_update_rate")
+power += extract(board, "ensure_external_3v3_power_control")
 (output / "power_actual.inc").write_text(power, encoding="utf-8")
 rtc = (root / "boards/t_display_p4/src/rtc_runtime.cpp").read_text(encoding="utf-8")
 (output / "rtc_actual.inc").write_text("".join(extract(rtc, name) for name in (
     "days_from_civil", "is_leap_year", "days_in_month", "bcd_to_dec",
     "validate_datetime_utc", "datetime_to_epoch_utc", "read_rtc_epoch")), encoding="utf-8")
+(output / "display_actual.inc").write_text("".join(extract(display, name) for name in (
+    "create_display", "set_brightness_percent", "trail_mate_t_display_p4_display_set_brightness_percent")), encoding="utf-8")

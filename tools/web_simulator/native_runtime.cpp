@@ -12,6 +12,9 @@
 #include <cstdlib>
 #include <emscripten.h>
 #include <string>
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+#include "boards/t_display_p4/board_profile.h"
+#endif
 
 lv_group_t* app_g = nullptr;
 lv_group_t* menu_g = nullptr;
@@ -19,7 +22,19 @@ lv_obj_t* main_screen = nullptr;
 static lv_display_t* display;
 static lv_indev_t* pointer_device;
 static lv_group_t* bound_input_group;
-static uint16_t pixels[480 * 240];
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+#if defined(CONFIG_TRAIL_MATE_T_DISPLAY_P4_PANEL_HI8561)
+static constexpr auto panel = boards::t_display_p4::kBoardProfile.hi8561_panel;
+#else
+static constexpr auto panel = boards::t_display_p4::kBoardProfile.rm69a10_panel;
+#endif
+static constexpr int preview_width = panel.height;
+static constexpr int preview_height = panel.width;
+#else
+static constexpr int preview_width = 480;
+static constexpr int preview_height = 240;
+#endif
+static uint16_t pixels[preview_width * preview_height];
 static int pointer_x, pointer_y;
 static bool pointer_down;
 static ui::page_profile::PageLayoutProfile page_profile;
@@ -29,6 +44,9 @@ void preview_exit_page();
 void preview_bind_app();
 int preview_current_page();
 extern "C" void native_open_page(int page);
+
+// A preview has no attached hardware keyboard; keep P4's touch IME available.
+lv_indev_t* lv_get_keyboard_indev() { return nullptr; }
 
 EM_JS(void, send_frame, (uint32_t ptr, int width, int height), {
     if (Module.onFrame) Module.onFrame(ptr, width, height);
@@ -121,7 +139,7 @@ extern "C"
             setenv("TRAIL_MATE_SD_ROOT", "/sd", 1);
             setenv("TRAIL_MATE_SETTINGS_ROOT", "/settings", 1);
             preview_bind_app();
-            display = lv_display_create(480, 222);
+            display = lv_display_create(preview_width, preview_height);
             lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
             lv_display_set_buffers(display, pixels, nullptr, sizeof(pixels), LV_DISPLAY_RENDER_MODE_FULL);
             lv_display_set_flush_cb(display, [](lv_display_t* d, const lv_area_t*, uint8_t* buffer)
@@ -140,8 +158,13 @@ extern "C"
             initialized = true;
         }
         preview_exit_page();
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+        lv_display_set_resolution(display, preview_width, preview_height);
+        page_profile = ui::page_profile::make_t_display_p4_profile();
+#else
         lv_display_set_resolution(display, deck ? 320 : 480, deck ? 240 : 222);
         page_profile = deck ? ui::page_profile::make_tdeck_profile() : ui::page_profile::make_pager_profile();
+#endif
         ui::page_profile::set_active_profile(&page_profile);
         native_open_page(0);
         lv_obj_update_layout(lv_screen_active());

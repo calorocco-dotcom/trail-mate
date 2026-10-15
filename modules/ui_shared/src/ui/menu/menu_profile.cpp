@@ -197,7 +197,7 @@ MenuLayoutProfile make_t_display_p4_profile()
 {
     MenuLayoutProfile profile = make_tab5_profile();
     profile.name = "t_display_p4";
-    profile.card_width = 104;
+    profile.card_width = 140;
     profile.card_height = 112;
     profile.grid_height_pct = 84;
     profile.grid_top_offset = 34;

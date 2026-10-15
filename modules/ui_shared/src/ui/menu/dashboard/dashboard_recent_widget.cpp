@@ -64,8 +64,8 @@ void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h
     auto& recent = dashboard_state().recent;
     recent.chrome = create_card_chrome(parent, ::ui::i18n::tr("Recent Activity"), card_w, card_h);
 
-    const lv_coord_t body_w = lv_obj_get_width(recent.chrome.body);
-    const lv_coord_t body_h = lv_obj_get_height(recent.chrome.body);
+    const lv_coord_t body_w = lv_obj_get_content_width(recent.chrome.body);
+    const lv_coord_t body_h = lv_obj_get_content_height(recent.chrome.body);
     const lv_coord_t gap = 6;
     const lv_coord_t row_h = std::max<lv_coord_t>(26, (body_h - gap) / static_cast<lv_coord_t>(kVisibleRows));
 

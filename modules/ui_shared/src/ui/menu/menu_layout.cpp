@@ -641,8 +641,10 @@ void createAppButton(lv_obj_t* parent, AppScreen* app, size_t idx)
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_outline_width(btn, 0, 0);
     lv_obj_set_style_bg_color(btn, ui::theme::accent(), LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_FOCUSED);
     lv_obj_set_style_border_color(btn, ui::theme::border(), LV_STATE_FOCUSED);
     lv_obj_set_style_bg_color(btn, ui::theme::accent(), LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_border_color(btn, ui::theme::border(), LV_STATE_FOCUS_KEY);
 
     if (profile.transparent_cards)

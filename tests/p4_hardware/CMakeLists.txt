@@ -13,7 +13,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SOURCES} extrac
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract.py"
     "${REPO}" "${CMAKE_CURRENT_BINARY_DIR}" COMMAND_ERROR_IS_FATAL ANY)
 enable_testing()
-foreach(TEST power heading audio rtc haptic)
+foreach(TEST power heading audio rtc haptic display)
     add_executable(p4_${TEST}_test test_${TEST}.cpp)
     target_include_directories(p4_${TEST}_test PRIVATE fakes "${CMAKE_CURRENT_BINARY_DIR}"
         "${REPO}/boards/t_display_p4/include"
@@ -26,3 +26,7 @@ foreach(TEST power heading audio rtc haptic)
     endif()
     add_test(NAME p4_${TEST} COMMAND p4_${TEST}_test)
 endforeach()
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(p4_power_test PRIVATE Threads::Threads)
+endif()

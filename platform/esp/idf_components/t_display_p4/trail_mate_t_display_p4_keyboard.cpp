@@ -258,17 +258,21 @@ uint32_t translate_key(uint8_t key_number)
         return 0;
     }
     case kKeyCtrl:
-    case kKeyF11:
     case kKeyRecord:
         return 0;
+    case kKeyF11:
+        return 0x11000BU;
     default:
         break;
     }
 
     if (base >= 0x81 && base <= 0x8A)
     {
-        return 0;
+        // Shared page handlers use the same out-of-Unicode F-key namespace
+        // as the Linux input adapters (the map's Help action expects F1).
+        return 0x110001U + (base - 0x81U);
     }
+    if (base == LV_KEY_NEXT && s_shift) return LV_KEY_PREV;
 
     if (s_fn)
     {
@@ -431,7 +435,7 @@ lv_group_t* active_key_group()
             if (lv_obj_get_parent(root) == nullptr) break;
             root = lv_obj_get_parent(root);
         }
-        if (!hidden && root == lv_screen_active()) return group;
+        if (!hidden && (root == lv_screen_active() || root == lv_layer_top())) return group;
     }
     return nullptr;
 }

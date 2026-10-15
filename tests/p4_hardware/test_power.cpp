@@ -1,16 +1,20 @@
 #include "boards/t_display_p4/board_profile.h"
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
 constexpr int ESP_OK = 0;
+using esp_err_t = int;
 constexpr int kI2cTimeoutMs = 1000;
 constexpr uint32_t kNoDataWarnMs = 5000;
 constexpr uint8_t kExpanderRegOutput0 = 2, kExpanderRegOutput1 = 3;
@@ -81,17 +85,35 @@ class TDisplayP4Board
     bool expanderWriteActive(int, bool, bool);
     bool runColdBootPowerSequence();
 };
+constexpr int kExternal3v3Mv = 3300, kExternal3v3LdoChannel = 4;
+void* s_external_3v3_ldo_handle = nullptr;
+std::atomic<int> ldo_inflight{0}, external_acquisitions{0};
+const char* esp_err_to_name(int) { return "fake"; }
 struct esp_ldo_channel_config_t
 {
     int chan_id, voltage_mv;
+    struct
+    {
+        int adjustable = 0, owned_by_hw = 0;
+    } flags;
 };
 void* s_dsi_phy_ldo = nullptr;
 int ldo_mv = 0, ldo_channel = 0;
 int esp_ldo_acquire_channel(esp_ldo_channel_config_t* config, void** handle)
 {
+    assert(ldo_inflight.fetch_add(1) == 0);
+    if (config->chan_id == kExternal3v3LdoChannel) ++external_acquisitions;
     ldo_mv = config->voltage_mv;
     ldo_channel = config->chan_id;
     *handle = &ldo_mv;
+    --ldo_inflight;
+    return ESP_OK;
+}
+int esp_ldo_channel_adjust_voltage(void*, int mv)
+{
+    assert(ldo_inflight.fetch_add(1) == 0);
+    assert(mv == 3300);
+    --ldo_inflight;
     return ESP_OK;
 }
 #include "power_actual.inc"
@@ -139,5 +161,19 @@ int main()
     assert(uart_command == "$PCAS02,1000*2E\r\n");
     assert(configure_l76k_update_rate(1, 115200));
     assert(uart_command == "$PCAS02,200*1D\r\n");
+#if defined(_GLIBCXX_HAS_GTHREADS) || !defined(_WIN32)
+    // Concurrent first callers must reserve exactly one adjustable LDO4.
+    std::atomic<bool> start{false};
+    std::vector<std::thread> workers;
+    for (int i = 0; i < 8; ++i) workers.emplace_back([&]()
+                                                     {
+        while (!start.load()) std::this_thread::yield();
+        for (int call = 0; call < 32; ++call) assert(ensure_external_3v3_power_control()); });
+    start = true;
+    for (auto& worker : workers) worker.join();
+#else
+    assert(ensure_external_3v3_power_control());
+#endif
+    assert(external_acquisitions == 1);
     std::cout << "P4 rails, reset ordering, transfer failures and GNSS policy passed\n";
 }

@@ -1,5 +1,6 @@
 #include "ui/menu/dashboard/dashboard_widgets.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -62,6 +63,19 @@ std::string best_name_for(const chat::contacts::PeerDirectoryItem& info)
     return ::ui::i18n::tr("Unknown");
 }
 
+void update_needle(CompassWidgetUi& compass, float bearing)
+{
+    const float center = static_cast<float>(lv_obj_get_content_width(compass.dial)) / 2.0f;
+    const float radius = std::max(1.0f, center - 12.0f);
+    const float radians = bearing * 3.14159265358979323846f / 180.0f;
+    compass.needle_points[0] = {static_cast<lv_value_precise_t>(center), static_cast<lv_value_precise_t>(center)};
+    compass.needle_points[1] = {static_cast<lv_value_precise_t>(center + std::sin(radians) * radius),
+                                static_cast<lv_value_precise_t>(center - std::cos(radians) * radius)};
+    // Retain points in widget-owned state. A rotated object requires a temporary
+    // compositing layer; a line renders directly without that allocation.
+    lv_line_set_points(compass.needle, compass.needle_points, 2);
+}
+
 } // namespace
 
 void create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
@@ -69,8 +83,8 @@ void create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_
     auto& compass = dashboard_state().compass;
     compass.chrome = create_card_chrome(parent, ::ui::i18n::tr("Mini Compass"), card_w, card_h);
 
-    const lv_coord_t body_w = lv_obj_get_width(compass.chrome.body);
-    const lv_coord_t body_h = lv_obj_get_height(compass.chrome.body);
+    const lv_coord_t body_w = lv_obj_get_content_width(compass.chrome.body);
+    const lv_coord_t body_h = lv_obj_get_content_height(compass.chrome.body);
     const lv_coord_t dial_d = std::min<lv_coord_t>(body_h - 8, std::max<lv_coord_t>(80, body_w / 2));
 
     compass.dial = lv_obj_create(compass.chrome.body);
@@ -98,15 +112,13 @@ void create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_
     lv_obj_set_style_border_width(compass.north_marker, 0, 0);
     lv_obj_align(compass.north_marker, LV_ALIGN_TOP_MID, 0, 5);
 
-    compass.needle = lv_obj_create(compass.dial);
-    lv_obj_set_size(compass.needle, 4, dial_d / 2 - 10);
-    lv_obj_set_style_radius(compass.needle, 2, 0);
-    lv_obj_set_style_bg_color(compass.needle, color_amber_dark(), 0);
-    lv_obj_set_style_bg_opa(compass.needle, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(compass.needle, 0, 0);
-    lv_obj_set_style_transform_pivot_x(compass.needle, 2, 0);
-    lv_obj_set_style_transform_pivot_y(compass.needle, dial_d / 2 - 12, 0);
-    lv_obj_align(compass.needle, LV_ALIGN_CENTER, 0, -8);
+    lv_obj_update_layout(compass.dial);
+    compass.needle = lv_line_create(compass.dial);
+    lv_obj_set_pos(compass.needle, 0, 0);
+    lv_obj_set_style_line_width(compass.needle, 4, 0);
+    lv_obj_set_style_line_color(compass.needle, color_amber_dark(), 0);
+    lv_obj_set_style_line_rounded(compass.needle, true, 0);
+    update_needle(compass, 0.0f);
 
     compass.center_dot = lv_obj_create(compass.dial);
     lv_obj_set_size(compass.center_dot, 14, 14);
@@ -228,7 +240,7 @@ void refresh_compass_widget()
                                   heading.available ? "magnetometer heading active" : "heading unlocks after first fix");
         set_label_text_if_changed(compass.footer_label,
                                   heading.available ? "device heading from 9-axis module" : "compass wakes after GPS fix");
-        lv_obj_set_style_transform_rotation(compass.needle, static_cast<lv_coord_t>(needle_bearing * 10.0f), 0);
+        update_needle(compass, needle_bearing);
         lv_obj_set_style_bg_opa(compass.north_marker, LV_OPA_COVER, 0);
         return;
     }
@@ -255,7 +267,7 @@ void refresh_compass_widget()
             set_label_text_if_changed(compass.bearing_value, "magnetometer still warming up");
             set_label_text_if_changed(compass.footer_label, "waiting for module GNSS compass");
         }
-        lv_obj_set_style_transform_rotation(compass.needle, static_cast<lv_coord_t>(needle_bearing * 10.0f), 0);
+        update_needle(compass, needle_bearing);
         lv_obj_set_style_bg_opa(compass.north_marker, LV_OPA_COVER, 0);
         return;
     }
@@ -298,7 +310,7 @@ void refresh_compass_widget()
     }
     set_label_text_if_changed_raw(compass.footer_label, footer);
 
-    lv_obj_set_style_transform_rotation(compass.needle, static_cast<lv_coord_t>(needle_bearing * 10.0f), 0);
+    update_needle(compass, needle_bearing);
     lv_obj_set_style_bg_opa(compass.north_marker, LV_OPA_COVER, 0);
 }
 

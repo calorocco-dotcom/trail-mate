@@ -255,17 +255,17 @@ class TDisplayP4Board final : public BoardBase, public LoraBoard
     i2c_master_bus_handle_t external_i2c_handle_ = nullptr;
     std::array<ManagedI2cSlot, 8> managed_system_i2c_{};
 
-    bool started_ = false;
-    bool expander_ready_ = false;
-    bool rtc_accessible_ = false;
-    bool battery_gauge_ready_ = false;
+    std::atomic<bool> started_{false};
+    std::atomic<bool> expander_ready_{false};
+    std::atomic<bool> rtc_accessible_{false};
+    std::atomic<bool> battery_gauge_ready_{false};
     bool gps_uart_configured_ = false;
     bool gps_runtime_prepared_ = false;
     uint32_t gps_uart_baud_rate_ = 0;
     bool sd_ready_ = false;
     bool sd_enabled_ = false;
     bool battery_charging_ = false;
-    bool keyboard_ready_ = false;
+    std::atomic<bool> keyboard_ready_{false};
     bool power_button_initialized_ = false;
     bool power_button_pressed_ = false;
     bool power_button_long_press_handled_ = false;

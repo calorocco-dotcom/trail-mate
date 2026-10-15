@@ -59,6 +59,7 @@ struct CompassWidgetUi
     lv_obj_t* dial_inner_ring = nullptr;
     lv_obj_t* north_marker = nullptr;
     lv_obj_t* needle = nullptr;
+    lv_point_precise_t needle_points[2]{};
     lv_obj_t* center_dot = nullptr;
     lv_obj_t* cardinal_labels[4]{};
     lv_obj_t* target_name = nullptr;

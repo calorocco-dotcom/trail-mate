@@ -235,6 +235,20 @@ endfunction()
 add_native_preview(trailmate_pager ARDUINO_T_LORA_PAGER pager)
 add_native_preview(trailmate_tdeck ARDUINO_T_DECK tdeck)
 add_native_preview(trailmate_wio ARDUINO_WIO_TRACKER_L2 wio-tracker-l2)
+option(TRAIL_MATE_PREVIEW_P4 "Build both P4 panel layouts for hardware UI review" OFF)
+if(TRAIL_MATE_PREVIEW_P4)
+  foreach(PANEL IN ITEMS tft amoled)
+    add_native_preview(trailmate_p4_${PANEL} TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4 t-display-p4-${PANEL})
+    target_include_directories(trailmate_p4_${PANEL} PRIVATE "${REPO_ROOT}/boards/t_display_p4/include")
+    file(GLOB P4_DASHBOARD_SOURCES "${UI}/menu/dashboard/*.cpp")
+    target_sources(trailmate_p4_${PANEL} PRIVATE "${UI}/menu/menu_dashboard.cpp" ${P4_DASHBOARD_SOURCES})
+    target_sources(trailmate_p4_${PANEL} PRIVATE
+      preview_p4_dashboard.cpp
+      "${UI}/presentation_sources/runtime_mesh_status_source.cpp"
+      "${REPO_ROOT}/modules/ui_presentation/src/mesh/mesh_status_model.cpp")
+  endforeach()
+  target_compile_definitions(trailmate_p4_tft PRIVATE CONFIG_TRAIL_MATE_T_DISPLAY_P4_PANEL_HI8561=1)
+endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_custom_target(native_asset_manifest ALL
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/write_manifest.py" "${REPO_ROOT}/site/assets/native"

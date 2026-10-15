@@ -130,6 +130,10 @@ int main()
     assert(lv_group_get_focused(menu_g) == second);
     tap(64);
     assert(clicks == 2);
+    edge(53, true);
+    tap(54); // Shift+Tab traverses backward.
+    edge(53, false);
+    assert(lv_group_get_focused(menu_g) == first);
 
     // Releasing an unrelated key does not release the held key. Native LVGL
     // repetition remains available while a text key is held.
@@ -183,6 +187,8 @@ int main()
     const auto exits_before_back = fake::exits;
     tap(11);
     assert(page_keys == 2 && last_page_key == LV_KEY_ESC && fake::exits == exits_before_back);
+    tap(1); // Physical F1 opens map Help through the shared function-key code.
+    assert(page_keys == 3 && last_page_key == 0x110001U);
 
     // Modal groups replace the app group while a dialog is open. Enter must
     // activate the dialog and ESC must reach its KEY back handler.
@@ -190,6 +196,7 @@ int main()
     button(app_g);
     auto* modal_group = lv_group_create();
     auto* modal_button = button(modal_group);
+    lv_obj_set_parent(modal_button, lv_layer_top());
     lv_obj_add_event_cb(modal_button, modal_back, LV_EVENT_KEY, nullptr);
     lv_group_set_default(modal_group);
     tap(64);
@@ -198,6 +205,7 @@ int main()
     assert(page_keys == 1 && fake::exits == exits_before_back);
     lv_group_set_default(app_g);
     lv_group_delete(modal_group);
+    lv_obj_delete(modal_button);
 
     // A focused object from another screen must not swallow Enter or receive
     // a click. The current page root receives the key instead.

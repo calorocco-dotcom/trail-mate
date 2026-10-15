@@ -49,7 +49,7 @@ void set_label_text_if_changed(lv_obj_t* label, const char* english)
 void create_stat_column(MeshWidgetUi& mesh, lv_obj_t* parent, lv_coord_t x, lv_coord_t body_h)
 {
     static constexpr const char* kCaptions[] = {"Team", "Unread", "Power"};
-    const lv_coord_t tile_w = std::max<lv_coord_t>(92, lv_obj_get_width(parent) - x);
+    const lv_coord_t tile_w = std::max<lv_coord_t>(92, lv_obj_get_content_width(parent) - x);
     const lv_coord_t tile_h = (body_h - 12) / 3;
     const lv_color_t colors[] = {color_soft_amber(), color_soft_blue(), color_soft_green()};
 
@@ -86,8 +86,8 @@ void create_mesh_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
     auto& mesh = dashboard_state().mesh;
     mesh.chrome = create_card_chrome(parent, ::ui::i18n::tr("Mesh Status"), card_w, card_h);
 
-    const lv_coord_t body_w = lv_obj_get_width(mesh.chrome.body);
-    const lv_coord_t body_h = lv_obj_get_height(mesh.chrome.body);
+    const lv_coord_t body_w = lv_obj_get_content_width(mesh.chrome.body);
+    const lv_coord_t body_h = lv_obj_get_content_height(mesh.chrome.body);
     const lv_coord_t hero_d = std::min<lv_coord_t>(body_h - 12, std::max<lv_coord_t>(60, body_w / 2 - 8));
 
     mesh.orbit_outer = lv_obj_create(mesh.chrome.body);

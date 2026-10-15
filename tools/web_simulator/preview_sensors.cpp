@@ -1,5 +1,6 @@
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/gps_runtime.h"
+#include "platform/ui/orientation_runtime.h"
 #include "platform/ui/screen_runtime.h"
 #include "platform/ui/usb_support_runtime.h"
 #include "platform/ui/walkie_runtime.h"
@@ -8,6 +9,18 @@
 #include "ui/widgets/top_bar_power_presenter.h"
 #include <algorithm>
 #include <cstdint>
+#include <emscripten.h>
+
+namespace platform::ui::orientation
+{
+static HeadingState preview_heading{};
+HeadingState get_heading() { return preview_heading; }
+extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_heading(int degrees, int available)
+{
+    preview_heading.available = preview_heading.sensor_ready = available != 0;
+    preview_heading.heading_deg = static_cast<float>(degrees % 360);
+}
+} // namespace platform::ui::orientation
 
 namespace platform::ui::device
 {
@@ -21,6 +34,7 @@ void delay_ms(uint32_t) {}
 namespace platform::ui::gps
 {
 static bool sample_fix = true;
+extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_gps_fix(int valid) { sample_fix = valid != 0; }
 GpsState get_data()
 {
     GpsState s;

@@ -61,6 +61,14 @@ CI also builds both complete P4 firmware variants. Cross-compiling individual
 objects locally checks SDK declarations, but is not a substitute for linking the
 complete firmware or testing a board.
 
+Follow-up synchronization fixes serialize shared LDO4 acquisition/adjustment and
+publish board readiness atomically. On Linux CI, eight concurrent test workers
+exercise 256 shared-LDO preparations and assert one acquisition with no overlapping
+SDK calls. Display tests verify that initial rotation and brightness writes hold
+the LVGL lock and that failed brightness writes preserve the cached value.
+The rendered dashboard/lifecycle checks are recorded in the
+[UI audit](t-display-p4-ui-audit.md).
+
 ## Physical acceptance to record
 
 1. Cold boot each panel variant repeatedly with and without the keyboard. Verify

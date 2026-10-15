@@ -594,6 +594,40 @@ jobs:
           cmake --build .codex-build/p4-hardware --parallel 2
           ctest --test-dir .codex-build/p4-hardware --output-on-failure
 
+  p4_rendered_ui:
+    name: T-Display P4 Rendered UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned Emscripten and firmware LVGL
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/p4-emsdk"
+          "$RUNNER_TEMP/p4-emsdk/emsdk" install 4.0.10
+          "$RUNNER_TEMP/p4-emsdk/emsdk" activate 4.0.10
+          mkdir -p .codex-build/p4-preview/lvgl
+          curl --fail --location --retry 3 https://codeload.github.com/lvgl/lvgl/tar.gz/85aa60d18b3d5e5588d7b247abf90198f07c8a63 --output "$RUNNER_TEMP/p4-preview-lvgl.tar.gz"
+          tar --extract --gzip --file "$RUNNER_TEMP/p4-preview-lvgl.tar.gz" --directory .codex-build/p4-preview/lvgl --strip-components=1
+      - name: Render both P4 panels and stress dashboard ownership
+        run: |
+          source "$RUNNER_TEMP/p4-emsdk/emsdk_env.sh"
+          emcmake cmake -S tools/web_simulator -B .codex-build/p4-preview/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRAIL_MATE_PREVIEW_P4=ON -DLVGL_SOURCE_DIR="$PWD/.codex-build/p4-preview/lvgl"
+          cmake --build .codex-build/p4-preview/build --target trailmate_p4_tft trailmate_p4_amoled --parallel 2
+          P4_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/p4-native-ui.test.mjs
+      - name: Retain actual LVGL frames and layout coordinates
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t-display-p4-rendered-ui
+          path: .codex-build/p4-preview/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
   build_c6:
     needs: firmware_scope
     if: needs.firmware_scope.outputs.build == 'true'

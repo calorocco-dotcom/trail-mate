@@ -114,6 +114,10 @@ TickType_t radio_tx_timeout_ticks(size_t len)
 
 bool ensure_external_3v3_power_control()
 {
+    // SD and keyboard startup can run alongside audio/motion preparation.
+    // Serialize both initial acquisition and subsequent voltage confirmation.
+    static std::mutex mutex;
+    const std::lock_guard<std::mutex> lock(mutex);
     if (s_external_3v3_ldo_handle != nullptr)
     {
         const esp_err_t err =
