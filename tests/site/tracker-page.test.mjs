@@ -21,7 +21,7 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   const stop=snapshot().find(item=>item.button&&item.text==='Stop recording');
   assert.equal(stop.w,action.w,'Start and stop share a stable button width');
   assert.equal(stop.x,action.x,'Start and stop share a stable right-aligned position');
-  assert.ok(snapshot().some(item=>item.button&&item.text.endsWith('.gpx')),'New recording appears without leaving the page');
+  assert.ok(snapshot().some(item=>item.text==='GPX | Recording'),'New recording appears with readable file type/status');
   click('Routes');
   assert.ok(!snapshot().some(item=>['Recording','Stop recording'].includes(item.text)),'Route mode has its own status and actions');
   click('Tracks');
@@ -30,23 +30,26 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   assert.ok(snapshot().some(item=>item.text==='Not recording'));
   click('Routes');
   assert.ok(!snapshot().some(item=>['Start recording','Stop recording','Back'].includes(item.text)));
-  assert.ok(snapshot().some(item=>item.text.includes('sample-route')));
-  const routeCard=snapshot().find(item=>item.button&&item.text==='sample-route.kml');
-  assert.ok(routeCard,`${device}: first route is shown in the card`);
+  const routeCard=snapshot().find(item=>item.text==='Sample route');
+  assert.ok(routeCard,`${device}: KML document name is shown in the card`);
+  assert.ok(!snapshot().some(item=>item.text.includes('sample-route.kml')),`${device}: internal filename is not repeated`);
+  click('Actions');
+  assert.ok(snapshot().some(item=>item.text==='Route Actions'),`${device}: explicit card action opens the existing route menu`);
+  click('Cancel');
   const routeCounter=snapshot().find(item=>item.text==='1 / 2');
   assert.ok(routeCounter,`${device}: card shows the selected position`);
   click('\uf054');
-  const nextCard=snapshot().find(item=>item.button&&item.text==='z-sample-route.kml');
+  const nextCard=snapshot().find(item=>item.text==='Second sample trail');
   assert.equal(nextCard?.id,routeCard.id,`${device}: flipping reuses the route card`);
   assert.ok(snapshot().some(item=>item.text==='2 / 2'));
   click('Tracks');
   click('Routes');
-  assert.equal(snapshot().find(item=>item.button&&item.text==='z-sample-route.kml')?.id,routeCard.id,
+  assert.equal(snapshot().find(item=>item.text==='Second sample trail')?.id,routeCard.id,
     `${device}: category switching preserves the selected file and card widget`);
   const previous=snapshot().find(item=>item.button&&item.text==='\uf053'&&item.y>50);
   assert.ok(previous,`${device}: previous-card navigation is available`);
   runtime._native_activate(previous.id);tick();
-  assert.equal(snapshot().find(item=>item.button&&item.text==='sample-route.kml')?.id,routeCard.id);
+  assert.equal(snapshot().find(item=>item.text==='Sample route')?.id,routeCard.id);
   click('Tracks');
   assert.ok(snapshot().some(item=>item.button&&item.text==='Start recording'));
   click('\uf053');
