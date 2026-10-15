@@ -42,6 +42,12 @@ lv_obj_t* create(lv_obj_t* parent)
 void style_item(lv_obj_t* item)
 {
     plain(item);
+    for (const auto state : {LV_STATE_FOCUSED, LV_STATE_CHECKED, LV_STATE_PRESSED})
+    {
+        lv_obj_set_style_radius(item, 0, state);
+        lv_obj_set_style_border_width(item, 0, state);
+        lv_obj_set_style_shadow_width(item, 0, state);
+    }
     lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_color(item, lv_color_hex(kSelection), LV_STATE_FOCUSED);
@@ -151,6 +157,12 @@ void Menu::present()
     lv_obj_set_style_pad_row(content_, 2, LV_PART_MAIN);
     lv_obj_set_style_margin_all(content_, 0, LV_PART_MAIN);
     lv_obj_set_height(content_, LV_SIZE_CONTENT);
+    // Font and padding must be final before measuring translated item labels.
+    for (uint32_t index = 0; index < lv_obj_get_child_count(content_); ++index)
+    {
+        auto* item = lv_obj_get_child(content_, index);
+        if (lv_obj_has_flag(item, LV_OBJ_FLAG_CLICKABLE)) style_item(item);
+    }
     lv_obj_update_layout(root_);
     fit_menu(content_, std::max<lv_coord_t>(72, lv_obj_get_width(root_) - 8));
     lv_obj_set_style_max_width(content_, lv_obj_get_width(root_) - 8, LV_PART_MAIN);
@@ -168,11 +180,6 @@ void Menu::present()
     const auto x = valid(anchor_) ? anchor_area.x2 - root_area.x1 - width + 1 : lv_obj_get_width(root_) - width - 4;
     lv_obj_set_pos(content_, std::max<lv_coord_t>(4, std::min<lv_coord_t>(x, lv_obj_get_width(root_) - width - 4)),
                    std::max<lv_coord_t>(4, bottom - lv_obj_get_height(content_)));
-    for (uint32_t index = 0; index < lv_obj_get_child_count(content_); ++index)
-    {
-        auto* item = lv_obj_get_child(content_, index);
-        if (lv_obj_has_flag(item, LV_OBJ_FLAG_CLICKABLE)) style_item(item);
-    }
     prepare_keys(content_);
 }
 

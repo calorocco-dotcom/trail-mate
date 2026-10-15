@@ -18,6 +18,7 @@ lv_group_t* menu_g = nullptr;
 lv_obj_t* main_screen = nullptr;
 static lv_display_t* display;
 static lv_indev_t* pointer_device;
+static lv_group_t* bound_input_group;
 static uint16_t pixels[480 * 240];
 static int pointer_x, pointer_y;
 static bool pointer_down;
@@ -38,16 +39,16 @@ EM_JS(void, request_menu, (), {
 
 void set_default_group(lv_group_t* group)
 {
-    if (pointer_device) lv_indev_set_group(pointer_device, group);
+    // Native keys/encoder are dispatched directly, independently of touch.
+    // A pointer indev cannot retain a keypad/encoder group in LVGL.
+    bound_input_group = group;
     lv_group_set_default(group);
 }
 
 static lv_group_t* input_group()
 {
     // Pages may clear LVGL's auto-add default after binding their input group.
-    // Read the bound device just as the firmware input drivers do.
-    auto* group = pointer_device ? lv_indev_get_group(pointer_device) : nullptr;
-    return group ? group : lv_group_get_default();
+    return bound_input_group ? bound_input_group : lv_group_get_default();
 }
 void ui_request_exit_to_menu()
 {

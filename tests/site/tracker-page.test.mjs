@@ -30,7 +30,11 @@ for(const device of ['pager','tdeck','wio-tracker-l2']) {
   assert.equal(stop.x,action.x,'Start and stop share a stable right-aligned position');
   assert.ok(snapshot().some(item=>!item.button&&/^track-\d+$/.test(item.text)),`${device}: new recording has a readable title without the file extension`);
   if(device!=='pager')assert.ok(snapshot().some(item=>item.text==='GPX | Recording'),`${device}: recording card shows file type/status`);
-  else assert.ok(!snapshot().some(item=>item.text==='GPX | Recording'),'Short Pager recording card preserves room for location and actions by hiding the format row');
+  else {
+    const format=snapshot().find(item=>item.text==='GPX | Recording');
+    const counter=snapshot().find(item=>item.text==='1 / 1');
+    if(format&&counter)assert.ok(format.y+format.h<=counter.y,'Pager format row leaves room for paging after recovering the full content width');
+  }
   click('Routes');
   assert.ok(!snapshot().some(item=>['Recording','Stop recording'].includes(item.text)),'Route mode has its own status and actions');
   click('Tracks');

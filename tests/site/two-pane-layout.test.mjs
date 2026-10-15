@@ -16,9 +16,11 @@ for(const [device,width,height] of [['pager',480,222],['tdeck',320,240],['wio-tr
   const tick=()=>{for(let i=0;i<5;i++)runtime._native_tick(50);};
   const snapshot=()=>JSON.parse(runtime.UTF8ToString(runtime._native_snapshot()));
   const click=text=>{
-    const button=snapshot().find(item=>item.button&&item.text===text);
+    const button=snapshot().findLast(item=>item.button&&item.text===text);
     assert.ok(button,`${device}: missing ${text}`);
-    runtime._native_activate(button.id);tick();
+    const x=button.x+Math.floor(button.w/2),y=button.y+Math.floor(button.h/2);
+    runtime._native_pointer(x,y,1);runtime._native_tick(50);
+    runtime._native_pointer(x,y,0);tick();
   };
   for(const [page,filterText,contentText] of [[5,'Direct','Alex'],[12,'Contacts','No nodes'],[14,'Tracks','Not recording'],[11,'Profile'],[8,'Installed'],[9,'Fav']]) {
     runtime._native_open_page(page);tick();
