@@ -32,7 +32,7 @@ jobs:
           if [[ "$EVENT_NAME" == push && "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" != 0000000000000000000000000000000000000000 && "$GITHUB_REF" != refs/tags/* ]]; then
             git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
             git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/trail-mate-changed-files.txt"
-            if ! grep -qEv '^(tests/|docs/|README\.md$|AGENTS(\.local)?\.md$)' "$RUNNER_TEMP/trail-mate-changed-files.txt"; then
+            if ! grep -qEv '^(tests/|modules/[^/]+/tests/|apps/[^/]+/tests/|tools/hostlink/[^/]+\.mjs$|docs/|README\.md$|AGENTS(\.local)?\.md$)' "$RUNNER_TEMP/trail-mate-changed-files.txt"; then
               build=false
             fi
           fi

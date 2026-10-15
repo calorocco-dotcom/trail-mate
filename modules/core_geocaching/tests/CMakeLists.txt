@@ -463,6 +463,7 @@ add_test(NAME geocaching_legacy_saved_object_index COMMAND geocaching_browse_run
 add_test(NAME geocaching_web_stop COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-stop)
 add_test(NAME geocaching_web_signed_stop COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-signed-stop)
 add_test(NAME geocaching_web_signature_restored COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-signature-restored)
+add_test(NAME geocaching_web_signature_busy COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-signature-busy)
 add_test(NAME geocaching_signature_input_recovery COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures signature-input-recovery)
 
 add_executable(geocaching_local_map_test test_local_map_overlay.cpp)

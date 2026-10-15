@@ -745,10 +745,11 @@ int main(int argc, char** argv)
         return 0;
     }
     const bool restored_confirmation = argc == 3 && std::strcmp(argv[2], "web-signature-restored") == 0;
-    if (argc == 3 && (std::strcmp(argv[2], "web-signature") == 0 || std::strcmp(argv[2], "web-signature-bound") == 0 || std::strcmp(argv[2], "web-signature-stale") == 0 || restored_confirmation))
+    const bool signature_busy = argc == 3 && std::strcmp(argv[2], "web-signature-busy") == 0;
+    if (argc == 3 && (std::strcmp(argv[2], "web-signature") == 0 || std::strcmp(argv[2], "web-signature-bound") == 0 || std::strcmp(argv[2], "web-signature-stale") == 0 || restored_confirmation || signature_busy))
     {
         const bool stale_draft = std::strcmp(argv[2], "web-signature-stale") == 0;
-        const bool bound_draft = stale_draft || restored_confirmation || std::strcmp(argv[2], "web-signature-bound") == 0;
+        const bool bound_draft = stale_draft || restored_confirmation || signature_busy || std::strcmp(argv[2], "web-signature-bound") == 0;
         router.ready = false;
         require(rt::webLease(true, true), "local signature storage lease unavailable");
         std::array<uint8_t, 16> operation{}, owner{}, transfer{}, nonce{};
@@ -805,8 +806,15 @@ int main(int argc, char** argv)
         require(!rt::withSignatureInputRecovery(recovery_action, &recovery_calls) && recovery_calls == 0,
                 "protected recovery invoked a callback while signing");
         size_t written = 0, total = 0;
+        if (signature_busy)
+        {
+            test::file_busy_remaining.fill(0);
+            test::file_busy_hits.fill(0);
+            test::file_busy_cycles = 1;
+        }
         until([&]
               {
+            if (signature_busy && test::file_busy_hits[3]) test::file_busy_cycles = 0;
             if (rt::readWebSignature(operation.data(), owner.data(), true, 0, 0, scratch.data(), scratch.size(), written) != rt::WebReadResult::Ready) return false;
             geocaching::protocol::CmpReader reader({scratch.data(), written}); size_t fields = 0; geocaching::ByteView id, bound;
             uint64_t generation = 0, phase = 0, bytes = 0;
@@ -814,6 +822,8 @@ int main(int argc, char** argv)
             if (stale_draft) { require(phase != 1, "stale draft unexpectedly signed"); total = static_cast<size_t>(bytes); return phase == 2; }
             require(phase != 2, "local signature failed"); total = static_cast<size_t>(bytes); return phase == 1; },
               "local signature never became ready");
+        if (signature_busy)
+            for (auto hits : test::file_busy_hits) require(hits > 0, "signature input did not exercise open/size/seek/read contention");
         if (stale_draft)
         {
             require(router.sends == sends && router.identity.signs == 0 && total == 0, "rejected draft produced a signature or network traffic");

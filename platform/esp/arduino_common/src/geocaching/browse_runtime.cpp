@@ -3365,15 +3365,36 @@ void advanceWebSignature(Session& s)
     }
     if (job.offset < job.total)
     {
-        if (!job.file.is_open() && (!job.file.open("/trailmate/cache.sign.upload", "r", job.media) || job.file.size() != job.total))
+        const auto input_error = [&](const char* step)
         {
-            job.fail();
+            if (job.file.read_busy()) next_step.store(millis() + 20);
+            else
+            {
+                Serial.printf("[Geocaching][WebSign] failed input-%s\n", step);
+                job.fail();
+            }
+        };
+        if (!job.file.is_open() && !job.file.open("/trailmate/cache.sign.upload", "r", job.media))
+        {
+            input_error("open");
+            return;
+        }
+        if (!job.offset && job.file.size() != job.total)
+        {
+            input_error("size");
+            return;
+        }
+        // A contended read can consume only part of a slice. Retry from the
+        // last fully hashed offset, keeping the original input and digest.
+        if (!job.file.seek(job.offset))
+        {
+            input_error("seek");
             return;
         }
         const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
         if (job.file.read(job.record + job.offset, count) != static_cast<int>(count))
         {
-            job.fail();
+            input_error("read");
             return;
         }
         job.digest.update(job.record + job.offset, count);
@@ -3386,13 +3407,19 @@ void advanceWebSignature(Session& s)
         if (!job.digest.finalize(job.work, 32) || std::memcmp(job.work, job.hash.data(), 32) ||
             !job.issue.begin({job.record, job.total}, job.work, job.capacity))
         {
+            Serial.printf("[Geocaching][WebSign] failed input-binding\n");
             job.fail();
             return;
         }
         job.issuing = true;
     }
+    const auto previous_phase = job.issue.phase();
     job.issue.advance();
-    if (job.issue.phase() == gc::AuthorIssuePhase::Failed) job.fail();
+    if (job.issue.phase() == gc::AuthorIssuePhase::Failed)
+    {
+        Serial.printf("[Geocaching][WebSign] failed phase=%u\n", static_cast<unsigned>(previous_phase));
+        job.fail();
+    }
     else if (job.issue.phase() == gc::AuthorIssuePhase::Signed && job.record)
     {
         heap_caps_free(job.record);
