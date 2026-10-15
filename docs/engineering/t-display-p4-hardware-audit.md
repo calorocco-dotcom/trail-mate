@@ -71,6 +71,13 @@ The rendered dashboard/lifecycle checks are recorded in the
 
 ## Physical acceptance to record
 
+The optional keyboard's LVGL adapter remains registered during discovery retries.
+The IDF helper now reports a keyboard to editors only while its controllers are
+ready, so an absent or failed keyboard does not suppress the touch IME. A host
+test exercises absent, attached, disconnected and missing-adapter states against
+the production helper. An editor chooses its keyboard mode when it opens; reopen
+the editor after changing the expansion keyboard connection.
+
 1. Cold boot each panel variant repeatedly with and without the keyboard. Verify
    image, touch corners/rotation, minimum/maximum brightness, USB enumeration,
    and absence of spurious resets when SD/C6 start.
