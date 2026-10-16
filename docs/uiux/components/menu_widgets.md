@@ -28,12 +28,24 @@ profiles retain their separate icon behavior.
 | Surface | Input | Result |
 | --- | --- | --- |
 | T-Deck/L2 launcher | Swipe right | Open the negative screen |
-| Negative screen | Swipe left, D, Right, Escape or Back | Return to the launcher |
+| T-Deck/L2 negative screen | Swipe left, D, Right, Escape or Back | Return to the launcher |
 | Negative screen | Swipe up/down, W/S, Up/Down | Next/previous widget |
-| Pager launcher | W/A/S/D | Move through the icon grid; A at the left boundary opens the negative screen |
+| Pager launcher or negative screen | V | Switch between the launcher and negative screen; preserve the selected app on return |
+| Pager launcher | W/A/S/D | Move through the icon grid |
 | Pager launcher | Encoder rotation | Change the focused application icon |
 | Pager negative screen | Encoder rotation | Next/previous widget |
+| Pager negative screen | A/D, then Enter or encoder press | Select and activate a widget control; enter or finish slider editing |
+| Pager negative screen | Escape or Back | Return to the launcher |
 | P4 right dashboard | Swipe left/right | Next/previous widget page |
+
+Pager keeps `H Help` and `V Widgets` visible in the launcher footer; the latter
+changes to `V Menu` on the negative screen. H opens the matching help with V as
+its first row. V also works while this help is open: it closes the dialog and
+switches screens. A at the left edge stays within the launcher grid. While
+editing a widget slider, A/D adjusts the value by five percentage points;
+W/S and encoder rotation continue to switch widgets. Application pages and
+text editors retain their own shortcuts and literal text input. See
+[Pager keyboard and encoder navigation](pager-input.md) for the complete rules.
 
 The negative screen shows exactly one widget: Mesh, GPS, Recent Activity,
 Compass, Agenda, Music or Quick controls. Navigation stops at the first/last widget. P4 keeps the

@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/vicliu624/trail-mate/stargazers"><img src="https://img.shields.io/github/stars/vicliu624/trail-mate?style=flat-square&amp;label=stars&amp;color=4285f4" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-orange?style=flat-square" alt="License: AGPL-3.0" /></a>
-  <a href="https://github.com/vicliu624/trail-mate/releases"><img src="https://img.shields.io/github/v/release/vicliu624/trail-mate?include_prereleases&amp;sort=semver&amp;style=flat-square&amp;label=version&amp;color=4285f4" alt="Latest release, including prereleases" /></a>
+  <a href="https://github.com/vicliu624/trail-mate/releases"><img src="https://img.shields.io/github/v/release/vicliu624/trail-mate?sort=semver&amp;style=flat-square&amp;label=version&amp;color=4285f4" alt="Latest stable release" /></a>
   <a href="https://github.com/vicliu624/trail-mate/releases"><img src="https://img.shields.io/github/downloads/vicliu624/trail-mate/total?style=flat-square&amp;label=downloads&amp;color=65b821" alt="Total GitHub release asset downloads" /></a>
   <br />
   <a href="https://github.com/vicliu624/trail-mate/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/vicliu624/trail-mate/ci.yml?branch=main&amp;style=flat-square&amp;label=CI" alt="CI status on main" /></a>
@@ -18,6 +18,11 @@
 **Trail Mate puts offline navigation, maps and field messaging on a handheld you can use without a phone.** Plan a walking route from installed map data, follow it with GNSS, record your journey, and stay in touch over Meshtastic, MeshCore or Reticulum/LXMF. When you want to share a trail or a Geocache, the device signs it under your own identity. Browser tools make editing and publishing easier, without asking you to create a website account. Features depend on the board; the project includes ESP32, nRF52 and Linux implementations.
 
 [English](README.md) | [Documentation](https://github.com/vicliu624/trail-mate/wiki) | [Releases](https://github.com/vicliu624/trail-mate/releases) | [Join Discord](https://discord.gg/shkueG4zfc)
+
+**1.0.0 is the first stable firmware release.** Get the board-specific files and
+[release notes](https://github.com/vicliu624/trail-mate/releases/tag/v1.0.0), or
+use the [browser installer](https://vicliu624.github.io/trail-mate/). Check the
+device support table below before choosing an image.
 
 ## The device is your account
 
