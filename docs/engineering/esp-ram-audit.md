@@ -102,8 +102,8 @@ store owns credentials and already selects `WIFI_STORAGE_RAM`.
 The C6 build now also uses four static RX buffers with a four-entry RX BA
 window, retaining 16 dynamic RX and 16 dynamic TX buffers. Management short
 buffers are bounded to eight and driver NVS is disabled. Reducing eight static
-RX buffers to four removes approximately 6.4 KiB of driver initialization
-allocation according to the SDK's 1.6 KiB-per-buffer model. This is a dynamic
+RX buffers to four removes approximately 6.4 kB of driver initialization
+allocation according to the SDK's approximate 1.6 kB-per-buffer model. This is a dynamic
 driver budget calculation, not a measured on-device heap delta. AP/STA and
 ESP-NOW still use their existing shared-radio owner.
 
