@@ -68,6 +68,10 @@ TCP reset, status snapshots, connection IDs and transfer counters share the
 receive-buffer lock, while sending and closing serialize with the receive
 owner. Linux host tests also overlap reads/status snapshots with 500 reconnect
 and reset cycles.
+Allocation, connection generation and the Opening state are published in one
+receive-lock transaction. A deterministic read-during-OPEN test fails before
+this correction: the reader could otherwise see a newly allocated empty ring
+as Disconnected and release it before the writer published Opening.
 
 The SDIO transport now explicitly requests aligned internal DMA memory for its
 owner object, with matching polymorphic deletion and a recoverable allocation

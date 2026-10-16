@@ -37,13 +37,19 @@ struct Tcp : WifiTcpTransport
     platform::memory::PsramPtr<TcpRxBuffer> tcp_rx_buffer_{};
     size_t tcp_rx_head_ = 0, tcp_rx_tail_ = 0, tcp_rx_size_ = 0;
     bool send_ok = true;
+    bool read_during_open = false;
     unsigned sends = 0;
     bool begin() { return false; }
     void poll() {}
     void copy_text(char* out, const char* in) { std::strcpy(out, in); }
-    bool send_wifi_tcp_command(const tm_c6_wifi_tcp_header_t&, const uint8_t*, size_t)
+    bool send_wifi_tcp_command(const tm_c6_wifi_tcp_header_t& header, const uint8_t*, size_t)
     {
         ++sends;
+        if (read_during_open && header.operation == TM_C6_WIFI_TCP_OPEN)
+        {
+            uint8_t byte = 0;
+            assert(readTcp(&byte, 1) == 0);
+        }
         return send_ok;
     }
 #include "c6_tcp_api.inc"
@@ -75,6 +81,11 @@ int main()
     tcp.send_ok = false;
     assert(!tcp.openTcp("example.org", 443) && live_bytes == 0);
     tcp.send_ok = true;
+    tcp.read_during_open = true;
+    assert(tcp.openTcp("example.org", 443) && live_bytes == 16384);
+    tcp.closeTcp();
+    tcp.event(TM_C6_WIFI_TCP_CLOSED);
+    tcp.read_during_open = false;
     std::array<uint8_t, 12000> data{};
     for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i);
     std::array<uint8_t, 12000> out{};

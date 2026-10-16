@@ -1210,15 +1210,6 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
             set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_INTERNAL, "rx_memory_unavailable");
             return false;
         }
-        {
-            std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
-            tcp_status_.connection_id = next_tcp_connection_id_++;
-        }
-        if (next_tcp_connection_id_ == 0)
-        {
-            next_tcp_connection_id_ = 1;
-        }
-
         tm_c6_wifi_tcp_header_t header{};
         header.operation = TM_C6_WIFI_TCP_OPEN;
         header.connection_id = tcp_status_.connection_id;
@@ -1677,7 +1668,14 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         {
             tcp_rx_buffer_.reset(::platform::memory::createPsram<TcpRxBuffer>());
         }
-        return tcp_rx_buffer_ != nullptr;
+        if (!tcp_rx_buffer_) return false;
+        // Publish the allocation, generation and nonterminal state together.
+        // A read can run while OPEN is being sent, before openTcp returns.
+        tcp_status_.connection_id = next_tcp_connection_id_++;
+        if (next_tcp_connection_id_ == 0) next_tcp_connection_id_ = 1;
+        tcp_status_.state = WifiTcpState::Opening;
+        tcp_status_.detail = "opening";
+        return true;
     }
 
     // Caller holds tcp_rx_mutex_: metadata and storage publish atomically to
