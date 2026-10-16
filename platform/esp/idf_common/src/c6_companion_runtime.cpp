@@ -14,6 +14,7 @@
 #include <ctime>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -445,6 +446,16 @@ class C6Transport
 class SdioC6Transport final : public C6Transport
 {
   public:
+    static void* operator new(size_t bytes, const std::nothrow_t&) noexcept
+    {
+        // This owner embeds both the SDIO DMA scratch and its mutex. Default
+        // new may spill into PSRAM under internal-heap pressure.
+        return heap_caps_aligned_alloc(alignof(SdioC6Transport), bytes,
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    }
+    static void operator delete(void* memory) noexcept { heap_caps_free(memory); }
+    static void operator delete(void* memory, const std::nothrow_t&) noexcept { heap_caps_free(memory); }
+
     ~SdioC6Transport() override
     {
         reset();
@@ -2174,7 +2185,12 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
     bool try_handshake()
     {
 #if defined(ESP_PLATFORM)
-        transport_ = std::make_unique<SdioC6Transport>();
+        transport_.reset(new (std::nothrow) SdioC6Transport());
+        if (!transport_)
+        {
+            set_detail(status_, CompanionState::Missing, "sdio_internal_memory_unavailable");
+            return false;
+        }
         if (!transport_->begin())
         {
             set_detail(status_, CompanionState::Missing, transport_->last_error());

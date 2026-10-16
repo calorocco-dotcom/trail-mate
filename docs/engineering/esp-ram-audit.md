@@ -18,22 +18,35 @@ RAM use. `internal_code` reports IRAM separately. RTC/TCM are separate again.
 Symbol sizes must not be added to section totals: aliases and padding make
 those different views of the same allocation.
 
-| Target | Baseline static internal data, bytes |
-| --- | ---: |
-| T-Display P4 TFT | 106,172 |
-| T-Display P4 AMOLED | 104,764 |
-| Wio Tracker L2 | 97,120 |
-| Pager SX1262 | 98,128 |
-| Pager LR1121 | 98,552 |
-| T-Deck | 94,456 |
-| T-Watch S3 | 94,656 |
-| C6 companion | 53,056 |
+The first optimization link reports are from `80334689`, available in
+[optimization CI artifacts](https://github.com/vicliu624/trail-mate/actions/runs/38857930137).
+All firmware links in that run succeeded; its NVS inventory integration check
+exposed the source-file-count update corrected in `746d57e3`. Subsequent TCP
+close/DMA-owner and test follow-ups are covered by the final PR checks.
+
+| Target | Baseline static internal data, bytes | Optimized, bytes | Reclaimed, bytes |
+| --- | ---: | ---: | ---: |
+| T-Display P4 TFT | 106,172 | 83,916 | 22,256 |
+| T-Display P4 AMOLED | 104,764 | 82,572 | 22,192 |
+| Wio Tracker L2 | 97,120 | 90,004 | 7,116 |
+| Pager SX1262 | 98,128 | 91,012 | 7,116 |
+| Pager LR1121 | 98,552 | 91,436 | 7,116 |
+| T-Deck | 94,456 | 87,340 | 7,116 |
+| T-Watch S3 | 94,656 | 87,540 | 7,116 |
+| C6 companion | 53,056 | 53,056 | 0 |
 
 These are same-toolchain CI measurements. The older local P4 ELF still had a
 64 KiB LVGL builtin pool and mutable bzip2 lookup tables, but current PR code
 had already removed those costs. Neither is counted as a saving in this audit.
 No physical heap peak, stack high-water mark, radio throughput or frame-rate
 measurement is inferred from host tests or ELF files.
+
+The local-radio runtime shrank from 2,760 to 1,480 bytes, confirming that the
+16 scan records occupied 1,280 static bytes in this SDK. The C6 host runtime
+shrank from 20,268 to 3,888 bytes. Final section deltas include small control
+state and linker alignment, so they differ slightly from summing raw payload
+sizes. IRAM totals did not change. P4 AMOLED RTC/TCM usage grew by 12 bytes;
+those bytes are not included in the internal-data column above.
 
 ## Implemented allocation and lifetime changes
 
@@ -51,6 +64,12 @@ close immediately discards unread bytes, serializes with the receive owner,
 and ignores late OPENED/DATA events while closing. Idle Wi-Fi
 does not allocate this ring. Tab5 shares this policy with its existing 4 KiB
 ring capacity. Locks and transport control remain in internal RAM.
+
+The SDIO transport now explicitly requests aligned internal DMA memory for its
+owner object, with matching polymorphic deletion and a recoverable allocation
+failure. It embeds DMA scratch and a mutex; ordinary `new` could otherwise
+follow the default allocator's PSRAM fallback under pressure. This correction
+enforces a peripheral constraint and is not claimed as a memory saving.
 
 ### Settings catalogue
 
