@@ -699,7 +699,7 @@ jobs:
           source "${IDF_PATH}/export.sh"
           python scripts/report_elf_ram.py firmware/c6_companion/build.c6_companion/trail-mate-c6-companion.elf \
             --revision "${GITHUB_SHA}" --output ram-report/c6_companion.json \
-            --sdkconfig firmware/c6_companion/sdkconfig \
+            --sdkconfig firmware/c6_companion/build.c6_companion/sdkconfig.c6_companion \
             --expect-config CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4 \
             --expect-config CONFIG_ESP_WIFI_RX_BA_WIN=4 \
             --expect-config CONFIG_ESP_WIFI_NVS_ENABLED=n
