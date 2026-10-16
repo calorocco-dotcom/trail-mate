@@ -71,7 +71,8 @@ bool audio_write(const int16_t* samples, std::size_t count)
     return trail_mate_t_display_p4_audio_write_mono(TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_MUSIC, samples, count);
 #elif defined(ARDUINO_T_LORA_PAGER)
     auto* output = board();
-    return output && output->audioWrite(kOwner, reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t)) == static_cast<int>(count * sizeof(int16_t));
+    // Pager's EspCodec returns an ESP_CODEC_DEV status (0 = OK), not bytes.
+    return output && output->audioWrite(kOwner, reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t)) == 0;
 #elif defined(ARDUINO_T_DECK)
     auto* output = board();
     return output && output->audioRuntime().writeMusic(samples, count);

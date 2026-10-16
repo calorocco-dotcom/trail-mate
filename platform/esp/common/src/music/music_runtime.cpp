@@ -8,6 +8,7 @@
 #include "music/player.h"
 #include "platform/audio/audio_focus.h"
 #include "platform/audio/media_volume.h"
+#include "platform/esp/common/music/music_output.h"
 #include "platform/esp/common/music/music_ports.h"
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/settings_store.h"
@@ -20,56 +21,6 @@ namespace platform::esp::music_runtime
 namespace
 {
 class Service;
-struct AudioState
-{
-    std::atomic<bool> opening{false}, active{false};
-};
-class Output final : public ::music::AudioOutput
-{
-    AudioState& shared_;
-    TickType_t last_write_ = 0;
-    UBaseType_t previous_priority_ = 0;
-    bool priority_raised_ = false;
-
-  public:
-    explicit Output(AudioState& state) : shared_(state) {}
-    bool supported() const override { return audio_supported(); }
-    bool blocked() const override { return ::platform::audio::music_blocked(); }
-    bool needs_frame() const override { return last_write_ == 0 || pdTICKS_TO_MS(xTaskGetTickCount() - last_write_) >= 6; }
-    bool begin(uint32_t rate) override
-    {
-        shared_.opening.store(true);
-        const bool opened = !blocked() && audio_begin(rate);
-        if (opened)
-        {
-            // UI rendering must not preempt the producer until its short DMA
-            // queue empties. The existing task blocks in audio_write, leaving
-            // CPU time for UI; scanning/paused sessions keep their old priority.
-            previous_priority_ = uxTaskPriorityGet(nullptr);
-            priority_raised_ = previous_priority_ < tskIDLE_PRIORITY + 5;
-            if (priority_raised_) vTaskPrioritySet(nullptr, tskIDLE_PRIORITY + 5);
-        }
-        shared_.active.store(opened);
-        shared_.opening.store(false);
-        return opened;
-    }
-    bool write(const int16_t* samples, std::size_t count) override
-    {
-        if (blocked() || !audio_write(samples, count)) return false;
-        last_write_ = xTaskGetTickCount();
-        return true;
-    }
-    void end() override
-    {
-        audio_end();
-        shared_.active.store(false);
-        if (priority_raised_)
-        {
-            priority_raised_ = false;
-            vTaskPrioritySet(nullptr, previous_priority_);
-        }
-    }
-};
 class Images final : public ::music::ImageLoader
 {
     Service* service_ = nullptr;
@@ -91,7 +42,7 @@ struct Runtime
     ::music::Request command{};
     bool volume_dirty = false;
     uint32_t volume_changed = 0;
-    explicit Runtime(Service* service, AudioState& audio) : output(audio), images(service), player(storage, output, images) {}
+    explicit Runtime(Service* service, AudioState& audio, const std::atomic<uint8_t>& volume) : output(audio, volume), images(service), player(storage, output, images) {}
 };
 class Service final : public ::music::IService
 {
@@ -216,7 +167,7 @@ class Service final : public ::music::IService
         {
             // start_locked holds this mutex through xTaskCreate's handle publication.
             Lock lock(*this);
-            if (!runtime_) runtime_ = ::music::make<Runtime>(this, audio_);
+            if (!runtime_) runtime_ = ::music::make<Runtime>(this, audio_, volume_);
             runtime = runtime_;
             if (!runtime)
             {
@@ -252,6 +203,8 @@ class Service final : public ::music::IService
         uint16_t edge = 0;
         TickType_t last_publication = 0;
         auto published_playback = ::music::Playback::Stopped;
+        uint64_t published_track = 0;
+        uint32_t published_artwork = 0;
         for (;;)
         {
             bool command = false, properties_changed = false;
@@ -293,10 +246,22 @@ class Service final : public ::music::IService
                 }
             }
             runtime->player.state.volume = volume_.load();
+            // A track command already has catalog ID3 text and has dropped the
+            // old artwork. Publish it before opening the codec/decoding covers.
+            publication_pending |= command;
+            if (command && publish(*runtime))
+            {
+                last_publication = xTaskGetTickCount();
+                published_playback = runtime->player.state.playback;
+                published_track = runtime->player.state.current.id;
+                published_artwork = runtime->player.state.artwork_revision;
+                publication_pending = false;
+            }
             runtime->player.tick();
             const bool active = runtime->player.active();
             const auto now = xTaskGetTickCount();
-            publication_pending |= command || properties_changed || runtime->player.state.playback != published_playback;
+            publication_pending |= properties_changed || runtime->player.state.playback != published_playback ||
+                                   runtime->player.state.current.id != published_track || runtime->player.state.artwork_revision != published_artwork;
             // PCM has its own hardware clock. Cached UI state needs at most
             // 10 Hz; commands and playback transitions are published promptly.
             if (publication_pending || !audio_.active.load() || pdTICKS_TO_MS(now - last_publication) >= 100)
@@ -305,6 +270,8 @@ class Service final : public ::music::IService
                 {
                     last_publication = now;
                     published_playback = runtime->player.state.playback;
+                    published_track = runtime->player.state.current.id;
+                    published_artwork = runtime->player.state.artwork_revision;
                     publication_pending = false;
                 }
             }
@@ -328,9 +295,9 @@ class Service final : public ::music::IService
             ::music::destroy(retired);
             if (finished) return;
             if (!active || ::platform::audio::music_blocked()) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-            // The synchronous output already waits for DMA space. An extra
-            // tick here consumes the small hardware queue's decode/SD budget.
-            // Yield to peers without imposing a second playback clock.
+            // A full PSRAM queue needs no polling/decode work. The consumer
+            // wakes this worker as it frees space; it alone follows I2S time.
+            else if (runtime->output.waiting()) ulTaskNotifyTake(pdTRUE, std::max<TickType_t>(1, pdMS_TO_TICKS(2)));
             else taskYIELD();
         }
     }

@@ -64,6 +64,7 @@ set(TRAILMATE_ESP_IDF_CORE_MUSIC_SOURCES
     "${TRAILMATE_ROOT}/modules/core_music/src/storage.cpp"
     "${TRAILMATE_ROOT}/modules/music_image/src/cover_decoder.cpp"
     "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_audio.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_output.cpp"
     "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_storage.cpp")
 

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(music_core_tests LANGUAGES C CXX)
+find_package(Threads REQUIRED)
 set(CMAKE_CXX_STANDARD 17)
 get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(LVGL_DIR "" CACHE PATH "Firmware LVGL source")
@@ -70,6 +71,7 @@ foreach(TARGET music_decoder music_playback_policy music_lyrics music_catalog mu
 endforeach()
 add_executable(music_runtime test_runtime.cpp
     "${REPO}/platform/esp/common/src/music/music_runtime.cpp"
+    "${REPO}/platform/esp/common/src/music/music_output.cpp"
     "${REPO}/modules/core_music/src/player.cpp" "${REPO}/modules/core_music/src/playlists.cpp"
     "${REPO}/modules/core_music/src/catalog.cpp" "${REPO}/modules/core_music/src/storage.cpp"
     "${REPO}/modules/core_music/src/decoder.cpp" "${REPO}/modules/core_music/src/lyrics.cpp"
@@ -78,6 +80,7 @@ add_executable(music_runtime test_runtime.cpp
     "${REPO}/modules/core_sys/src/platform/audio/media_volume.cpp"
     "${REPO}/platform/linux/common/src/platform/resource_lock.cpp")
 target_include_directories(music_runtime PRIVATE runtime_fakes .
+    "${REPO}/platform/esp/common/include"
     "${REPO}/modules/core_music/include" "${REPO}/modules/music_image/include"
     "${REPO}/modules/core_sys/include")
 target_compile_definitions(music_runtime PRIVATE ESP_PLATFORM=1 TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4=1)
@@ -86,8 +89,35 @@ add_test(NAME music_runtime COMMAND music_runtime "${REPO}/docs/sound/call.mp3")
 get_target_property(MUSIC_RUNTIME_SOURCES music_runtime SOURCES)
 add_executable(music_runtime_l2 ${MUSIC_RUNTIME_SOURCES})
 target_include_directories(music_runtime_l2 PRIVATE runtime_fakes .
+    "${REPO}/platform/esp/common/include"
     "${REPO}/modules/core_music/include" "${REPO}/modules/music_image/include"
     "${REPO}/modules/core_sys/include")
 target_compile_definitions(music_runtime_l2 PRIVATE ESP_PLATFORM=1 ARDUINO_WIO_TRACKER_L2=1)
 target_compile_options(music_runtime_l2 PRIVATE -UNDEBUG -O2)
 add_test(NAME music_runtime_l2 COMMAND music_runtime_l2 "${REPO}/docs/sound/call.mp3")
+add_executable(music_output test_output.cpp
+    "${REPO}/platform/esp/common/src/music/music_output.cpp"
+    "${REPO}/modules/core_sys/src/platform/audio/audio_focus.cpp"
+    "${REPO}/platform/linux/common/src/platform/resource_lock.cpp")
+target_include_directories(music_output PRIVATE runtime_fakes .
+    "${REPO}/modules/core_music/include" "${REPO}/modules/core_sys/include"
+    "${REPO}/platform/esp/common/include")
+target_compile_definitions(music_output PRIVATE ESP_PLATFORM=1 ARDUINO_WIO_TRACKER_L2=1)
+target_compile_options(music_output PRIVATE -UNDEBUG -O2)
+target_link_libraries(music_output PRIVATE Threads::Threads)
+add_test(NAME music_output COMMAND music_output)
+get_target_property(MUSIC_PLAYER_SOURCES music_player SOURCES)
+list(FILTER MUSIC_PLAYER_SOURCES EXCLUDE REGEX "(test_player|decoder)\\.cpp$")
+add_executable(music_rate_transition test_rate_transition.cpp ${MUSIC_PLAYER_SOURCES})
+target_include_directories(music_rate_transition PRIVATE .
+    "${REPO}/modules/core_music/include" "${REPO}/modules/core_sys/include")
+target_compile_options(music_rate_transition PRIVATE -UNDEBUG -O2)
+add_test(NAME music_rate_transition COMMAND music_rate_transition "${REPO}/docs/sound/call.mp3")
+add_executable(music_pager_audio test_pager_audio.cpp
+    "${REPO}/platform/esp/common/src/music/music_audio.cpp")
+target_include_directories(music_pager_audio PRIVATE audio_fakes runtime_fakes .
+    "${REPO}/modules/core_music/include" "${REPO}/modules/core_sys/include"
+    "${REPO}/platform/esp/common/include")
+target_compile_definitions(music_pager_audio PRIVATE ARDUINO_T_LORA_PAGER=1)
+target_compile_options(music_pager_audio PRIVATE -UNDEBUG)
+add_test(NAME music_pager_audio COMMAND music_pager_audio)

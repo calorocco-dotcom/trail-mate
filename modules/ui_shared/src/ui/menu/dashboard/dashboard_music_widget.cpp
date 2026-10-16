@@ -42,14 +42,16 @@ void refresh_music(void* context)
     if (std::strcmp(lv_label_get_text(self.title), title)) ui::i18n::set_content_label_text_raw(self.title, title);
     if (std::strcmp(lv_label_get_text(self.artist), value.current.artist)) ui::i18n::set_content_label_text_raw(self.artist, value.current.artist);
     if (std::strcmp(lv_label_get_text(self.album), value.current.album)) ui::i18n::set_content_label_text_raw(self.album, value.current.album);
-    ui::i18n::set_label_text(self.play, value.playback == ::music::Playback::Playing || value.playback == ::music::Playback::Interrupted ? "Pause" : "Play");
-    ui::i18n::set_label_text(self.mode, value.mode == ::music::PlayMode::RepeatOne ? "Repeat one" : value.mode == ::music::PlayMode::Shuffle ? "Shuffle"
-                                                                                                                                             : "Repeat all");
+    const char* play = value.playback == ::music::Playback::Playing || value.playback == ::music::Playback::Interrupted ? "Pause" : "Play";
+    const char* mode = value.mode == ::music::PlayMode::RepeatOne ? "Repeat one" : value.mode == ::music::PlayMode::Shuffle ? "Shuffle"
+                                                                                                                            : "Repeat all";
+    if (std::strcmp(lv_label_get_text(self.play), ui::i18n::tr(play))) ui::i18n::set_label_text(self.play, play);
+    if (std::strcmp(lv_label_get_text(self.mode), ui::i18n::tr(mode))) ui::i18n::set_label_text(self.mode, mode);
     const char* status = !self.source ? "Unavailable" : value.playback == ::music::Playback::Interrupted ? "Voice / radio"
                                                     : value.playback == ::music::Playback::Playing       ? "Playing"
                                                     : value.current.id                                   ? "Paused"
                                                                                                          : "Idle";
-    set_status_chip(self.chrome, status, color_soft_amber(), color_text());
+    if (std::strcmp(lv_label_get_text(self.chrome.status_label), status)) set_status_chip(self.chrome, status, color_soft_amber(), color_text());
     if (self.source && self.art_revision != value.artwork_revision)
     {
         lv_obj_add_flag(self.cover, LV_OBJ_FLAG_HIDDEN);
@@ -207,7 +209,9 @@ WidgetHandle create_music_widget(lv_obj_t* parent, lv_coord_t width, lv_coord_t 
         source->request_lyrics(false);
         source->request_artwork(self->edge);
     }
-    auto handle = own_widget(self->chrome.card, self, refresh_music, 500);
+    // Only the visible widget owns this timer. Poll cached state promptly;
+    // unchanged labels/styles do not allocate or invalidate LVGL objects.
+    auto handle = own_widget(self->chrome.card, self, refresh_music, 100);
     handle.key = music_key;
     refresh_music(self);
     return handle;

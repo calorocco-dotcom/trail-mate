@@ -6,12 +6,24 @@
 struct Output : music::AudioOutput
 {
     bool occupied = false, opened = false, interrupt_on_write = false;
+    bool accepting = true, drained = true, faulted = false;
+    uint32_t pending = 0, drains = 0, rate = 0;
+    uint64_t samples = 0;
     unsigned frames = 0, begins = 0, ends = 0;
     bool supported() const override { return true; }
     bool blocked() const override { return occupied; }
-    bool begin(uint32_t rate) override
+    bool needs_frame() const override { return accepting; }
+    bool failed() const override { return faulted; }
+    uint32_t pending_ms() const override { return pending; }
+    bool drain() override
     {
-        assert(!occupied && rate >= 8000);
+        ++drains;
+        return drained;
+    }
+    bool begin(uint32_t hz) override
+    {
+        assert(!occupied && hz >= 8000);
+        rate = hz;
         opened = true;
         ++begins;
         return true;
@@ -25,6 +37,7 @@ struct Output : music::AudioOutput
             return false;
         }
         ++frames;
+        samples += count;
         return true;
     }
     void end() override
@@ -61,6 +74,89 @@ struct Images : music::ImageLoader
         return nullptr;
     }
 };
+void buffered_playback(const MemoryStorage::Bytes& bytes)
+{
+    MemoryStorage storage;
+    storage.files["/Music/first.mp3"] = bytes;
+    storage.files["/Music/second.mp3"] = bytes;
+    Output output;
+    Images images;
+    auto* player = music::make<music::Player>(storage, output, images);
+    player->attach(3);
+    for (unsigned i = 0; i < 12; ++i) player->tick();
+    music::Request request;
+    request.action = music::Action::Play;
+    request.id = player->state.rows[0].id;
+    assert(player->command(request));
+    output.pending = 150;
+    for (unsigned i = 0; i < 18; ++i) player->tick();
+    assert(output.opened && player->state.position_ms > 0);
+    const auto decoded = output.samples * 1000 / output.rate;
+    assert(player->state.position_ms + output.pending <= decoded + 2);
+    assert(player->state.position_ms + output.pending >= decoded - 2);
+    // A full queue prevents decoding, but position follows consumed samples.
+    output.accepting = false;
+    const auto frames = output.frames;
+    const auto position = player->state.position_ms;
+    output.pending = 50;
+    player->tick();
+    assert(output.frames == frames && player->state.position_ms == position + 100);
+    output.pending = 150;
+    player->tick();
+    const auto paused_at = player->state.position_ms;
+    request.action = music::Action::TogglePause;
+    assert(player->command(request));
+    assert(!output.opened && player->state.position_ms == paused_at);
+    // Restore uses the audible position rather than the decoder's read-ahead.
+    output.accepting = true;
+    output.pending = 0;
+    assert(player->command(request));
+    player->tick();
+    assert(player->state.position_ms >= paused_at && player->state.position_ms < paused_at + 100);
+    for (unsigned i = 0; i < 8; ++i) player->tick();
+    output.pending = 100;
+    player->tick();
+    const auto interrupted_at = player->state.position_ms;
+    output.occupied = true;
+    player->tick();
+    assert(!output.opened && player->state.playback == music::Playback::Interrupted);
+    assert(player->state.position_ms == interrupted_at);
+    output.pending = 0;
+    output.occupied = false;
+    player->tick();
+    assert(player->state.position_ms >= interrupted_at && player->state.position_ms < interrupted_at + 100);
+    // Seek must discard the old queue before installing the requested target.
+    output.pending = 100;
+    request.action = music::Action::Seek;
+    request.value = 300;
+    assert(player->command(request));
+    assert(!output.opened && player->state.position_ms == 300);
+    output.pending = 0;
+    player->tick();
+    assert(player->state.position_ms >= 300 && player->state.position_ms < 400);
+    // EOF may be reached seconds before queued PCM finishes. Do not select
+    // the next song or destroy its cover until the output confirms drain.
+    output.drained = false;
+    const auto id = player->state.current.id;
+    for (unsigned i = 0; i < 1024 && !output.drains; ++i) player->tick();
+    assert(output.drains && player->state.current.id == id);
+    for (unsigned i = 0; i < 10; ++i) player->tick();
+    assert(player->state.current.id == id && player->active());
+    output.drained = true;
+    player->tick();
+    assert(player->state.current.id != id);
+    output.drained = false;
+    const auto after_drain = output.drains;
+    for (unsigned i = 0; i < 1024 && output.drains == after_drain; ++i) player->tick();
+    assert(output.drains > after_drain);
+    output.faulted = true;
+    player->tick();
+    assert(!output.opened && !player->active() && player->state.playback == music::Playback::Error);
+    request.action = music::Action::Stop;
+    assert(player->command(request));
+    music::destroy(player);
+    assert(!output.opened && output.begins == output.ends);
+}
 int main(int argc, char** argv)
 {
     assert(argc == 2);
@@ -68,6 +164,7 @@ int main(int argc, char** argv)
     std::ifstream file(argv[1], std::ios::binary);
     assert(file);
     MemoryStorage::Bytes bytes(std::istreambuf_iterator<char>(file), {});
+    buffered_playback(bytes);
     storage.files["/Music/first.mp3"] = bytes;
     storage.files["/Music/second.mp3"] = bytes;
     Output output;
@@ -164,7 +261,9 @@ int main(int argc, char** argv)
     assert(player->state.current.id == before_cover && !player->artwork());
     images.advance = false;
     player->tick();
-    assert(player->state.current.id != before_cover && player->artwork() && player->artwork()->track_id == player->state.current.id);
+    assert(player->state.current.id != before_cover && !player->artwork()); // Publish new ID3 before optional cover work.
+    player->tick();
+    assert(player->artwork() && player->artwork()->track_id == player->state.current.id);
     ++storage.media_session;
     reopened = music::make<music::Player>(storage, output, images);
     reopened->restore_resume(*saved);

@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "music/cover_decoder.h"
 #include "music/player.h"
+#include "platform/audio/audio_focus.h"
 #include "platform/audio/media_volume.h"
 #include "platform/esp/common/music/music_ports.h"
 #include "platform/ui/device_runtime.h"
@@ -23,6 +24,7 @@ unsigned audio_writes = 0, underruns = 0, ui_refreshes = 0;
 uint32_t audio_rate = 0, dma_deadline = 0;
 uint32_t ui_revision = 0, ui_revision_at = 0;
 unsigned progress_refreshes = 0;
+uint64_t expected_track = 0;
 void run_worker()
 {
     assert(runtime_test::scheduled);
@@ -85,6 +87,9 @@ bool audio_supported() { return true; }
 bool audio_begin(uint32_t rate)
 {
     assert(!audio_open);
+    // A widget must be able to observe new ID3 before potentially slow codec
+    // opening, SD reads or cover decode, including queued Next commands.
+    assert(expected_track && snapshot().current.id == expected_track);
     if (!audio_available) return false;
     audio_open = true;
     audio_rate = rate;
@@ -99,6 +104,7 @@ bool audio_write(const int16_t*, std::size_t samples)
     runtime_test::tick += samples * 1000 / audio_rate;
     dma_deadline = runtime_test::tick + 512 * 1000 / audio_rate;
     ++audio_writes;
+    runtime_test::consumer_yield();
     return true;
 }
 void audio_end() { audio_open = false; }
@@ -116,6 +122,7 @@ int main(int argc, char** argv)
     assert(argc == 2);
     std::ifstream input(argv[1], std::ios::binary);
     runtime_test::files["/Music/test.mp3"] = {std::istreambuf_iterator<char>(input), {}};
+    runtime_test::files["/Music/other.mp3"] = runtime_test::files["/Music/test.mp3"];
     service = platform::ui::music_service();
     service->attach(0);
     assert(!runtime_test::scheduled && runtime_test::storages == 0 && allocations.empty());
@@ -127,15 +134,16 @@ int main(int argc, char** argv)
     service->attach(3);
     run_worker();
     const auto library = snapshot();
-    assert(library.total == 1);
+    assert(library.total == 2);
     service->detach();
     run_worker();
     assert(allocations.empty() && runtime_test::storages == 0);
     service->attach(3);
     run_worker();
-    assert(snapshot().total == 1);
+    assert(snapshot().total == 2);
     // A failed output open must not retain a realtime priority lease.
     audio_available = false;
+    expected_track = library.rows[0].id;
     send(music::Action::Play, library.rows[0].id);
     run_worker();
     assert(!audio_open && snapshot().playback == music::Playback::Error);
@@ -148,19 +156,20 @@ int main(int argc, char** argv)
     send(music::Action::Play, library.rows[0].id);
     runtime_test::on_delay = []
     {
-        if (!audio_open) return;
+        if (!audio_open || audio_writes == 0) return;
         ++ui_refreshes;
         const auto worker_priority = runtime_test::priority;
         runtime_test::priority = 1; // Read the cached view from the UI core.
         const auto view = snapshot();
         runtime_test::priority = worker_priority;
         assert(view.playback == music::Playback::Playing);
-        if (ui_refreshes == 1)
+        if (ui_revision == 0)
         {
             ui_revision = view.revision;
             ui_revision_at = runtime_test::tick;
         }
-        else if (runtime_test::tick - ui_revision_at < 100) assert(view.revision == ui_revision);
+        // Publication timestamps are rounded to the target's RTOS tick.
+        else if (runtime_test::tick - ui_revision_at < 100 - 2 * kTestTickMs) assert(view.revision == ui_revision);
         else if (view.revision != ui_revision)
         {
             ++progress_refreshes;
@@ -181,15 +190,32 @@ int main(int argc, char** argv)
             return;
         }
         runtime_test::ui_busy_until = 0;
-        if (ui_refreshes < 6) return;
+        if (ui_refreshes == 12)
+        {
+            const auto focus = platform::audio::request_focus(platform::audio::FocusOwner::Notification);
+            assert(focus && !audio_open);
+            platform::audio::release_focus(focus);
+            ui_revision = 0; // Focus transitions intentionally force publication.
+        }
+        if (ui_refreshes == 18)
+        {
+            const auto current = snapshot().current.id;
+            const auto library = snapshot();
+            expected_track = library.rows[0].id == current ? library.rows[1].id : library.rows[0].id;
+            assert(expected_track && expected_track != current);
+            send(music::Action::Next);
+            ui_revision = 0;
+        }
+        if (ui_refreshes < 30) return;
         runtime_test::on_delay = nullptr;
         send(music::Action::TogglePause);
         service->detach();
     };
     run_worker();
     assert(!audio_open && runtime_test::storages == 0 && allocations.size() == 1);
-    assert(runtime_test::delays == delays_before_playback && runtime_test::yields > yields_before_playback);
-    assert(ui_refreshes == 6 && underruns == 0 && audio_writes >= 6 && progress_refreshes > 0);
+    assert(runtime_test::delays >= delays_before_playback && runtime_test::yields > yields_before_playback);
+    assert(ui_refreshes == 30 && underruns == 0 && audio_writes >= 10 && progress_refreshes > 0);
+    assert(runtime_test::consumer_starts == runtime_test::consumer_deletes);
     assert(runtime_test::busy_skips > 0 && runtime_test::playback_lock_waits == 0);
     assert(snapshot().playback == music::Playback::Paused && resume_alive);
     // Interleave UI media invalidation at restore's first SD readiness operation.

@@ -133,6 +133,12 @@ void build_page()
     std::snprintf(page, sizeof(page), "%u / %u", state->page + 1U,
                   page_count(*state));
     lv_label_set_text(state->pager, page);
+    // A one-second parent timer would silently override Music/Controls' own
+    // shorter periods. Only currently constructed, visible widgets set it.
+    uint32_t period = kDashboardTimerMs;
+    for (const auto& widget : state->widgets)
+        if (widget.root && widget.refresh) period = std::min(period, widget.period_ms);
+    if (state->timer) lv_timer_set_period(state->timer, period);
     refresh_dashboard(nullptr);
 }
 bool change_page(int delta)

@@ -50,6 +50,11 @@ void Player::close_audio()
 {
     if (audio_open_)
     {
+        if (decoder_)
+        {
+            const auto decoded = submitted_ms_;
+            state.position_ms = decoded - std::min(decoded, output_.pending_ms());
+        }
         output_.end();
         audio_open_ = false;
         audio_rate_ = 0;
@@ -58,6 +63,7 @@ void Player::close_audio()
 void Player::close_decoder()
 {
     close_audio();
+    pending_frame_ = {};
     destroy(decoder_);
     storage_.close(song_);
 }
@@ -162,9 +168,21 @@ bool Player::audio_tick()
     }
     if (output_.blocked())
     {
-        close_audio();
+        // Queued PCM is discarded for a higher-priority owner. Reopen at the
+        // audible position afterwards, rather than skipping the read-ahead.
+        close_decoder();
         state.playback = Playback::Interrupted;
         return true;
+    }
+    if (audio_open_ && output_.failed())
+    {
+        // An asynchronous I2S failure must also surface while EOF is draining,
+        // rather than looking like a completed track and silently repeating it.
+        intent_.stop();
+        close_decoder();
+        state.playback = Playback::Error;
+        copy_text(state.notice, sizeof(state.notice), "Audio output failed");
+        return false;
     }
     if (!open_song())
     {
@@ -175,12 +193,22 @@ bool Player::audio_tick()
         copy_text(state.notice, sizeof(state.notice), "Unable to open song");
         return false;
     }
-    PcmFrame frame;
-    const auto result = decoder_->next(frame);
+    if (audio_open_ && !output_.needs_frame())
+    {
+        const auto decoded = submitted_ms_;
+        state.position_ms = decoded - std::min(decoded, output_.pending_ms());
+        return true;
+    }
+    PcmFrame frame = pending_frame_;
+    const auto result = frame.samples ? DecodeResult::Frame : decoder_->next(frame);
     if (result == DecodeResult::End)
     {
+        const bool drained = !audio_open_ || output_.drain();
+        const auto decoded = submitted_ms_;
+        state.position_ms = decoded - std::min(decoded, output_.pending_ms());
         // A cooperative thumbnail/catalog pump must not reenter those objects to select a song.
         if (pumping_) return false;
+        if (!drained) return true;
         return select_queue(queue_.next(state.mode, true));
     }
     if (result != DecodeResult::Frame)
@@ -192,7 +220,14 @@ bool Player::audio_tick()
         copy_text(state.notice, sizeof(state.notice), "Audio or SD read failed");
         return false;
     }
-    if (audio_open_ && audio_rate_ != frame.rate) close_audio();
+    pending_frame_ = frame; // Borrow decoder scratch until the frame is submitted.
+    if (audio_open_ && audio_rate_ != frame.rate)
+    {
+        // Keep the first frame at the new rate while the old-rate queue drains.
+        // Never decode over its scratch or play the old queue at a new clock.
+        if (!output_.drain()) return true;
+        close_audio();
+    }
     if (!audio_open_)
     {
         // The output port publishes opening/active state around the hardware lease.
@@ -211,13 +246,15 @@ bool Player::audio_tick()
         }
         audio_open_ = true;
         audio_rate_ = frame.rate;
+        submitted_ms_ = state.position_ms;
     }
-    for (unsigned i = 0; i < frame.count; i++) frame.samples[i] = static_cast<int32_t>(frame.samples[i]) * state.volume / 100;
+    if (!output_.applies_volume())
+        for (unsigned i = 0; i < frame.count; i++) frame.samples[i] = static_cast<int32_t>(frame.samples[i]) * state.volume / 100;
     if (!output_.write(frame.samples, frame.count))
     {
         if (output_.blocked())
         {
-            close_audio();
+            close_decoder();
             state.playback = Playback::Interrupted;
             return true;
         }
@@ -227,7 +264,9 @@ bool Player::audio_tick()
         copy_text(state.notice, sizeof(state.notice), "Audio output failed");
         return false;
     }
-    state.position_ms = decoder_->position_ms();
+    const auto decoded = submitted_ms_ = decoder_->position_ms();
+    pending_frame_ = {};
+    state.position_ms = decoded - std::min(decoded, output_.pending_ms());
     state.playback = Playback::Playing;
     return true;
 }
@@ -355,6 +394,13 @@ void Player::tick()
         }
     }
     audio_tick();
+    // Build an audio reserve before thumbnail/lyric/index work can stall the
+    // decoder. The hardware consumer continues independently of that work.
+    if (intent_.wanted && (!audio_open_ || !output_.ready_for_optional_work()))
+    {
+        ++state.revision;
+        return;
+    }
     update_library();
     update_lyrics();
     update_artwork();
@@ -420,8 +466,9 @@ bool Player::command(const Request& request)
         if (!queue_count_) return false;
         return select_queue(queue_.next(state.mode, false), intent_.wanted);
     case Action::Seek:
-        state.position_ms = std::clamp<uint32_t>(std::max<int32_t>(0, request.value), 0, state.current.duration_ms);
         close_audio();
+        pending_frame_ = {};
+        state.position_ms = std::clamp<uint32_t>(std::max<int32_t>(0, request.value), 0, state.current.duration_ms);
         if (decoder_) decoder_->seek(state.position_ms);
         break;
     case Action::Volume:

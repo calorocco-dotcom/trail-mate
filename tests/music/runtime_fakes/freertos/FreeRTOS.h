@@ -5,8 +5,13 @@ using TickType_t = uint32_t;
 using UBaseType_t = unsigned;
 constexpr int pdTRUE = 1, pdPASS = 1, tskIDLE_PRIORITY = 0;
 constexpr TickType_t portMAX_DELAY = UINT32_MAX;
-#define pdMS_TO_TICKS(value) (value)
-#define pdTICKS_TO_MS(value) (value)
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+constexpr TickType_t kTestTickMs = 10; // The production P4 SDK uses 100 Hz.
+#else
+constexpr TickType_t kTestTickMs = 1;
+#endif
+#define pdMS_TO_TICKS(value) ((value) / kTestTickMs)
+#define pdTICKS_TO_MS(value) ((value)*kTestTickMs)
 namespace runtime_test
 {
 inline TickType_t tick = 1;

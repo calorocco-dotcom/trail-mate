@@ -13,6 +13,13 @@ class AudioOutput
     virtual bool supported() const = 0;
     virtual bool blocked() const = 0;
     virtual bool needs_frame() const { return true; }
+    virtual bool failed() const { return false; }
+    // Asynchronous sinks expose queued PCM time, including an in-flight write.
+    // drain starts a short track even if it never reached the prebuffer target.
+    virtual uint32_t pending_ms() const { return 0; }
+    virtual bool drain() { return true; }
+    virtual bool ready_for_optional_work() const { return true; }
+    virtual bool applies_volume() const { return false; }
     virtual bool begin(uint32_t sample_rate) = 0;
     virtual bool write(const int16_t* mono, std::size_t count) = 0;
     virtual void end() = 0;
@@ -45,6 +52,7 @@ class Player
     Playlists playlists_;
     TagReader tags_;
     Decoder* decoder_ = nullptr;
+    PcmFrame pending_frame_{};
     Lyrics* lyrics_ = nullptr;
     File *song_ = nullptr, *lyric_file_ = nullptr;
     Artwork* artwork_ = nullptr;
@@ -53,7 +61,7 @@ class Player
     Browse queue_kind_ = Browse::Songs;
     uint64_t queue_playlist_ = 0;
     char queue_category_[96]{}, path_[320]{};
-    uint32_t queue_count_ = 0, media_session_ = 0, audio_rate_ = 0;
+    uint32_t queue_count_ = 0, media_session_ = 0, audio_rate_ = 0, submitted_ms_ = 0;
     uint16_t artwork_edge_ = 0, decoded_edge_ = 0;
     uint8_t visible_rows_ = 0;
     bool show_lyrics_ = false, audio_open_ = false, loaded_ = false, pumping_ = false;

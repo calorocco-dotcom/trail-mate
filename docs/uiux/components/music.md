@@ -156,28 +156,61 @@ are also scoped to their SD media session. The same test checks both conditions.
 Preview screenshots use explicit deterministic fixtures; they are not evidence
 of physical audio quality, bus timing, PSRAM peaks or real-device latency.
 
-Continuous playback is paced by the blocking hardware output; the worker yields
-to peers without sleeping an extra RTOS tick after every frame. Compressed input
-is refilled in batches using the existing 8 KiB PSRAM window, rather than seeking
-and reading the SD card after each frame. Neither change adds a task, DMA buffer
-or internal-RAM audio queue. Runtime and decoder regressions cover both rules.
-While the output is open, that same worker temporarily runs at priority 5 so a
-ready UI render cannot delay the producer until its DMA queue empties. Closing,
-pausing or yielding audio focus restores the previous priority; failed opens
-never acquire it. Library-only work retains its original low priority. A host
-scheduler model reproduces starvation with a 30 ms competing UI render before
-the fix and verifies uninterrupted feeding and priority release afterward. This
-model is a regression check, not a measured hardware latency result.
+Continuous playback uses a bounded, 256 KiB single-producer/single-consumer PCM
+ring allocated strictly in PSRAM while the output is open. Its mono 16-bit
+capacity is about 2.97 seconds at 44.1 kHz or 2.73 seconds at 48 kHz. There is no
+internal-heap fallback or whole-song cache. Compressed input still uses the
+existing batched 8 KiB PSRAM window. The decoder fills the ring at priority 3;
+an independent priority-5 consumer follows the blocking I2S output clock. It
+does no SD, image, settings or UI work. The consumer and its 512-byte conversion
+scratch belong to the PSRAM Runtime. Its 4 KiB task stack and FreeRTOS task
+control block require internal memory in the current SDK configuration; the
+existing internal DMA queue is unchanged. Library-only work keeps its low
+priority and does not allocate the PCM ring or consumer task.
+
+Playback starts after a 250 ms prebuffer; optional cover/lyric/index work waits
+for 1.5 seconds of queued PCM, or EOF on a shorter track. Queue backpressure
+parks the decoder until space is available.
+Short notification waits always block for at least one RTOS tick: P4's 100 Hz
+configuration must not round a 2 ms wait to zero and starve the decoder.
+Volume is applied before hardware writes, so already queued raw PCM responds to
+new settings.
+Pause/seek/skip and focus preemption discard the queue and join the consumer
+before freeing it. Focus preemption closes the hardware independently of the
+decoder, even if the decoder is blocked on SD/image work. An interruption latch
+prevents a fast focus release from hiding the stop before Player observes it.
+Progress and resume positions subtract queued PCM time; natural EOF instead
+drains the queue and a bounded silent hardware tail before selecting a song.
+An in-stream rate change retains the first frame at the new rate until old-rate
+PCM drains; it neither decodes over that scratch nor discards the old queue.
+Asynchronous output failures, including during EOF drain, surface as playback
+errors instead of being mistaken for successful completion.
+The output diagnostic reports PSRAM capacity, queue starvation and minimum
+reserve. Deterministic production-task tests model a 600 ms producer stall,
+live volume, short-clip EOF, focus, immediate discard and failure cleanup;
+a separate native two-thread exercise checks ring order across wraparound.
+These are regression models, not measured hardware latency or audio quality.
 Playback control reads, volume observer updates, optional artwork checks and
 snapshot publication never wait on the UI mutex while output is active. A busy
 UI retains its last snapshot; queued commands/properties remain pending for the
 next admitted frame. Ordinary progress publication is limited to 10 Hz, with
-prompt publication for commands and playback transitions. Active playback does
+prompt publication for commands, track/artwork changes and playback transitions.
+Track commands publish catalog ID3 and remove old artwork before codec opening
+or optional decoding. Music's visible widget checks that cache every 100 ms;
+unchanged labels and styles do not trigger repeated updates. The dashboard's
+parent timer follows its currently visible widgets' periods and returns to the
+appropriate slower period after Music leaves. Active playback does
 not take the idle-cleanup lock. An additional regression reproduces starvation
 from a 30 ms snapshot owner even after raising priority, then verifies skipped
 publication/control admission without losing Pause or visibility changes.
 On L2 the same worker is pinned to core 0, separate from the board's core-1
 Arduino UI loop. Both the generic ESP and L2 paths run the runtime regression.
+
+Pager's `audioWrite` delegates to `EspCodec::write`/`esp_codec_dev_write` and
+returns a codec status: zero is success, not a PCM byte count. The Music adapter
+uses that contract, matching Pager's existing notification and voice paths.
+Its regression compiles the production adapter and checks success, nonzero
+errors, session rollback and focus rejection.
 
 On L2, a music rate transition silences the amplifier and clears the DMA queue,
 sets the I2S clock, then configures and reads back ES8311 slave/16-bit/I2S/MCLK
