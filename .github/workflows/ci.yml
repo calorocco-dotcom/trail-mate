@@ -434,10 +434,22 @@ jobs:
           key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini', 'builds/pio_nrf52/platformio.ini') }}
 
       - name: Install PlatformIO
-        run: python -m pip install --upgrade platformio
+        run: python -m pip install --upgrade platformio pyelftools
 
       - name: Build (${{ matrix.env }})
         run: pio run -d ${{ matrix.project_dir }} -e ${{ matrix.env }}
+
+      - name: Report linked RAM allocation
+        run: |
+          python scripts/report_elf_ram.py "${{ matrix.build_root }}/${{ matrix.env }}/firmware.elf" \
+            --revision "${GITHUB_SHA}" --output "ram-report/${{ matrix.env }}.json"
+
+      - name: Retain RAM allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-report-${{ matrix.env }}
+          path: ram-report/
+          retention-days: 7
 
       - name: Validate OTA slot size
         if: matrix.env != 'gat562_mesh_evb_pro' && matrix.env != 't-echo-lite'
@@ -674,6 +686,20 @@ jobs:
           idf.py -C firmware/c6_companion \
             -B "${GITHUB_WORKSPACE}/firmware/c6_companion/build.c6_companion" build
 
+      - name: Report linked RAM allocation
+        shell: bash
+        run: |
+          source "${IDF_PATH}/export.sh"
+          python scripts/report_elf_ram.py firmware/c6_companion/build.c6_companion/trail-mate-c6-companion.elf \
+            --revision "${GITHUB_SHA}" --output ram-report/c6_companion.json
+
+      - name: Retain RAM allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-report-c6_companion
+          path: ram-report/
+          retention-days: 7
+
       - name: Validate C6 companion partition size
         shell: bash
         run: |
@@ -764,6 +790,20 @@ jobs:
           source "${IDF_PATH}/export.sh"
           idf.py -B "${GITHUB_WORKSPACE}/build.${{ matrix.env }}" \
             -D "TRAIL_MATE_IDF_TARGET=${{ matrix.env }}" build
+
+      - name: Report linked RAM allocation
+        shell: bash
+        run: |
+          source "${IDF_PATH}/export.sh"
+          python scripts/report_elf_ram.py "build.${{ matrix.env }}/trail-mate.elf" \
+            --revision "${GITHUB_SHA}" --output "ram-report/${{ matrix.env }}.json"
+
+      - name: Retain RAM allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-report-${{ matrix.env }}
+          path: ram-report/
+          retention-days: 7
 
       - name: Validate OTA slot size
         shell: bash
