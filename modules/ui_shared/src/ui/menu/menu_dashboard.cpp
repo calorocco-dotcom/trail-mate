@@ -177,6 +177,9 @@ void slide_finished(lv_anim_t*)
         // never scrolls; only the launcher grid owns vertical scrolling.
         lv_obj_scroll_to(lv_obj_get_parent(state->panel), 0, 0, LV_ANIM_OFF);
         state->feed_open = state->feed_target;
+#if defined(ARDUINO_T_LORA_PAGER)
+        ui::menu_layout::set_bottom_bar_help_text("H Help");
+#endif
         feed_offset(state, state->feed_open ? lv_obj_get_width(state->panel) : 0);
         // Keep launcher focus at its normal coordinates once the opaque feed
         // covers it. Otherwise restoring focus after Help scrolls the parent
@@ -597,6 +600,9 @@ void setActive(bool active)
         build_page();
         if (state->timer) lv_timer_resume(state->timer);
     }
+#if defined(ARDUINO_T_LORA_PAGER)
+    ui::menu_layout::set_bottom_bar_help_text("H Help");
+#endif
 }
 } // namespace ui::menu::dashboard
 #endif

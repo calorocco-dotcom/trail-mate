@@ -22,6 +22,14 @@ const capture=async name=>{
   await writeFile(join(dir,`${name}.png`),framePng(frame,480,222));
 };
 runtime._native_init(0);runtime._native_open_page(10);tick();
+const footerHint=()=>snapshot().map(item=>item.text||'').find(text=>text.includes('V#'))||'';
+assert.ok(footerHint().includes('Widgets'),'launcher footer exposes V to open widgets');
+key('h');assert.ok(has('Open widget screen'));
+key('v');assert.equal(runtime._native_widget_page(),0,'V works directly from launcher Help');
+assert.ok(!has('Main Menu Help')&&footerHint().includes('Menu'));
+key('h');assert.ok(has('Widgets Help')&&has('Return to menu'));
+key('V');assert.equal(runtime._native_widget_page(),-1,'V returns directly from widget Help');
+assert.ok(!has('Widgets Help')&&footerHint().includes('Widgets'));
 const map=snapshot().find(item=>item.button&&item.text==='Map');
 runtime._native_focus(map.id);
 for(const k of ['a','w','s','d','A','W','S','D']){

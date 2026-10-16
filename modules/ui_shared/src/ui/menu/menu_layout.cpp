@@ -49,7 +49,7 @@ constexpr const char* kTag = "ui-menu-layout";
 
 constexpr size_t kMaxMenuApps = 18;
 constexpr const char* kBottomHelpPlainPrefix = "H Help";
-constexpr const char* kBottomHelpRichPrefix = "#D6403A H#elp";
+constexpr const char* kBottomHelpRichPrefix = "#D6403A H# Help";
 
 struct MenuAppUi
 {
@@ -1096,11 +1096,17 @@ std::string renderBottomHelpText(const char* text)
 
     std::string rendered = kBottomHelpRichPrefix;
     rendered += safe_text + prefix_len;
+#if defined(ARDUINO_T_LORA_PAGER)
+    rendered += ui::menu::dashboard::isFeedOpen() ? "  #D6403A V# Menu" : "  #D6403A V# Widgets";
+#endif
     return rendered;
 }
 
 void setBottomBarHelpText(const char* text)
 {
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
     const std::string rendered = renderBottomHelpText(text);
     setBottomBarChipText(s_bottom_help_chip, rendered.c_str());
 }
@@ -1293,8 +1299,9 @@ void createAppGrid()
     s_bottom_node_chip = createBottomBarChip(s_bottom_bar_left, profile, lv_color_hex(0xF1B75A), "-");
     if (showBottomHelpShortcut())
     {
+        const std::string help_text = renderBottomHelpText(kBottomHelpPlainPrefix);
         s_bottom_help_chip =
-            createBottomBarChip(s_bottom_bar_left, profile, lv_color_hex(0xFAF0D8), kBottomHelpRichPrefix, true);
+            createBottomBarChip(s_bottom_bar_left, profile, lv_color_hex(0xFAF0D8), help_text.c_str(), true);
     }
     if (profile.show_memory_stats)
     {

@@ -4,6 +4,9 @@ The Pager launcher keeps W/A/S/D for its adaptive icon grid. V toggles the
 widget feed from any launcher position and restores the selected launcher
 icon on return. A at the left edge no longer opens the feed. This shortcut is
 scoped to the launcher: applications and text fields retain literal `v`.
+The footer permanently shows H Help and V Widgets (or V Menu in the feed).
+V is the first contextual Help row and also works with launcher/widget Help
+open: it closes Help, restores the input group and performs the switch.
 
 ## Widget feed
 
