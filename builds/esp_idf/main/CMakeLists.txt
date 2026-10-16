@@ -103,6 +103,12 @@ if(TRAIL_MATE_IDF_TARGET STREQUAL "tdeck")
 endif()
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
+if(TRAIL_MATE_IDF_TARGET STREQUAL "t_display_p4_tft" OR
+   TRAIL_MATE_IDF_TARGET STREQUAL "t_display_p4_amoled")
+    # LVGL introduces these references after libmain's archive scan. Keep the
+    # custom allocator object reachable regardless of component archive order.
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--undefined=lv_malloc_core")
+endif()
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     include("${TRAILMATE_ROOT}/cmake/TrailMateTmap.cmake")
     trailmate_add_tmap()

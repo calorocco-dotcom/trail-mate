@@ -108,6 +108,10 @@ for (const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_
       assert.equal(runtime._native_widget_leases(),1,'one independent PSRAM owner');
       assert.equal(runtime._native_dashboard_geometry(),0,`${device}: widget ${page} geometry`);
       if(page===1)checkSkyplot();
+      if(page===3) {
+        assert.ok(snapshot().some(item=>item.text==='Awaiting teammate'));
+        assert.ok(!snapshot().some(item=>item.text.includes('warming up')),'absent sensor is not described as warming up');
+      }
       await capture(`widget-${page}`);
       if(page<4){if(device==='pager'){runtime._native_encoder(1);tick();}else swipe(width/2,height-65,0,-70);}
     }

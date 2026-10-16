@@ -200,6 +200,7 @@ void refresh_compass_widget(void* context)
 
     const auto self = platform::ui::gps::get_data();
     const auto heading = platform::ui::orientation::get_heading();
+    const bool has_heading_sensor = platform::ui::orientation::get_screen_orientation().sensor_available;
     const bool self_valid = self.valid;
 
     double best_distance = 0.0;
@@ -273,10 +274,10 @@ void refresh_compass_widget(void* context)
     if (!found_target)
     {
         set_status_chip(compass.chrome,
-                        heading.available ? "SEARCH" : "WAIT IMU",
+                        heading.available || !has_heading_sensor ? "SEARCH" : "WAIT IMU",
                         color_soft_blue(),
                         color_info());
-        set_label_text_if_changed(compass.target_name, heading.available ? "Awaiting teammate" : "Heading starting");
+        set_label_text_if_changed(compass.target_name, heading.available || !has_heading_sensor ? "Awaiting teammate" : "Heading starting");
         if (heading.available)
         {
             char heading_buf[48];
@@ -289,8 +290,8 @@ void refresh_compass_widget(void* context)
         else
         {
             set_label_text_if_changed_raw(compass.distance_value, "--");
-            set_label_text_if_changed(compass.bearing_value, "magnetometer still warming up");
-            set_label_text_if_changed(compass.footer_label, "waiting for module GNSS compass");
+            set_label_text_if_changed(compass.bearing_value, has_heading_sensor ? "magnetometer still warming up" : "team member position will appear here");
+            set_label_text_if_changed(compass.footer_label, has_heading_sensor ? "waiting for module GNSS compass" : "GPS bearings to nearby teammates");
         }
         update_needle(compass, needle_bearing);
         lv_obj_set_style_bg_opa(compass.north_marker, LV_OPA_COVER, 0);

@@ -15,6 +15,15 @@ namespace platform::ui::orientation
 {
 static HeadingState preview_heading{};
 HeadingState get_heading() { return preview_heading; }
+ScreenOrientationState get_screen_orientation()
+{
+    ScreenOrientationState state;
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    state.sensor_available = true;
+#endif
+    state.sensor_ready = preview_heading.sensor_ready;
+    return state;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_heading(int degrees, int available)
 {
     preview_heading.available = preview_heading.sensor_ready = available != 0;

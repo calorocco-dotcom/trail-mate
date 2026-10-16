@@ -94,6 +94,13 @@ padding and resolves its dimensions before the first refresh. Setting
 The existing P4 lifecycle suite continues to exercise 250 container rebuilds
 per panel.
 
+The allocator tests also reproduce static archive ordering: the custom
+allocator archive precedes the library that references it. P4 explicitly keeps
+`lv_malloc_core` reachable so archive extraction cannot drop the allocator.
+Arduino's orientation adapter reports absent heading hardware without starting
+a task. On those targets, the compass displays GPS/team bearings rather than
+describing a nonexistent magnetometer as still warming up.
+
 Physical touch thresholds, encoder direction, internal/PSRAM heap peaks and
 rendering latency still require device acceptance under live service load.
 
