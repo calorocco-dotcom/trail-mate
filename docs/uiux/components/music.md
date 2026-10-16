@@ -8,7 +8,9 @@ are never deleted by a playlist operation.
 
 Now Playing includes embedded artwork, title, artist, album, elapsed/total time,
 seek, previous/pause/next and repeat-all/repeat-one/shuffle. The artwork frame and
-seek knob have disjoint bounds on every supported screen. The track-information
+seek knob have disjoint bounds on every supported screen. Compact screens place
+a single-line paused/interrupted status between the time labels, outside the
+slider knob and playback controls. Longer status text elides. The track-information
 view pages through six ID3 fields at a time and keeps the cover visible. Lyrics
 use three lines with synchronized LRC selection or manual scrolling.
 
@@ -76,7 +78,7 @@ write flash. A slider owns its whole drag and cannot page the dashboard.
 | Control | Owner and transition |
 | --- | --- |
 | Wi-Fi | Preserve saved profiles and priority. Coordinate transport clients before stopping the driver. Reject changes during OTA, calls, non-preemptible operations or external-storage suspension. Roll back a rejected preference; preserve initialization state after failed driver cleanup so retry is possible. |
-| LoRa | A shared RF-permission policy is separate from mesh-protocol TX/RX configuration and temporary exclusive sessions. Reject a switch during an exclusive session. Reject new TX while disabled, finish current work and enter checked standby before acknowledging Off. Re-enable through the radio task; an uninitialized disabled radio can still be enabled. Preserve shared power rails. |
+| LoRa | A shared RF-permission policy is separate from mesh-protocol TX/RX configuration and temporary exclusive sessions. Reject a switch during an exclusive session. Reject new TX while disabled, finish current work and enter checked standby before acknowledging Off. The control accepts an enable request while offline; the radio task reports transition failures instead of claiming hardware success. Preserve shared power rails. |
 | GPS | Use the existing configuration edit lease, GPS runtime enable operation and position projection. The user preference is separate from normal duty-cycle sleep and temporary power leases. |
 | Volume | Use the shared music/speaker volume. An idle adjustment updates the cached preference without creating a decoder, opening SD or starting a worker. Active playback defers flash persistence until audio is idle. |
 | Brightness | Map the percentage to the target's actual brightness range, apply through its device port and persist that native level. |
@@ -132,6 +134,10 @@ The following captures use the production page/widget code and deterministic
 preview services. Top-bar memory values and media metadata are fixture data.
 
 ![Pager Now Playing with cover, seek and playback modes](../../images/music/pager-now-playing.png)
+
+![Pager paused status clear of the progress knob](../../images/music/pager-paused.png)
+
+![T-Deck interrupted status stays on one line above the controls](../../images/music/tdeck-interrupted.png)
 
 ![Pager Quick controls without the empty footer](../../images/music/pager-quick-controls.png)
 

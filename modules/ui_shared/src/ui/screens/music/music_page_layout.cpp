@@ -139,6 +139,7 @@ void now_playing(lv_coord_t width, lv_coord_t height)
     self.volume = label(panel, volume, w - 54, title_y + 46, 40, &lv_font_montserrat_12, true);
     self.playback_status = label(panel, "", text_x, title_y + 64, text_w, &lv_font_montserrat_12, true);
     lv_label_set_long_mode(self.playback_status, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(self.playback_status, lv_font_get_line_height(&lv_font_montserrat_12));
     const lv_coord_t controls_y = h - 44;
     const lv_coord_t progress_y = controls_y - 34;
     self.progress = lv_slider_create(panel);
@@ -154,6 +155,14 @@ void now_playing(lv_coord_t width, lv_coord_t height)
     self.elapsed = label(panel, "0:00", 14, progress_y + 12, 70, &lv_font_montserrat_12, true);
     self.duration = label(panel, "--:--", w - 84, progress_y + 12, 70, &lv_font_montserrat_12, true);
     lv_obj_set_style_text_align(self.duration, LV_TEXT_ALIGN_RIGHT, 0);
+    if (!self.wide)
+    {
+        // Status shares the time row on compact screens, leaving the cover,
+        // metadata and the slider's painted knob area independent.
+        lv_obj_set_pos(self.playback_status, 92, progress_y + 12);
+        lv_obj_set_width(self.playback_status, w - 184);
+        lv_obj_set_style_text_align(self.playback_status, LV_TEXT_ALIGN_CENTER, 0);
+    }
     auto* mode = button(panel, "Repeat all", PlayMode, 92);
     self.mode = lv_obj_get_child(mode, 0);
     auto* previous = button(panel, LV_SYMBOL_PREV, Previous, 36);

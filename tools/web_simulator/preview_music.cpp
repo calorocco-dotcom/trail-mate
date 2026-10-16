@@ -306,9 +306,13 @@ class Source final : public music::IService
         ++out.revision;
         return true;
     }
-    void set_playing(bool value)
+    void set_playing(int value)
     {
-        if (value) play(1);
+        if (value)
+        {
+            play(1);
+            if (value == 2) out.playback = music::Playback::Interrupted;
+        }
         else out.playback = music::Playback::Stopped;
     }
 } source;
@@ -319,7 +323,7 @@ void preview_bind_music()
     ui::menu::dashboard::bindMusicSource(&source);
 }
 music::IService* preview_music_service() { return &source; }
-extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_music_playing(int value) { source.set_playing(value != 0); }
+extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_music_playing(int value) { source.set_playing(value); }
 // QA only: inspect the actual shared LVGL objects, including slider knob clearance.
 extern "C" EMSCRIPTEN_KEEPALIVE int native_music_geometry()
 {
@@ -335,5 +339,19 @@ extern "C" EMSCRIPTEN_KEEPALIVE int native_music_geometry()
     const auto knob = lv_obj_get_style_pad_top(self->progress, LV_PART_KNOB) + lv_obj_get_height(self->progress);
     if (cover.y2 + knob >= progress.y1) return 1;
     if (top.y2 >= body.y1 || body.y2 >= footer.y1) return 2;
+    if (self->playback_status && lv_label_get_text(self->playback_status)[0])
+    {
+        lv_area_t status{}, elapsed{}, duration{}, controls{};
+        lv_obj_get_coords(self->playback_status, &status);
+        lv_obj_get_coords(self->elapsed, &elapsed);
+        lv_obj_get_coords(self->duration, &duration);
+        lv_obj_get_coords(lv_obj_get_parent(self->play_label), &controls);
+        auto painted = progress;
+        painted.y1 -= lv_obj_get_style_pad_top(self->progress, LV_PART_KNOB) + 1;
+        painted.y2 += lv_obj_get_style_pad_bottom(self->progress, LV_PART_KNOB) + 1;
+        const auto overlaps = [](const lv_area_t& a, const lv_area_t& b)
+        { return a.x1 <= b.x2 && a.x2 >= b.x1 && a.y1 <= b.y2 && a.y2 >= b.y1; };
+        if (overlaps(status, painted) || overlaps(status, elapsed) || overlaps(status, duration) || overlaps(status, controls)) return 3;
+    }
     return 0;
 }

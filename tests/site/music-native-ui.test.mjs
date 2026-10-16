@@ -21,6 +21,14 @@ for(const [device,width,height] of boards.filter(([name])=>!process.env.MUSIC_UI
  click('Repeat one');assert.ok(snapshot().some(item=>item.text==='Shuffle'));
  click('Shuffle');assert.ok(snapshot().some(item=>item.text==='Repeat all'));
  await capture('now-playing');
+ click('Pause');assert.ok(snapshot().some(item=>item.text==='Paused'));
+ assert.equal(runtime._native_music_geometry(),0,`${device}: paused status clears the progress knob and time labels`);
+ await capture('paused');
+ runtime._native_preview_music_playing(2);tick();tick();
+ assert.ok(snapshot().some(item=>item.text.startsWith('Paused for')),'interrupted status remains readable when elided');
+ assert.equal(runtime._native_music_geometry(),0,`${device}: interrupted status clears the progress knob and time labels`);
+ await capture('interrupted');
+ runtime._native_preview_music_playing(1);tick();tick();
  click('Lyrics');assert.ok(snapshot().some(item=>item.text==='We take the quiet way home'));await capture('lyrics');
  click('\uf053');click('Menu');click('Track info');await capture('metadata');assert.ok(snapshot().some(item=>item.text==='Aster'));
  click('\uf053');click('Library');click('Browse');click('Playlists');await capture('playlists');
