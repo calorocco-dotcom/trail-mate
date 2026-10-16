@@ -64,6 +64,10 @@ close immediately discards unread bytes, serializes with the receive owner,
 and ignores late OPENED/DATA events while closing. Idle Wi-Fi
 does not allocate this ring. Tab5 shares this policy with its existing 4 KiB
 ring capacity. Locks and transport control remain in internal RAM.
+TCP reset, status snapshots, connection IDs and transfer counters share the
+receive-buffer lock, while sending and closing serialize with the receive
+owner. Linux host tests also overlap reads/status snapshots with 500 reconnect
+and reset cycles.
 
 The SDIO transport now explicitly requests aligned internal DMA memory for its
 owner object, with matching polymorphic deletion and a recoverable allocation

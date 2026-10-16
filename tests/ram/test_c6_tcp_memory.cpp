@@ -7,6 +7,10 @@
 #include <cstring>
 #include <mutex>
 #include <vector>
+#if defined(_GLIBCXX_HAS_GTHREADS)
+#include <atomic>
+#include <thread>
+#endif
 #if defined(_WIN32) && !defined(_GLIBCXX_HAS_GTHREADS)
 namespace std
 {
@@ -27,7 +31,7 @@ struct Tcp : WifiTcpTransport
     C6CompanionStatus status_{};
     WifiTcpStatus tcp_status_{};
     uint8_t next_tcp_connection_id_ = 1;
-    std::mutex tcp_rx_mutex_{};
+    mutable std::mutex tcp_rx_mutex_{};
     std::recursive_mutex receive_owner_mutex_{};
     using TcpRxBuffer = std::array<uint8_t, kWifiTcpRxBufferSize>;
     platform::memory::PsramPtr<TcpRxBuffer> tcp_rx_buffer_{};
@@ -42,7 +46,6 @@ struct Tcp : WifiTcpTransport
         ++sends;
         return send_ok;
     }
-    WifiTcpStatus tcpStatus() const override { return tcp_status_; }
 #include "c6_tcp_api.inc"
 #include "c6_tcp_buffer.inc"
     void event(uint8_t operation, size_t data_len = 0)
@@ -112,4 +115,26 @@ int main()
     assert(live_bytes == 0 && tcp.sends == sends && tcp.tcp_status_.state == WifiTcpState::Closing);
     tcp.event(TM_C6_WIFI_TCP_CLOSED);
     assert(live_bytes == 0 && tcp.tcp_status_.state == WifiTcpState::Disconnected);
+#if defined(_GLIBCXX_HAS_GTHREADS)
+    std::atomic<bool> running{true};
+    std::thread reader([&]
+                       {
+        std::array<uint8_t, 64> bytes{};
+        while (running.load())
+        {
+            assert(tcp.readTcp(bytes.data(), bytes.size()) <= bytes.size());
+            assert(tcp.tcpStatus().buffered_bytes <= kWifiTcpRxBufferSize);
+        } });
+    for (unsigned i = 0; i < 500; ++i)
+    {
+        assert(tcp.openTcp("example.org", 443));
+        tcp.set_tcp_state(WifiTcpState::Connected, TM_C6_OK, "connected");
+        assert(tcp.append_tcp_rx(data.data(), data.size()));
+        tcp.set_tcp_state(WifiTcpState::Disconnected, TM_C6_OK, "remote_closed");
+        tcp.reset_tcp_state(WifiTcpState::Disconnected, "wifi_disconnected");
+    }
+    running.store(false);
+    reader.join();
+    assert(live_bytes == 0);
+#endif
 }

@@ -1210,7 +1210,10 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
             set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_INTERNAL, "rx_memory_unavailable");
             return false;
         }
-        tcp_status_.connection_id = next_tcp_connection_id_++;
+        {
+            std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+            tcp_status_.connection_id = next_tcp_connection_id_++;
+        }
         if (next_tcp_connection_id_ == 0)
         {
             next_tcp_connection_id_ = 1;
@@ -1232,6 +1235,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     bool writeTcp(const uint8_t* data, size_t len) override
     {
+        std::lock_guard<std::recursive_mutex> receive_owner(receive_owner_mutex_);
         if (tcp_status_.state != WifiTcpState::Connected || (data == nullptr && len != 0) ||
             len == 0)
         {
@@ -1253,7 +1257,10 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
             }
             offset += chunk;
         }
-        tcp_status_.transmitted_bytes += static_cast<uint32_t>(len);
+        {
+            std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+            tcp_status_.transmitted_bytes += static_cast<uint32_t>(len);
+        }
         return true;
     }
 
@@ -1309,6 +1316,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     WifiTcpStatus tcpStatus() const override
     {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         return tcp_status_;
     }
 
@@ -1672,14 +1680,21 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         return tcp_rx_buffer_ != nullptr;
     }
 
-    void reset_tcp_rx()
+    // Caller holds tcp_rx_mutex_: metadata and storage publish atomically to
+    // readers and status snapshots, including EOF and Wi-Fi reset paths.
+    void clear_tcp_rx_locked()
     {
-        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         tcp_rx_head_ = 0;
         tcp_rx_tail_ = 0;
         tcp_rx_size_ = 0;
         tcp_status_.buffered_bytes = 0;
         tcp_rx_buffer_.reset();
+    }
+
+    void reset_tcp_rx()
+    {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+        clear_tcp_rx_locked();
     }
 
     void set_tcp_state(WifiTcpState state, uint16_t error_code, const char* detail)
@@ -1696,12 +1711,13 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     void reset_tcp_state(WifiTcpState state, const char* detail)
     {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         const uint8_t connection_id = tcp_status_.connection_id;
         tcp_status_ = WifiTcpStatus{};
         tcp_status_.state = state;
         tcp_status_.connection_id = connection_id;
         tcp_status_.detail = detail;
-        reset_tcp_rx();
+        clear_tcp_rx_locked();
     }
 
     bool append_tcp_rx(const uint8_t* data, size_t len)
@@ -2279,7 +2295,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
     uint8_t next_tcp_connection_id_ = 1;
     std::recursive_mutex receive_owner_mutex_{};
     std::mutex send_mutex_{};
-    std::mutex tcp_rx_mutex_{};
+    mutable std::mutex tcp_rx_mutex_{};
     std::array<uint8_t, kC6RxStreamCapacity> frame_rx_stream_{};
     size_t frame_rx_stream_size_ = 0;
     uint32_t frame_rx_resync_count_ = 0;
