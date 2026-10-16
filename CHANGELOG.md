@@ -77,6 +77,7 @@ to publish, without requiring a website account.
 
 ### Memory and reliability
 
+- Native ESP-IDF P4 and C6 builds embed the selected firmware version explicitly. Packaging checks the application descriptor in the actual binary, rejecting a release-named file whose embedded version differs.
 - Route calculation accepts existing `/routes` and `/routes/navigation` directories instead of interpreting SdFat's exclusive mkdir failure as unavailable storage. Regular files at either path remain errors; the production-worker regression now uses the same existing-directory semantics.
 - Native route SD writes extend gaps in bounded 256-byte steps before seeking, matching exFAT's rejection of seeks beyond EOF. This supports reverse leg-spool output and aligned archive pages without a route-sized RAM buffer. Navigation prefers current integrated map packages over older standalone graph directories and logs failed map/route I/O operations with offsets.
 - Saved-route display retries transient SD contention during LVGL open/read/seek/tell instead of reporting damaged files. Dense viewport limits preserve the open archive and recover after zoom; actual read failures still report operation/offset diagnostics.

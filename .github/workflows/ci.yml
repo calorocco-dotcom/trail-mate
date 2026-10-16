@@ -581,6 +581,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify IDF application version validation
+        run: python3 -m unittest discover -s tests -p test_idf_image_version.py
+
       - name: Configure P4 product contract tests
         run: |
           cmake -S apps/esp32_lvgl -B build.p4-contract -G Ninja -DBUILD_TESTING=ON
@@ -696,7 +699,11 @@ jobs:
         run: |
           source "${IDF_PATH}/export.sh"
           idf.py -C firmware/c6_companion \
-            -B "${GITHUB_WORKSPACE}/firmware/c6_companion/build.c6_companion" build
+            -B "${GITHUB_WORKSPACE}/firmware/c6_companion/build.c6_companion" \
+            -D "PROJECT_VER=${{ steps.version.outputs.version }}" build
+          python scripts/check_idf_app_version.py \
+            firmware/c6_companion/build.c6_companion/trail-mate-c6-companion.bin \
+            --version "${{ steps.version.outputs.version }}"
 
       - name: Report linked RAM allocation
         shell: bash
@@ -805,7 +812,10 @@ jobs:
         run: |
           source "${IDF_PATH}/export.sh"
           idf.py -B "${GITHUB_WORKSPACE}/build.${{ matrix.env }}" \
-            -D "TRAIL_MATE_IDF_TARGET=${{ matrix.env }}" build
+            -D "TRAIL_MATE_IDF_TARGET=${{ matrix.env }}" \
+            -D "PROJECT_VER=${{ steps.version.outputs.version }}" build
+          python scripts/check_idf_app_version.py "build.${{ matrix.env }}/trail-mate.bin" \
+            --version "${{ steps.version.outputs.version }}"
 
       - name: Report linked RAM allocation
         shell: bash
