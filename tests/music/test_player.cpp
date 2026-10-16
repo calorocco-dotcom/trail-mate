@@ -37,9 +37,26 @@ struct Output : music::AudioOutput
 struct Images : music::ImageLoader
 {
     unsigned decodes = 0;
-    music::Artwork* decode(music::Reader&, const music::Track&, uint16_t, bool (*)(void*), void*, music::CoverResult& result) override
+    music::Player* player = nullptr;
+    bool draw = false, advance = false;
+    music::Artwork* decode(music::Reader&, const music::Track& track, uint16_t, bool (*pump)(void*), void* context, music::CoverResult& result) override
     {
         ++decodes;
+        if (draw)
+        {
+            const auto id = track.id;
+            auto* art = music::make_artwork(id, 4, 4);
+            for (unsigned i = 0; advance && i < 512 && player->state.current.id == id; ++i)
+                if (!pump(context))
+                {
+                    art->drop();
+                    result = music::CoverResult::Cancelled;
+                    return nullptr;
+                }
+            if (advance) assert(player->state.current.id != id);
+            result = music::CoverResult::Ready;
+            return art;
+        }
         result = music::CoverResult::Missing;
         return nullptr;
     }
@@ -131,6 +148,23 @@ int main(int argc, char** argv)
     reopened->restore_resume(*saved);
     assert(reopened->state.current.id == saved->current.id && reopened->state.playback == music::Playback::Paused);
     music::destroy(reopened);
+    // Cover decoding cooperates with audio. EOF must cancel that operation
+    // before queue selection reenters the catalog. The next ordinary tick
+    // advances the queue and loads the new cover.
+    request.action = music::Action::SetPlayMode;
+    request.value = 0;
+    assert(player->command(request));
+    request.action = music::Action::TogglePause;
+    assert(player->command(request));
+    const auto before_cover = player->state.current.id;
+    images.player = player;
+    images.draw = images.advance = true;
+    player->request_artwork(96);
+    player->tick();
+    assert(player->state.current.id == before_cover && !player->artwork());
+    images.advance = false;
+    player->tick();
+    assert(player->state.current.id != before_cover && player->artwork() && player->artwork()->track_id == player->state.current.id);
     ++storage.media_session;
     reopened = music::make<music::Player>(storage, output, images);
     reopened->restore_resume(*saved);
