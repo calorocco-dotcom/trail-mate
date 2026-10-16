@@ -75,6 +75,11 @@ to publish, without requiring a website account.
 - Supported workflows use standalone device controls, browser USB and Center; Meshtastic/MeshCore Bluetooth companion-app connections are not advertised as supported.
 - Privacy descriptions distinguish private local records from voluntarily public coordinates, routes, time and author-linked metadata. Independent services avoid requiring one central account operator, but recipients can retain and analyse public data.
 
+### Fixed
+
+- Pager encoder focus and keyboard routing across app pages and widget controls, focus preservation during refresh and track changes, repeated Enter/click handling, nested Preview Help, and launcher Help consuming the advertised V shortcut. Help now uses one titled, closable style with visible switching hints.
+- Music output status handling on Pager, L2 codec gain and playback buffering, late widget metadata, CJK content fonts and RGB565 cover colours. A bounded 256 KiB PSRAM PCM queue and a separate output worker give playback more headroom during UI work; remaining physical playback testing is target-specific.
+
 ### Memory and reliability
 
 - Native ESP-IDF P4 and C6 builds embed the selected firmware version explicitly. Packaging checks the application descriptor in the actual binary, rejecting a release-named file whose embedded version differs.
@@ -116,8 +121,6 @@ to publish, without requiring a website account.
 
 ### Fixed
 
-- Pager encoder focus and keyboard routing across app pages and widget controls, focus preservation during refresh and track changes, repeated Enter/click handling, nested Preview Help, and launcher Help consuming the advertised V shortcut. Help now uses one titled, closable style with visible switching hints.
-- Music output status handling on Pager, L2 codec gain and playback buffering, late widget metadata, CJK content fonts and RGB565 cover colours. A bounded 256 KiB PSRAM PCM queue and a separate output worker give playback more headroom during UI work; remaining physical playback testing is target-specific.
 - Keep Geocaching rows stable during unrelated operations and query progress, and skip completed tasks during publication recovery.
 - Allow removed local caches to be downloaded again while protecting modified GPX files and safely resuming history cleanup.
 - Preserve current Geocaching indexes during checkpoint rebuilds and upgrade legacy local indexes during idle maintenance after writable recovery.
