@@ -421,10 +421,10 @@ void update()
 {
     auto& self = *state();
     char time[32];
-    std::snprintf(time, sizeof(time), "%u:%02u", self.snapshot.position_ms / 60000, (self.snapshot.position_ms / 1000) % 60);
+    std::snprintf(time, sizeof(time), "%u:%02u", static_cast<unsigned>(self.snapshot.position_ms / 60000), static_cast<unsigned>((self.snapshot.position_ms / 1000) % 60));
     changed(self.elapsed, time);
     if (self.snapshot.current.duration_ms)
-        std::snprintf(time, sizeof(time), "%s%u:%02u", self.snapshot.current.estimated_duration ? "~" : "", self.snapshot.current.duration_ms / 60000, (self.snapshot.current.duration_ms / 1000) % 60);
+        std::snprintf(time, sizeof(time), "%s%u:%02u", self.snapshot.current.estimated_duration ? "~" : "", static_cast<unsigned>(self.snapshot.current.duration_ms / 60000), static_cast<unsigned>((self.snapshot.current.duration_ms / 1000) % 60));
     else std::snprintf(time, sizeof(time), "--:--");
     changed(self.duration, time);
     changed(self.mode, ui::i18n::tr(self.snapshot.mode == ::music::PlayMode::RepeatOne ? "Repeat one" : self.snapshot.mode == ::music::PlayMode::Shuffle ? "Shuffle"
@@ -442,7 +442,7 @@ void update()
         const uint32_t offset = details ? self.snapshot.metadata.offset : self.snapshot.offset;
         const uint32_t total = details ? self.snapshot.metadata.total : self.snapshot.total;
         const uint32_t size = details ? ::music::kMetadataRows : self.visible_rows;
-        std::snprintf(time, sizeof(time), "%u / %u", offset / size + 1, std::max<uint32_t>(1, (total + size - 1) / size));
+        std::snprintf(time, sizeof(time), "%u / %u", static_cast<unsigned>(offset / size + 1), static_cast<unsigned>(std::max<uint32_t>(1, (total + size - 1) / size)));
         changed(self.page_number, time);
     }
     if (self.notice)
@@ -452,7 +452,7 @@ void update()
         else
         {
             char caption[160];
-            std::snprintf(caption, sizeof(caption), "%s  |  %u", self.snapshot.category[0] ? self.snapshot.category : ui::i18n::tr(browse_name(self.snapshot.browse)), self.snapshot.total);
+            std::snprintf(caption, sizeof(caption), "%s  |  %u", self.snapshot.category[0] ? self.snapshot.category : ui::i18n::tr(browse_name(self.snapshot.browse)), static_cast<unsigned>(self.snapshot.total));
             changed(self.notice, caption);
         }
     }

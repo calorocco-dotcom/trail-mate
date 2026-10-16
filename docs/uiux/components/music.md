@@ -115,6 +115,11 @@ focus and playback policy tests. Its device-controls target compiles the actual
 production coordinator against observable hardware/configuration ports. The
 native LVGL suites cover all five panels, seek/artwork geometry, mode cycling,
 playlist creation, widget teardown, Enter routing and slider gesture ownership.
+The production ESP service is also run with a deterministic task scheduler and
+observable PSRAM/SD/audio ports. It verifies lazy task creation, idle volume,
+hidden-pause cleanup and a UI card-change snapshot interleaved with worker
+restore. That regression fails before the saved-record ownership transfer and
+passes afterward; storage work remains outside the publication mutex.
 Preview screenshots use explicit deterministic fixtures; they are not evidence
 of physical audio quality, bus timing, PSRAM peaks or real-device latency.
 

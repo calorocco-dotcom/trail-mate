@@ -163,6 +163,9 @@ set(TRAIL_MATE_LINUX_COMMON_SOURCES
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/map_diagnostics.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/hostlink_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/lora_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/agenda_widget_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/music_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/quick_controls_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/resource_lock.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/orientation_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/pack_repository_runtime.cpp"
@@ -394,6 +397,10 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/startup_shell.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/watch_face.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_compass_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_agenda_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_music_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_controls_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/assets/music.c"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_gps_widget.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_mesh_widget.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_recent_widget.cpp"
@@ -590,6 +597,7 @@ set(TRAIL_MATE_LINUX_COMMON_INCLUDES
 )
 
 set(TRAIL_MATE_LINUX_UI_SHELL_INCLUDES
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_agenda/include"
     "${TRAIL_MATE_REPO_ROOT}/modules/core_music/include"
     "${TRAIL_MATE_LINUX_COMMON_INCLUDE_ROOT}"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}"

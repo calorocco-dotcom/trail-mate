@@ -42,9 +42,9 @@ export function configurationPresentation(key,locale){
   const fields={...configBasicFieldText(locale),...configPositionFieldText(locale)},numbers=new Intl.NumberFormat(locale);
   return {...presentation,names:{gps:fields.gps,map:fields.map,route:fields.route},fields,index:value=>numbers.format(value)};
  }
- if(!/^(device|wifi|rt|mt|mc|protocol|policy|channel|network|mt_ble|mc_ble|mt_module|schema|document|legacy)\./.test(key))return presentation;
+ if(!/^(device|wifi|radio|rt|mt|mc|protocol|policy|channel|network|mt_ble|mc_ble|mt_module|schema|document|legacy)\./.test(key))return presentation;
  const basic={...configBasicFieldText(locale),...configReferenceFieldText(locale),...configRadioFieldText(locale),...configChannelFieldText(locale)},numbers=new Intl.NumberFormat(locale);
- const names={device:basic.device,profile:basic.profile,group:basic.group,policy:basic.policy,protocol:basic.protocol,channel:basic.channel,mqtt:basic.mqtt,base:basic.base,...Object.fromEntries(['network','mt_ble','mc_ble','mt_module','schema','document','legacy','chunk'].map(name=>[name,basic[name]]))};
+ const names={device:basic.device,profile:basic.profile,group:basic.group,policy:basic.policy,protocol:basic.protocol,channel:basic.channel,mqtt:basic.mqtt,base:basic.base,radio:basic.base,...Object.fromEntries(['network','mt_ble','mc_ble','mt_module','schema','document','legacy','chunk'].map(name=>[name,basic[name]]))};
  const fields=key.startsWith('rt.net.')?{...basic,...configNetworkFieldText(locale)}:basic;
  if(key.startsWith('rt.net.'))Object.assign(names,{net:fields.network,interface:fields.interface,propagation:fields.propagation});
  return {...presentation,names,fields,index:value=>numbers.format(value)};

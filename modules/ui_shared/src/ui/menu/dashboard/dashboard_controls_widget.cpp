@@ -62,7 +62,7 @@ void refresh_controls(void* context)
         else lv_obj_add_state(self.sliders[i], LV_STATE_DISABLED);
         if (!lv_obj_has_state(self.sliders[i], LV_STATE_PRESSED)) lv_slider_set_value(self.sliders[i], value, LV_ANIM_OFF);
         char percent[16];
-        std::snprintf(percent, sizeof(percent), enabled ? "%u%%" : "--", lv_slider_get_value(self.sliders[i]));
+        std::snprintf(percent, sizeof(percent), enabled ? "%u%%" : "--", static_cast<unsigned>(lv_slider_get_value(self.sliders[i])));
         changed(self.values[i], percent);
     }
     self.applying = false;

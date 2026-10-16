@@ -176,6 +176,7 @@ class Service final : public ::music::IService
     void run()
     {
         Runtime* runtime = nullptr;
+        ::music::ResumeState* saved = nullptr;
         {
             // start_locked holds this mutex through xTaskCreate's handle publication.
             Lock lock(*this);
@@ -187,8 +188,16 @@ class Service final : public ::music::IService
                 finish_locked();
                 return;
             }
+            // Transfer ownership before restore performs SD I/O. A concurrent
+            // UI snapshot may invalidate its own saved session after a card change.
+            if (resume_ && runtime->player.state.current.id == 0)
+            {
+                saved = resume_;
+                resume_ = nullptr;
+            }
         }
-        if (resume_ && runtime->player.state.current.id == 0) runtime->player.restore_resume(*resume_);
+        if (saved) runtime->player.restore_resume(*saved);
+        ::music::destroy(saved);
         runtime->player.state.volume = volume_.load();
         for (;;)
         {

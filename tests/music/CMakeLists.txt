@@ -64,3 +64,18 @@ endforeach()
 foreach(TARGET music_decoder music_playback_policy music_lyrics music_catalog music_playlists music_player)
     target_include_directories(${TARGET} PRIVATE "${REPO}/modules/core_sys/include")
 endforeach()
+add_executable(music_runtime test_runtime.cpp
+    "${REPO}/platform/esp/common/src/music/music_runtime.cpp"
+    "${REPO}/modules/core_music/src/player.cpp" "${REPO}/modules/core_music/src/playlists.cpp"
+    "${REPO}/modules/core_music/src/catalog.cpp" "${REPO}/modules/core_music/src/storage.cpp"
+    "${REPO}/modules/core_music/src/decoder.cpp" "${REPO}/modules/core_music/src/lyrics.cpp"
+    "${REPO}/modules/core_music/src/id3.cpp"
+    "${REPO}/modules/core_sys/src/platform/audio/audio_focus.cpp"
+    "${REPO}/modules/core_sys/src/platform/audio/media_volume.cpp"
+    "${REPO}/platform/linux/common/src/platform/resource_lock.cpp")
+target_include_directories(music_runtime PRIVATE runtime_fakes .
+    "${REPO}/modules/core_music/include" "${REPO}/modules/music_image/include"
+    "${REPO}/modules/core_sys/include")
+target_compile_definitions(music_runtime PRIVATE ESP_PLATFORM=1 TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4=1)
+target_compile_options(music_runtime PRIVATE -UNDEBUG -O2)
+add_test(NAME music_runtime COMMAND music_runtime "${REPO}/docs/sound/call.mp3")
