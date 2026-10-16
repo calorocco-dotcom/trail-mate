@@ -1176,6 +1176,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     bool openTcp(const char* host, uint16_t port) override
     {
+        std::lock_guard<std::recursive_mutex> receive_owner(receive_owner_mutex_);
         if (!host || host[0] == '\0' || std::strlen(host) >= TM_C6_WIFI_TCP_HOST_LEN || port == 0)
         {
             set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_INTERNAL, "invalid_endpoint");
@@ -1274,10 +1275,13 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     void closeTcp() override
     {
+        std::lock_guard<std::recursive_mutex> receive_owner(receive_owner_mutex_);
+        // An explicit close abandons the response immediately. Remote EOF,
+        // handled separately below, still preserves unread response bytes.
+        reset_tcp_rx();
         if (tcp_status_.state == WifiTcpState::Disconnected ||
             tcp_status_.state == WifiTcpState::Unsupported)
         {
-            reset_tcp_rx();
             return;
         }
 
@@ -2054,9 +2058,16 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
             switch (header.operation)
             {
             case TM_C6_WIFI_TCP_OPENED:
-                set_tcp_state(WifiTcpState::Connected, TM_C6_OK, "connected");
+                if (tcp_status_.state == WifiTcpState::Opening)
+                {
+                    set_tcp_state(WifiTcpState::Connected, TM_C6_OK, "connected");
+                }
                 break;
             case TM_C6_WIFI_TCP_DATA:
+                if (tcp_status_.state != WifiTcpState::Connected && tcp_status_.state != WifiTcpState::Opening)
+                {
+                    break;
+                }
                 if (!append_tcp_rx(frame.payload.data() + sizeof(header), data_len))
                 {
                     set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_QUEUE_FULL, "rx_overflow");

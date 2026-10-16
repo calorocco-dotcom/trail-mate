@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstring>
 #include <mutex>
+#include <vector>
 #if defined(_WIN32) && !defined(_GLIBCXX_HAS_GTHREADS)
 namespace std
 {
@@ -13,6 +14,9 @@ struct mutex
 {
     void lock() {}
     void unlock() {}
+};
+struct recursive_mutex : mutex
+{
 };
 } // namespace std
 #endif
@@ -24,6 +28,7 @@ struct Tcp : WifiTcpTransport
     WifiTcpStatus tcp_status_{};
     uint8_t next_tcp_connection_id_ = 1;
     std::mutex tcp_rx_mutex_{};
+    std::recursive_mutex receive_owner_mutex_{};
     using TcpRxBuffer = std::array<uint8_t, kWifiTcpRxBufferSize>;
     platform::memory::PsramPtr<TcpRxBuffer> tcp_rx_buffer_{};
     size_t tcp_rx_head_ = 0, tcp_rx_tail_ = 0, tcp_rx_size_ = 0;
@@ -40,6 +45,17 @@ struct Tcp : WifiTcpTransport
     WifiTcpStatus tcpStatus() const override { return tcp_status_; }
 #include "c6_tcp_api.inc"
 #include "c6_tcp_buffer.inc"
+    void event(uint8_t operation, size_t data_len = 0)
+    {
+        tm_c6_wifi_tcp_header_t header{};
+        header.operation = operation;
+        struct
+        {
+            std::vector<uint8_t> payload;
+        } frame;
+        frame.payload.resize(sizeof(header) + data_len);
+#include "c6_tcp_events.inc"
+    }
     Tcp()
     {
         status_.started = status_.present = status_.wifi_connected = true;
@@ -84,4 +100,16 @@ int main()
     assert(tcp.openTcp("example.org", 443));
     tcp.reset_tcp_state(WifiTcpState::Disconnected, "wifi_disconnected");
     assert(live_bytes == 0 && tcp.tcp_status_.buffered_bytes == 0);
+    assert(tcp.openTcp("example.org", 443));
+    tcp.event(TM_C6_WIFI_TCP_OPENED);
+    tcp.event(TM_C6_WIFI_TCP_DATA, 20);
+    assert(tcp.tcp_status_.buffered_bytes == 20);
+    tcp.closeTcp();
+    assert(live_bytes == 0 && tcp.tcp_status_.state == WifiTcpState::Closing);
+    const auto sends = tcp.sends;
+    tcp.event(TM_C6_WIFI_TCP_OPENED); // A delayed OPENED cannot resurrect a locally closed session.
+    tcp.event(TM_C6_WIFI_TCP_DATA, 20);
+    assert(live_bytes == 0 && tcp.sends == sends && tcp.tcp_status_.state == WifiTcpState::Closing);
+    tcp.event(TM_C6_WIFI_TCP_CLOSED);
+    assert(live_bytes == 0 && tcp.tcp_status_.state == WifiTcpState::Disconnected);
 }
