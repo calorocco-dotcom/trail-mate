@@ -51,6 +51,7 @@ if(AGENDA_FONT_BINARY AND AGENDA_FONT_CHARSET)
     add_test(NAME agenda_font_binary COMMAND agenda_font_binary_test "${AGENDA_FONT_BINARY}" "${AGENDA_FONT_CHARSET}")
 endif()
 add_executable(agenda_ui_test
+    menu_widget_stub.cpp
     map_preview_stub.cpp
     test_agenda_ui.cpp test_support.cpp popup_test_support.cpp test_map_flow.cpp test_font_scope.cpp test_interruption_flow.cpp test_touch_agenda.cpp
     "${REPO_ROOT}/apps/esp32_lvgl/tests/agenda/test_target_root.cpp"

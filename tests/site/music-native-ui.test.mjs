@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {join} from 'node:path';
+import {framePng} from './native-frame-png.mjs';
+const boards=[['pager',480,222],['tdeck',320,240],['wio-tracker-l2',320,240],['t-display-p4-tft',1168,540],['t-display-p4-amoled',1232,568]];
+for(const [device,width,height] of boards.filter(([name])=>!process.env.MUSIC_UI_DEVICES||process.env.MUSIC_UI_DEVICES.split(',').includes(name))){
+ const base=new URL(`../../site/assets/native/${device}`,import.meta.url);
+ const {default:create}=await import(`${base}.js`);
+ const data=await readFile(new URL(`${base}.data`));let runtime,frame;
+ runtime=await create({wasmBinary:await readFile(new URL(`${base}.wasm`)),getPreloadedPackage(){return data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength);},
+  onFrame(ptr,w,h){assert.equal(w,width);assert.equal(h,height);frame=Buffer.from(runtime.HEAPU8.subarray(ptr,ptr+w*h*2));},print(){},printErr:console.error});
+ const tick=()=>{for(let i=0;i<5;i++)runtime._native_tick(50);};
+ const snapshot=()=>JSON.parse(runtime.UTF8ToString(runtime._native_snapshot()));
+ const click=text=>{const item=snapshot().find(item=>item.button&&item.text===text);assert.ok(item,`${device}: ${text}`);runtime._native_activate(item.id);tick();};
+ const capture=async name=>{if(!process.env.MUSIC_UI_ARTIFACT_DIR)return;const dir=join(process.env.MUSIC_UI_ARTIFACT_DIR,device);await mkdir(dir,{recursive:true});await writeFile(join(dir,`${name}.png`),framePng(frame,width,height));await writeFile(join(dir,`${name}.json`),JSON.stringify(snapshot(),null,2));};
+ runtime._native_init(device==='pager'?0:1);runtime._native_preview_music_playing(0);runtime._native_open_page(19);tick();
+ assert.ok(snapshot().some(item=>item.text==='After the rain'),'idle entry opens library');await capture('library');
+ click('After the rain');assert.ok(snapshot().some(item=>item.text==='Pause'));
+ assert.equal(runtime._native_music_geometry(),0,`${device}: artwork, progress knob and top/footer bars have separate bounds`);
+ click('Repeat all');assert.ok(snapshot().some(item=>item.text==='Repeat one'));
+ click('Repeat one');assert.ok(snapshot().some(item=>item.text==='Shuffle'));
+ click('Shuffle');assert.ok(snapshot().some(item=>item.text==='Repeat all'));
+ await capture('now-playing');
+ click('Pause');assert.ok(snapshot().some(item=>item.text==='Paused'));
+ assert.equal(runtime._native_music_geometry(),0,`${device}: paused status clears the progress knob and time labels`);
+ await capture('paused');
+ runtime._native_preview_music_playing(2);tick();tick();
+ assert.ok(snapshot().some(item=>item.text.startsWith('Paused for')),'interrupted status remains readable when elided');
+ assert.equal(runtime._native_music_geometry(),0,`${device}: interrupted status clears the progress knob and time labels`);
+ await capture('interrupted');
+ runtime._native_preview_music_playing(1);tick();tick();
+ click('Lyrics');assert.ok(snapshot().some(item=>item.text==='We take the quiet way home'));await capture('lyrics');
+ click('\uf053');click('Menu');click('Track info');await capture('metadata');assert.ok(snapshot().some(item=>item.text==='Aster'));
+ click('\uf053');click('Library');click('Browse');click('Playlists');await capture('playlists');
+ click('Browse');click('New playlist');await capture('new-playlist');
+ const editor=snapshot().find(item=>item.input);assert.ok(editor);
+ runtime.ccall('native_set_text',null,['number','string'],[editor.id,'Ridge walk']);click('Create');
+ assert.ok(snapshot().some(item=>item.text==='Ridge walk'),'user playlist creation');
+ runtime._native_open_page(11);runtime._native_open_page(19);tick();
+ assert.ok(snapshot().some(item=>item.text==='Now Playing'),'active session re-entry opens now playing');
+ console.log(`${device}: music entry routing, library, playback, lyrics, metadata and playlist creation passed.`);
+}

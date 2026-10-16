@@ -11,8 +11,13 @@ import {Identity} from '../../site/node_modules/@reticulum/core/src/index.js';
 import {locales} from '../../site/i18n/registry.js';
 import {deviceRecordText} from '../../site/i18n/device-record-labels.js';
 import {trackDirectoryText} from '../../site/i18n/track-directory-labels.js';
+import {kmlActionText} from '../../site/i18n/kml-action-labels.js';
+import {authorProofMessage} from '../../site/device/src/author-identity.js';
 const directoryIdentity=await Identity.generate(),directoryPublic=await directoryIdentity.getPublicKey();
 const directoryDelivery=await Identity.truncatedHash(Uint8Array.from([...(await Identity.fullHash(new TextEncoder().encode('lxmf.delivery'))).slice(0,10),...directoryIdentity.identityHash]));
+const authorIdentity=await Identity.generate(),authorPublic=await authorIdentity.getPublicKey();
+const authorDelivery=await Identity.truncatedHash(Uint8Array.from([...(await Identity.fullHash(new TextEncoder().encode('lxmf.delivery'))).slice(0,10),...authorIdentity.identityHash]));
+const authorInfo=[authorPublic,authorIdentity.identityHash,authorDelivery,7];
 let directoryReady=false,directoryEpoch=new Uint8Array(16).fill(8),directoryBad=false;
 const discoveryRequests=[];
 const root=process.cwd(),server=http.createServer(async(req,res)=>{try{let pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);if(pathname.endsWith('/'))pathname+='index.html';const filename=path.resolve(root,'.'+pathname);if(!filename.startsWith(root+path.sep))throw Error('path');const contents=await fs.readFile(filename);res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml','.webp':'image/webp','.woff2':'font/woff2','.ttf':'font/ttf'})[path.extname(filename)]??'application/octet-stream');res.end(contents);}catch{res.writeHead(404).end();}});
@@ -31,6 +36,8 @@ await page.exposeFunction('trackDeviceReply',async raw=>{
  if(frame.type===FRAME.HELLO)return [...encodeFrame(FRAME.HELLO_ACK,frame.sequence,new Uint8Array([1,0,0,2,0,4,0,0,6,...new TextEncoder().encode('T-Deck'),4,...new TextEncoder().encode('test')]))];
  assert.equal(frame.type,FRAME.MANAGEMENT_REQUEST);++managementCalls;const request=decodeManagement(frame.payload);let body,status=0;
  if(request.code===0)body=badCapabilities?[0]:[1,512,320,1,support?(snapshots?[0,1,2,32,33,35,80,81,82,86,87,88,89,90]:[0,1,2,32,33,35,80,82,89,90]):[0],7];
+ else if(request.code===1)body=authorInfo;
+ else if(request.code===2){assert.equal(request.body[1],7);body=[...authorInfo,await authorIdentity.sign(authorProofMessage(request.session,request.body[0],authorPublic,7))];}
  else if(request.code===90){assert.equal(request.body.length,1);assert.equal(request.body[0].length,16);discoveryRequests.push([...request.body[0]]);body=[];}
  else if(request.code===89){if(holdDirectory){directoryWaiting=true;await new Promise(resolve=>resumeDirectory=resolve);directoryWaiting=false;}body=[null,[[directoryBad?new Uint8Array(16).fill(7):directoryDelivery,directoryPublic,directoryEpoch,'林间目录',directoryReady?1:0,directoryReady?8388608:0,directoryReady?1024:0,directoryReady?32:0]]];}
  else if(request.code===80){catalogCalls++;const cursor=request.body[0];if(cursor&&cursor[0]!==media){status=4;body=[];}else{const index=cursor?cursor[1]/32-3:0;body=index===0&&media===1?nativeBody:index<records.length?[media,(index+4)*32,records[index]]:[media,null,null];}}
@@ -55,7 +62,10 @@ try{
  for(const locale of locales){const text=deviceRecordText(locale.id);await page.locator('.management-language select').selectOption(locale.id);await page.getByRole('button',{name:text.refresh,exact:true}).waitFor();await page.getByText(text.listMore,{exact:true}).waitFor();assert.deepEqual(await page.locator('.device-record-row strong').allTextContents(),listNames);assert.equal(managementCalls,listCalls);assert.equal(await page.evaluate(()=>trackPortCloses),portCloses);}
  await page.locator('.management-language select').selectOption('zh-Hans');
  assert.equal(await page.locator('.tracks-row').count(),0,'Device records entered browser draft list');
- await page.getByRole('region',{name:'电脑网络',exact:true}).waitFor();await page.getByLabel('WSS 连接地址',{exact:true}).waitFor();
+ await page.getByRole('region',{name:'电脑网络',exact:true}).waitFor();
+ await page.locator('.track-network-advanced > summary').click();
+ await page.getByLabel('WSS 连接地址',{exact:true}).waitFor();
+ await page.locator('.track-network-advanced > summary').click();
  assert.equal(await page.getByRole('button',{name:'刷新轨迹目录',exact:true}).count(),0);assert.equal(discoveryRequests.length,0);assert.equal(managementCalls,listCalls);
  await page.evaluate(()=>{scrollTo(0,0);document.querySelector('.sidebar').scrollTop=0;});
  await page.screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/assets/implemented-track-directories-wide.png',fullPage:true});
@@ -88,6 +98,9 @@ try{
  await page.screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/assets/implemented-device-track-import.png',fullPage:true});
  slowBuild=true;allowDiscard=false;await page.getByRole('button',{name:'导入设备记录 import.gpx',exact:true}).click();await page.getByRole('button',{name:'取消设备记录导入',exact:true}).waitFor();await page.getByLabel('要素名称',{exact:true}).fill('读取时的新编辑');slowBuild=false;
  await page.getByText('未导入设备记录，请查看工作台提示。',{exact:true}).waitFor();assert.equal(await page.locator('.tracks-row').count(),1);assert.equal(await page.getByLabel('要素名称',{exact:true}).inputValue(),'读取时的新编辑');allowDiscard=true;
+ assert.equal(await page.getByRole('button',{name:'导入设备记录 import.gpx',exact:true}).isDisabled(),true);
+ await page.getByRole('button',{name:'保存浏览器草稿',exact:true}).click();
+ await page.getByText(kmlActionText('zh-Hans').saved,{exact:true}).waitFor();
  slowBuild=true;await page.getByRole('button',{name:'导入设备记录 import.gpx',exact:true}).click();await page.getByRole('button',{name:'取消设备记录导入',exact:true}).waitFor();await page.getByRole('button',{name:'取消设备记录导入',exact:true}).click();await page.getByText('已取消设备记录导入。',{exact:true}).waitFor();assert.equal(cancelCalls,1);assert.equal(await page.locator('.tracks-row').count(),1);
  slowBuild=false;badHash=true;await page.getByRole('button',{name:'导入设备记录 import.gpx',exact:true}).click();await page.getByText('设备轨迹快照哈希不匹配',{exact:true}).waitFor();assert.equal(await page.locator('.tracks-row').count(),1);badHash=false;
  await page.waitForFunction(()=>document.querySelector('[aria-label="导入设备记录 import.gpx"]')?.disabled===false);assert.equal(releaseCalls,3);

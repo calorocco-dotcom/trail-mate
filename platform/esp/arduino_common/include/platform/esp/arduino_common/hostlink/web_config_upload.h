@@ -145,6 +145,38 @@ inline Status reconcileCommittedDraft(Metadata& meta, const uint8_t* author, uin
     return Status::Conflict;
 }
 
+// Reconnect can lose the old browser session while retaining the exact edit.
+// Rebind only a draft already tied to this author generation and draft version;
+// never truncate its candidate or replace an in-progress save.
+inline Status resumeBoundDraft(Metadata& meta, const Metadata& requested, uint8_t* scratch, size_t capacity)
+{
+    namespace runtime = platform::esp::arduino_common::geocaching::browse_runtime;
+    if (capacity < 448) return Status::Internal;
+    auto* adapter = app::hasAppFacade() ? app::messagingFacade().getMeshAdapter() : nullptr;
+    if (!adapter) return Status::Busy;
+    uint32_t generation = 0;
+    const auto author = adapter->readDeviceAuthorKey(scratch + 384, generation);
+    if (author == chat::DeviceAuthorResult::StorageError) return Status::StorageUnavailable;
+    if (author != chat::DeviceAuthorResult::Ok) return Status::Busy;
+    if (!generation || generation != u32(meta.base_hash + 24)) return Status::StaleIdentity;
+    uint64_t expected = 0;
+    for (unsigned i = 0; i < 8; ++i) expected |= static_cast<uint64_t>(meta.base_hash[16 + i]) << (8 * i);
+    const auto result = runtime::checkWebDraftEditOwner(meta.base_hash, expected, scratch + 384, meta.hash);
+    if (result == runtime::WebReadResult::AlreadySaved) meta.phase = 4;
+    else if (result == runtime::WebReadResult::Ready)
+    {
+        if (!runtime::releaseWebDraftSave()) return Status::Busy;
+        meta.phase = 2;
+    }
+    else if (result == runtime::WebReadResult::Pending) return Status::Busy;
+    else if (result == runtime::WebReadResult::Forbidden) return Status::Unauthorized;
+    else if (result == runtime::WebReadResult::Unavailable) return Status::StorageUnavailable;
+    else return Status::Conflict;
+    std::memcpy(meta.owner, requested.owner, 16);
+    std::memcpy(meta.id, requested.id, 16);
+    return save(meta, scratch) ? Status::Ok : Status::StorageUnavailable;
+}
+
 // Opt-in operation 38 [5,null]. The generation below is the current proved
 // author generation, not an inferred generation of legacy upload metadata.
 // Returns only sealed unsigned input belonging to that public author. Does not
@@ -289,6 +321,13 @@ inline Status process(const EnvelopeView& request, uint8_t* scratch, size_t capa
     const bool exists = load(current, scratch);
     if (op == Operation::TransferBegin)
     {
+        if (exists && current.kind == 2 && requested.kind == 2 && current.phase >= 2 && current.phase < 4 &&
+            current.total == requested.total && !std::memcmp(current.hash, requested.hash, 32) &&
+            (std::memcmp(current.owner, requested.owner, 16) || std::memcmp(current.id, requested.id, 16)))
+        {
+            const auto resumed = resumeBoundDraft(current, requested, scratch, capacity);
+            if (resumed != Status::Ok) return resumed;
+        }
         if (exists && current.kind == 2 && current.phase == 3 && std::memcmp(current.id, requested.id, 16))
         {
             if (capacity < 448) return Status::Internal;

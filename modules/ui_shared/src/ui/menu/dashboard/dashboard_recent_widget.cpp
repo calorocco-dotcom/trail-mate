@@ -1,5 +1,6 @@
 #include "ui/menu/dashboard/dashboard_widgets.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -8,7 +9,7 @@
 #include "chat/domain/chat_types.h"
 #include "chat/usecase/chat_service.h"
 #include "ui/localization.h"
-#include "ui/menu/dashboard/dashboard_state.h"
+#include "ui/menu/dashboard/dashboard_style.h"
 
 #if !defined(LV_FONT_MONTSERRAT_12) || !LV_FONT_MONTSERRAT_12
 #define lv_font_montserrat_12 lv_font_montserrat_14
@@ -19,7 +20,35 @@ namespace ui::menu::dashboard
 namespace
 {
 
+struct RecentWidgetUi : WidgetLifetime
+{
+    DashboardCardChrome chrome{};
+    lv_obj_t* rows[2]{};
+    lv_obj_t* row_dots[2]{};
+    lv_obj_t* row_names[2]{};
+    lv_obj_t* row_previews[2]{};
+    std::array<char, 256> row_name_text[2]{};
+    std::array<char, 1024> row_preview_text[2]{};
+    lv_obj_t* row_badges[2]{};
+    lv_obj_t* row_badge_labels[2]{};
+    lv_obj_t* scan_track = nullptr;
+    lv_obj_t* scan_runner = nullptr;
+    lv_obj_t* footer_label = nullptr;
+};
+
 constexpr size_t kVisibleRows = 2;
+
+template <size_t N>
+void set_recent_text(lv_obj_t* label, std::array<char, N>& cached, const char* text)
+{
+    // DOT mode temporarily modifies LVGL's text buffer. Compare the full source
+    // instead, otherwise an unchanged elided label is redrawn every second.
+    if (label != nullptr && text != nullptr && std::strcmp(cached.data(), text) != 0)
+    {
+        std::snprintf(cached.data(), cached.size(), "%s", text);
+        ::ui::i18n::set_label_text_raw(label, text);
+    }
+}
 
 void set_label_text_if_changed_raw(lv_obj_t* label, const char* text)
 {
@@ -48,24 +77,19 @@ void set_label_text_if_changed(lv_obj_t* label, const char* english)
     }
 }
 
-std::string trim_text(const std::string& text, size_t max_len)
-{
-    if (text.size() <= max_len)
-    {
-        return text;
-    }
-    return text.substr(0, max_len - 1) + "...";
-}
-
 } // namespace
 
-void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
+void refresh_recent_widget(void* context);
+
+WidgetHandle create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
 {
-    auto& recent = dashboard_state().recent;
+    auto* memory = create_widget_state<RecentWidgetUi>();
+    if (!memory) return {};
+    auto& recent = *memory;
     recent.chrome = create_card_chrome(parent, ::ui::i18n::tr("Recent Activity"), card_w, card_h);
 
-    const lv_coord_t body_w = lv_obj_get_width(recent.chrome.body);
-    const lv_coord_t body_h = lv_obj_get_height(recent.chrome.body);
+    const lv_coord_t body_w = lv_obj_get_content_width(recent.chrome.body);
+    const lv_coord_t body_h = lv_obj_get_content_height(recent.chrome.body);
     const lv_coord_t gap = 6;
     const lv_coord_t row_h = std::max<lv_coord_t>(26, (body_h - gap) / static_cast<lv_coord_t>(kVisibleRows));
 
@@ -96,14 +120,16 @@ void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h
         style_body_label(recent.row_names[i], &lv_font_montserrat_12, color_text());
         lv_obj_set_width(recent.row_names[i], static_cast<lv_coord_t>(body_w - 80));
         lv_obj_align(recent.row_names[i], LV_ALIGN_TOP_LEFT, 18, 1);
-        lv_label_set_long_mode(recent.row_names[i], LV_LABEL_LONG_CLIP);
-        ::ui::i18n::set_label_text_raw(recent.row_names[i], "--");
+        lv_label_set_long_mode(recent.row_names[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_height(recent.row_names[i], lv_font_get_line_height(&lv_font_montserrat_12));
+        ::ui::i18n::set_label_text_raw(recent.row_names[i], "");
 
         recent.row_previews[i] = lv_label_create(recent.rows[i]);
         style_body_label(recent.row_previews[i], &lv_font_montserrat_12, color_text_dim());
         lv_obj_set_width(recent.row_previews[i], static_cast<lv_coord_t>(body_w - 80));
         lv_obj_align(recent.row_previews[i], LV_ALIGN_BOTTOM_LEFT, 18, -1);
-        lv_label_set_long_mode(recent.row_previews[i], LV_LABEL_LONG_CLIP);
+        lv_label_set_long_mode(recent.row_previews[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_height(recent.row_previews[i], (body_h < 132 ? 1 : 2) * lv_font_get_line_height(&lv_font_montserrat_12));
         ::ui::i18n::set_label_text_raw(recent.row_previews[i], "");
 
         recent.row_badges[i] = lv_obj_create(recent.rows[i]);
@@ -144,11 +170,12 @@ void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h
     style_footer_label(recent.footer_label);
     lv_obj_align(recent.footer_label, LV_ALIGN_RIGHT_MID, 0, 0);
     ::ui::i18n::set_label_text(recent.footer_label, "no recent traffic");
+    return own_widget(recent.chrome.card, memory, refresh_recent_widget, 2000);
 }
 
-void refresh_recent_widget()
+void refresh_recent_widget(void* context)
 {
-    auto& recent = dashboard_state().recent;
+    auto& recent = *static_cast<RecentWidgetUi*>(context);
     if (recent.chrome.card == nullptr)
     {
         return;
@@ -167,10 +194,10 @@ void refresh_recent_widget()
         if (i < conversations.size())
         {
             const auto& conv = conversations[i];
-            const std::string name = trim_text(conv.name, 16);
-            const std::string preview = trim_text(conv.preview.empty() ? std::string(::ui::i18n::tr("No preview")) : conv.preview, 28);
-            set_label_text_if_changed_raw(recent.row_names[i], name.c_str());
-            set_label_text_if_changed_raw(recent.row_previews[i], preview.c_str());
+            // Let LVGL elide at a UTF-8 character boundary using actual pixels.
+            // Byte-count substrings can split a localized name or message.
+            set_recent_text(recent.row_names[i], recent.row_name_text[i], conv.name.c_str());
+            set_recent_text(recent.row_previews[i], recent.row_preview_text[i], conv.preview.empty() ? ::ui::i18n::tr("No preview") : conv.preview.c_str());
             lv_obj_set_style_bg_color(recent.row_dots[i], conv.unread > 0 ? color_warn() : color_info(), 0);
 
             if (conv.unread > 0)
@@ -187,8 +214,8 @@ void refresh_recent_widget()
         }
         else
         {
-            set_label_text_if_changed(recent.row_names[i], i == 0 ? "No recent traffic" : "");
-            set_label_text_if_changed(recent.row_previews[i], i == 0 ? "Messages and broadcasts show here" : "");
+            set_recent_text(recent.row_names[i], recent.row_name_text[i], i == 0 ? ::ui::i18n::tr("No recent traffic") : "");
+            set_recent_text(recent.row_previews[i], recent.row_preview_text[i], i == 0 ? ::ui::i18n::tr("Messages and broadcasts show here") : "");
             lv_obj_add_flag(recent.row_badges[i], LV_OBJ_FLAG_HIDDEN);
             lv_obj_set_style_bg_color(recent.row_dots[i], color_line(), 0);
         }

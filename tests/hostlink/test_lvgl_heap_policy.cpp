@@ -50,11 +50,7 @@ int main()
     {
         attempts = 0;
         auto* result = lv_malloc_core(size);
-#ifdef ARDUINO_WIO_TRACKER_L2
         assert(result == &external_token && attempted[0] == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-#else
-        assert(result == (size >= 2048 ? &external_token : &internal_token));
-#endif
         assert(attempts == 1);
     }
     attempts = 0;

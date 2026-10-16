@@ -15,6 +15,7 @@
                                 "-I../../modules/core_sys/include",
                                 "-I../../modules/core_chat/include",
                                 "-I../../modules/core_gps/include",
+                                "-I../../modules/core_music/include",
                                 "-I../../modules/core_team/include",
                                 "-I../../modules/ui_presentation/include",
                                 "-I../../modules/chat_presentation_adapters/include",
@@ -29,6 +30,7 @@
                             ]
               },
     "dependencies":  [
+                         { "name": "core_music" },
                          {
                              "name":  "chat_presentation_adapters"
                          },

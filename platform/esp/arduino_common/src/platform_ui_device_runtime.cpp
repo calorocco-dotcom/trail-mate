@@ -1,5 +1,6 @@
 #include "platform/ui/device_runtime.h"
 
+#include "platform/audio/media_volume.h"
 #include <cstring>
 
 #include "board/BoardBase.h"
@@ -172,6 +173,7 @@ uint8_t default_message_tone_volume()
 void set_message_tone_volume(uint8_t volume_percent)
 {
     board.setMessageToneVolume(volume_percent);
+    ::platform::audio::publish_media_volume(volume_percent);
 }
 
 void play_message_tone()

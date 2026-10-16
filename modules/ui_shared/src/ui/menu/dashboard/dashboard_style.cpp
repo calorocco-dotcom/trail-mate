@@ -129,6 +129,9 @@ DashboardCardChrome create_card_chrome(lv_obj_t* parent,
     lv_obj_set_style_pad_bottom(chrome.footer, 5, 0);
     lv_obj_clear_flag(chrome.footer, LV_OBJ_FLAG_SCROLLABLE);
 
+    // All widgets derive their dial/stat geometry immediately after this call.
+    // LVGL percentage dimensions are deferred until layout is resolved.
+    lv_obj_update_layout(chrome.card);
     return chrome;
 }
 

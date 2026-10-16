@@ -51,6 +51,8 @@ struct RuntimeState
     std::mutex mutex;
     HeadingState data{};
     bool started = false;
+    bool pinned = false;
+    uint32_t consumers = 0;
     bool sensor_ready = false;
     uint32_t retry_backoff_ms = 1000;
     uint32_t next_retry_ms = 0;
@@ -184,6 +186,7 @@ bool initialize_sensor()
         std::lock_guard<std::mutex> lock(g_runtime.mutex);
         g_runtime.sensor_ready = true;
         g_runtime.data.sensor_ready = true;
+        g_runtime.data.last_update_ms = now_ms();
     }
     ESP_LOGI(kTag, "ICM20948 + AK09916 ready on external I2C");
     return true;
@@ -196,7 +199,7 @@ bool ensure_sensor_ready()
         return true;
     }
     const uint32_t now = now_ms();
-    if (g_runtime.next_retry_ms != 0 && now < g_runtime.next_retry_ms)
+    if (g_runtime.next_retry_ms != 0 && static_cast<int32_t>(now - g_runtime.next_retry_ms) < 0)
     {
         return false;
     }
@@ -213,12 +216,14 @@ bool ensure_sensor_ready()
 
 bool sample_once()
 {
-    uint8_t sample[8] = {};
+    // ST1, X/Y/Z, temperature and ST2 occupy 0x10..0x18. Reading ST2
+    // terminates the AK09916 data read and releases its measurement latch.
+    uint8_t sample[9] = {};
     if (!read_registers(g_runtime.magnetometer, kAkStatus1, sample, sizeof(sample)))
     {
         return false;
     }
-    if ((sample[0] & 0x01U) == 0 || (sample[7] & 0x08U) != 0)
+    if ((sample[0] & 0x01U) == 0 || (sample[8] & 0x08U) != 0)
     {
         return false;
     }
@@ -256,17 +261,66 @@ void mark_stale_if_needed()
 {
     std::lock_guard<std::mutex> lock(g_runtime.mutex);
     g_runtime.data.sensor_ready = g_runtime.sensor_ready;
-    if (g_runtime.data.available &&
-        now_ms() - g_runtime.data.last_update_ms > kStaleAfterMs)
+    if (now_ms() - g_runtime.data.last_update_ms > kStaleAfterMs)
     {
         g_runtime.data.available = false;
+        // An unplugged or reset sensor must be probed again. Otherwise the
+        // cached readiness bit prevents recovery for the rest of the session.
+        g_runtime.sensor_ready = false;
+        g_runtime.data.sensor_ready = false;
     }
+}
+
+void stop_sensor()
+{
+    // These device handles belong exclusively to the heading driver. Leave
+    // the external 3V3 rail available to GNSS, radio, keyboard and expansion.
+    if (g_runtime.magnetometer)
+    {
+        (void)write_register(g_runtime.magnetometer, kAkControl2, 0);
+        (void)i2c_master_bus_rm_device(g_runtime.magnetometer);
+        g_runtime.magnetometer = nullptr;
+    }
+    if (g_runtime.icm)
+    {
+        (void)select_bank(0);
+        (void)write_register(g_runtime.icm, kPowerManagement1, 0x40);
+        (void)i2c_master_bus_rm_device(g_runtime.icm);
+        g_runtime.icm = nullptr;
+    }
+    std::lock_guard<std::mutex> lock(g_runtime.mutex);
+    g_runtime.sensor_ready = false;
+    g_runtime.data = {};
+    g_runtime.next_retry_ms = 0;
+    g_runtime.retry_backoff_ms = 1000;
 }
 
 void task_main(void*)
 {
     while (true)
     {
+        bool wanted = false;
+        {
+            std::lock_guard<std::mutex> lock(g_runtime.mutex);
+            wanted = g_runtime.pinned || g_runtime.consumers;
+        }
+        if (!wanted)
+        {
+            stop_sensor();
+            bool exiting = false;
+            {
+                std::lock_guard<std::mutex> lock(g_runtime.mutex);
+                // Re-entering during cleanup reuses this task and reprobes.
+                exiting = !g_runtime.pinned && !g_runtime.consumers;
+                if (exiting)
+                {
+                    g_runtime.task = nullptr;
+                    g_runtime.started = false;
+                }
+            }
+            if (exiting) break;
+            continue;
+        }
         if (ensure_sensor_ready())
         {
             if (!sample_once())
@@ -285,24 +339,48 @@ void task_main(void*)
         }
         vTaskDelay(pdMS_TO_TICKS(kSampleIntervalMs));
     }
+    vTaskDelete(nullptr);
 }
 
 } // namespace
 
 void ensure_started()
 {
+    // Compatibility for a permanent non-widget consumer. Widget users must
+    // use acquire/release so leaving a page does not retain this worker.
+    {
+        std::lock_guard<std::mutex> lock(g_runtime.mutex);
+        if (g_runtime.pinned) return;
+        g_runtime.pinned = true;
+    }
+    (void)acquire();
+}
+
+bool acquire()
+{
     std::lock_guard<std::mutex> lock(g_runtime.mutex);
+    ++g_runtime.consumers;
     if (g_runtime.started)
     {
-        return;
+        return true;
     }
     g_runtime.started = true;
     if (xTaskCreate(task_main, "p4_heading", 4096, nullptr, 3, &g_runtime.task) != pdPASS)
     {
         g_runtime.started = false;
         g_runtime.task = nullptr;
+        --g_runtime.consumers;
+        g_runtime.pinned = false;
         ESP_LOGE(kTag, "Failed to create heading task");
+        return false;
     }
+    return true;
+}
+
+void release()
+{
+    std::lock_guard<std::mutex> lock(g_runtime.mutex);
+    if (g_runtime.consumers) --g_runtime.consumers;
 }
 
 HeadingState get_data()
@@ -319,6 +397,8 @@ namespace boards::t_display_p4::heading_runtime
 {
 
 void ensure_started() {}
+bool acquire() { return false; }
+void release() {}
 
 HeadingState get_data()
 {

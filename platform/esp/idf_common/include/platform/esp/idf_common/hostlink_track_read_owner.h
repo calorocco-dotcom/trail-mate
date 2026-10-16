@@ -8,8 +8,8 @@
 #include "track_sharing/read_query_binding.h"
 #include "track_sharing/read_response_sink.h"
 #include "track_sharing/read_response_validator.h"
-#include <esp_heap_caps.h>
 #include <atomic>
+#include <esp_heap_caps.h>
 #include <new>
 
 namespace hostlink::management::track_read_runtime
@@ -87,11 +87,11 @@ class TrackReadOwner
         else if (operation_ == 1) encoded = track_sharing::encodeTrackReadQuery({request_, 16}, query_, 8192, workspace_, sizeof(workspace_), bytes);
         else if (operation_ == 2) encoded = track_sharing::encodeTrackReadManifest({request_, 16}, expected_.object, expected_.revision, 8192, workspace_, sizeof(workspace_), bytes);
         else if (operation_ == 8) encoded = track_sharing::encodeTrackReadFile({request_, 16}, expected_.file_hash, expected_.offset, expected_.length, 8192, workspace_, sizeof(workspace_), bytes);
-        else if (operation_ == 9) encoded = track_sharing::encodeRegionCapabilities({request_,16},8192,workspace_,sizeof(workspace_),bytes);
-        else if (operation_ == 10) encoded = track_sharing::encodeRegionChildren({request_,16},regional_scope_.version,track_sharing::regionBytes(regional_scope_.parent),track_sharing::regionBytes(regional_scope_.after),query_.limit,8192,workspace_,sizeof(workspace_),bytes);
-        else if (operation_ == 11) encoded = track_sharing::encodeRegionDescriptor({request_,16},track_sharing::regionBytes(regional_scope_.id),regional_scope_.version,8192,workspace_,sizeof(workspace_),bytes);
-        else if (operation_ == 12) encoded = track_sharing::encodeRegionBoundaryChunk({request_,16},track_sharing::regionBytes(regional_scope_.id),regional_scope_.version,expected_.offset,expected_.length,8192,workspace_,sizeof(workspace_),bytes);
-        else if (operation_ == 13) encoded = track_sharing::encodeRegionQuery({request_,16},track_sharing::regionBytes(regional_scope_.id),regional_scope_.version,query_,8192,workspace_,sizeof(workspace_),bytes);
+        else if (operation_ == 9) encoded = track_sharing::encodeRegionCapabilities({request_, 16}, 8192, workspace_, sizeof(workspace_), bytes);
+        else if (operation_ == 10) encoded = track_sharing::encodeRegionChildren({request_, 16}, regional_scope_.version, track_sharing::regionBytes(regional_scope_.parent), track_sharing::regionBytes(regional_scope_.after), query_.limit, 8192, workspace_, sizeof(workspace_), bytes);
+        else if (operation_ == 11) encoded = track_sharing::encodeRegionDescriptor({request_, 16}, track_sharing::regionBytes(regional_scope_.id), regional_scope_.version, 8192, workspace_, sizeof(workspace_), bytes);
+        else if (operation_ == 12) encoded = track_sharing::encodeRegionBoundaryChunk({request_, 16}, track_sharing::regionBytes(regional_scope_.id), regional_scope_.version, expected_.offset, expected_.length, 8192, workspace_, sizeof(workspace_), bytes);
+        else if (operation_ == 13) encoded = track_sharing::encodeRegionQuery({request_, 16}, track_sharing::regionBytes(regional_scope_.id), regional_scope_.version, query_, 8192, workspace_, sizeof(workspace_), bytes);
         if (!encoded || bytes > 320) return chat::TrackBindingChange::Conflict;
         return exchange_.attach(operation_, {request_, 16}, {directory_.delivery, 16}, {local_, 16}, {workspace_, bytes}, 8192, now, previous);
     }
@@ -180,8 +180,8 @@ class TrackReadOwner
             }
             else if (query_.west < -1800000000 || query_.west > 1799999999 || query_.east < -1800000000 || query_.east > 1799999999 ||
                      query_.south < -900000000 || query_.north > 900000000 || query_.south > query_.north ||
-                     !deriveRegionQueryBinding(regionBytes(regional_scope_.id),regional_scope_.version,query_,hash_,workspace_,sizeof(workspace_),query_binding_)) return false;
-            if (query_.has_cursor && std::memcmp(query_.cursor_binding.data,query_binding_,32)) return false;
+                     !deriveRegionQueryBinding(regionBytes(regional_scope_.id), regional_scope_.version, query_, hash_, workspace_, sizeof(workspace_), query_binding_)) return false;
+            if (query_.has_cursor && std::memcmp(query_.cursor_binding.data, query_binding_, 32)) return false;
             expected_.query = &query_;
             expected_.query_binding = {query_binding_, 32};
         }
@@ -229,20 +229,20 @@ class TrackReadOwner
     bool copyRegionScope(const track_sharing::RegionReadScope& input)
     {
         using namespace track_sharing;
-        if (!regionNamespace(input.name_space) || input.depth > 8 || !copy(input.version,reference_+32,32,regional_scope_.version)) return false;
-        const auto text = [](std::string_view source,char* target,size_t capacity,std::string_view& output)
+        if (!regionNamespace(input.name_space) || input.depth > 8 || !copy(input.version, reference_ + 32, 32, regional_scope_.version)) return false;
+        const auto text = [](std::string_view source, char* target, size_t capacity, std::string_view& output)
         {
             if (source.size() > capacity || (source.size() && !source.data())) return false;
-            if (source.size()) std::memcpy(target,source.data(),source.size());
-            output = {target,source.size()};
+            if (source.size()) std::memcpy(target, source.data(), source.size());
+            output = {target, source.size()};
             return true;
         };
-        if (!text(input.name_space,regional_text_,24,regional_scope_.name_space) || !text(input.id,regional_text_+24,89,regional_scope_.id) ||
-            !text(input.parent,regional_text_+113,89,regional_scope_.parent) || !text(input.after,regional_text_+202,89,regional_scope_.after) ||
+        if (!text(input.name_space, regional_text_, 24, regional_scope_.name_space) || !text(input.id, regional_text_ + 24, 89, regional_scope_.id) ||
+            !text(input.parent, regional_text_ + 113, 89, regional_scope_.parent) || !text(input.after, regional_text_ + 202, 89, regional_scope_.after) ||
             !regionVersion(regional_scope_.version) ||
-            (!regional_scope_.id.empty() && !regionInNamespace(regional_scope_.id,regional_scope_.name_space)) ||
-            (!regional_scope_.parent.empty() && !regionInNamespace(regional_scope_.parent,regional_scope_.name_space)) ||
-            (!regional_scope_.after.empty() && !regionInNamespace(regional_scope_.after,regional_scope_.name_space)) ||
+            (!regional_scope_.id.empty() && !regionInNamespace(regional_scope_.id, regional_scope_.name_space)) ||
+            (!regional_scope_.parent.empty() && !regionInNamespace(regional_scope_.parent, regional_scope_.name_space)) ||
+            (!regional_scope_.after.empty() && !regionInNamespace(regional_scope_.after, regional_scope_.name_space)) ||
             (operation_ != 10 && regional_scope_.id.empty())) return false;
         regional_scope_.depth = input.depth;
         regional_scope_.parent_level = input.parent_level;

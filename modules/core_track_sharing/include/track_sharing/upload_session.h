@@ -25,7 +25,7 @@ class UploadSession
     }
     bool authorize(const uint8_t* session, uint32_t media, uint64_t now)
     {
-        if (!matches(session,media,now)) return false;
+        if (!matches(session, media, now)) return false;
         touched_ = now;
         return true;
     }

@@ -147,7 +147,7 @@ inline bool release()
     if (!owner) return true;
     // Do not hold the pool flag while taking the router lock. Successful unbind
     // waits for the current callback before its PSRAM context can be destroyed.
-    const auto removed = owner->adapter.replaceTrackDelivery(&owner->binding,nullptr);
+    const auto removed = owner->adapter.replaceTrackDelivery(&owner->binding, nullptr);
     if (removed != chat::TrackBindingChange::Applied && removed != chat::TrackBindingChange::Conflict) return false;
     owner->~Owner();
     heap_caps_free(owner);
@@ -174,11 +174,13 @@ inline chat::TrackBindingChange handover(chat::IMeshAdapter& adapter, const chat
 {
     if (!replacement || !replacement->handler || !replacement->expected_local_author || !replacement->expected_author_generation ||
         (owner && &owner->adapter != &adapter)) return chat::TrackBindingChange::Conflict;
-    const auto changed = adapter.replaceTrackDelivery(owner ? &owner->binding : nullptr,replacement);
+    const auto changed = adapter.replaceTrackDelivery(owner ? &owner->binding : nullptr, replacement);
     if (changed != chat::TrackBindingChange::Applied) return changed;
     if (owner)
     {
-        owner->~Owner();heap_caps_free(owner);owner=nullptr;
+        owner->~Owner();
+        heap_caps_free(owner);
+        owner = nullptr;
     }
     return changed;
 }
@@ -212,7 +214,7 @@ inline Status list(chat::IMeshAdapter& adapter, const EnvelopeView& request, uin
         void* memory = heap_caps_malloc(sizeof(Owner), caps);
         if (!memory) return Status::Busy;
         auto* created = new (memory) Owner(adapter, request.session, now);
-        const auto bound = adapter.replaceTrackDelivery(nullptr,&created->binding);
+        const auto bound = adapter.replaceTrackDelivery(nullptr, &created->binding);
         if (bound != chat::TrackBindingChange::Applied)
         {
             created->~Owner();

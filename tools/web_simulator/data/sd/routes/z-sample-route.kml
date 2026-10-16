@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Second sample trail</name><Placemark><name>Return trail</name><LineString><coordinates>121.4920,31.2440,980 121.4890,31.2420,940 121.4850,31.2390,905</coordinates></LineString></Placemark></Document></kml>

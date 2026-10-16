@@ -199,8 +199,10 @@ int main(int argc, char** argv)
     assert(contains(gps_runtime, "show_team_overlay_notice"));
     assert(contains(gps_runtime, "route_context_available"));
     assert(contains(gps_runtime, "config.route_enabled && config.route_path[0] != '\\0'"));
-    assert(contains(gps_runtime, "load_team_snapshot(team_snapshot) && !team_snapshot.members.empty()"));
-    assert(contains(gps_runtime, "create_member_button(member)"));
+    assert(contains(gps_runtime, "void open_map_menu("));
+    assert(contains(gps_runtime, "s_map_popup.init("));
+    assert(contains(gps_runtime, "load_team_snapshot(snapshot)"));
+    assert(contains(gps_runtime, "create_member_button(member, panel)"));
     assert(contains(gps_runtime, "select_member(member_id)"));
     assert(contains(gps_runtime, "lv_obj_align(s_map_notice_panel, LV_ALIGN_TOP_LEFT"));
     assert(contains(gps_runtime, "lv_obj_set_style_bg_opa(s_map_notice_panel, LV_OPA_70"));
@@ -250,8 +252,11 @@ int main(int argc, char** argv)
     assert(contains(gps_runtime, "lv_async_call(refresh_view_async, nullptr)"));
     assert(contains(gps_runtime, "request_open_map_help_modal"));
     assert(contains(gps_runtime, "lv_async_call(open_map_help_modal_async, nullptr)"));
-    assert(contains(gps_runtime, "lv_obj_add_flag(s_map_help_modal, LV_OBJ_FLAG_IGNORE_LAYOUT)"));
-    assert(contains(gps_runtime, "lv_label_set_text(title, \"Map Help\")"));
+    const std::string dialog_frame = read_file(
+        repo_root / "modules/ui_shared/src/ui/components/dialog_frame.cpp");
+    assert(contains(dialog_frame, "lv_obj_add_flag(frame.overlay, LV_OBJ_FLAG_IGNORE_LAYOUT)"));
+    assert(contains(gps_runtime, "::ui::components::dialog_frame::create(s_root,"));
+    assert(contains(gps_runtime, "{\"Map Help\", 304, 216"));
     assert(contains(gps_runtime, "add_help_row(\"WASD\", nullptr, \"Move map\")"));
     assert(contains(gps_runtime, "add_help_row(\"Q\", \"E\", \"Zoom map\")"));
     assert(contains(gps_runtime, "add_help_row(\"C\", \"Pos\", \"Center current position\")"));
@@ -263,7 +268,7 @@ int main(int argc, char** argv)
     assert(contains(gps_runtime, "add_help_row(\"O\", \"Ctr\", \"Toggle contour overlay\")"));
     assert(contains(gps_runtime, "add_help_row(\"Route\", nullptr, \"Shown when route active\")"));
     assert(contains(gps_runtime, "add_help_row(\"Members\", nullptr, \"Shown when team active\")"));
-    assert(contains(gps_runtime, "add_help_row(help_key_label(), \"Back\", \"Close help\")"));
+    assert(contains(gps_runtime, "add_help_row(\"X/H\", \"Back\", \"Close help\")"));
     assert(not_contains(gps_runtime, "\"Topo\""));
     assert(contains(gps_runtime, "case 't':"));
     assert(contains(gps_runtime, "case 'T':"));

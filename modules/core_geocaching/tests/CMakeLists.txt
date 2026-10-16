@@ -463,6 +463,7 @@ add_test(NAME geocaching_legacy_saved_object_index COMMAND geocaching_browse_run
 add_test(NAME geocaching_web_stop COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-stop)
 add_test(NAME geocaching_web_signed_stop COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-signed-stop)
 add_test(NAME geocaching_web_signature_restored COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-signature-restored)
+add_test(NAME geocaching_web_signature_busy COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures web-signature-busy)
 add_test(NAME geocaching_signature_input_recovery COMMAND geocaching_browse_runtime_test ${CMAKE_CURRENT_SOURCE_DIR}/fixtures signature-input-recovery)
 
 add_executable(geocaching_local_map_test test_local_map_overlay.cpp)
@@ -471,7 +472,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GPS_RUNTIME}")
 file(READ "${GPS_RUNTIME}" GPS_RUNTIME_SOURCE)
 string(FIND "${GPS_RUNTIME_SOURCE}" "void keep_only_current_position_overlay(" FILTER_START)
 string(SUBSTRING "${GPS_RUNTIME_SOURCE}" ${FILTER_START} -1 FILTER_TAIL)
-string(FIND "${FILTER_TAIL}" "bool load_map_track_file_impl(" FILTER_LENGTH)
+# Stop before the independent track-overlay cleanup helper; only the cache
+# visibility filter belongs in this isolated compilation contract.
+string(FIND "${FILTER_TAIL}" "void clear_map_track_overlay(" FILTER_LENGTH)
 string(SUBSTRING "${FILTER_TAIL}" 0 ${FILTER_LENGTH} MAP_FILTER)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/geocaching_map_filter.inc" "${MAP_FILTER}")
 target_include_directories(geocaching_local_map_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

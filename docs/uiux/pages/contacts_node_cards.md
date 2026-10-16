@@ -1,44 +1,50 @@
-# Contacts 节点卡片
+# Contacts Node Cards
 
-## 目标
+Contacts, Nearby / Announced and Ignored reuse one node card with previous/next
+navigation. Broadcast, Discover, Groups and Team retain their existing actions.
+The card emphasizes the node name, approximate administrative area and distance;
+full identities and coordinates remain available in Node Info.
 
-Contacts、Nearby／Announced、Ignored 保留现有左侧分类。右侧复用单张节点卡片，
-按完整协议身份切换节点。Broadcast、Discover、Groups、Team 保留各自操作语义。
-卡片以名称、粗略行政区和距本机直线距离为主；完整身份、坐标和其他地理信息
-进入既有 Node Info。缺少坐标不能显示零距离。
+## Data and lifecycle
 
-## 数据与生命周期
+The browsing index stores full protocol identity, a node ID hint and last activity
+time. MeshCore retains its full 32-byte public key and Reticulum retains its full
+16-byte destination hash. Abbreviated display text never becomes a lookup or
+action identity. Only the selected peer is hydrated through `ContactService::readPeer`;
+search and enumeration do not copy complete directory projections.
 
-浏览索引只保存身份字节、协议、节点提示 ID、最近活动时间。MC 保存完整 32
-字节公钥，RT 保存完整 16 字节目标哈希；缩略文本不能用于查找、验证或发送。
-只水合当前节点，避免调用建立全量展示缓存的旧 getPeerByNodeId。
-刷新按身份保持选择，不以排序后数组位置代替身份。目录暂不可用时保留当前卡片。
-搜索在枚举记录时匹配名称、别名和身份，不复制完整搜索结果对象。
-详情／操作菜单打开期间冻结卡片选择，避免执行动作时对象变化。
+Keep selection by identity when the directory refreshes and retain the current
+card during temporary unavailability. Freeze its target while details or an
+action menu are open. Keyboard, encoder, touch and existing page shortcuts use
+the same card selection.
 
-## 展示
+## Location presentation
 
-- MT 显示短节点 ID；MC 显示公钥摘要；RT 显示目标哈希摘要。
-- 节点名称优先使用用户别名和协议名称，过长时省略。
-- 行政区显示近似标记及短路径，不能把附近 POI 归属描述成精确边界查询。
-- 双方坐标有效且范围合法时计算球面直线距离；近距离用米，其他用千米。
-- 最近消息时间不代表位置时间。超过一小时的已知位置时间提示旧位置。
-- MT／MC 只显示实际可用的链路摘要，RT 显示实际身份验证状态。
-- T-Deck、Wio L2 使用 320×240，Pager 使用 480×222；左侧分类保持当前设备规格。
+The card calls the common `platform::ui::map_search::submitRegion` and `pollRegion`
+ports, also used by Tracker and Geocaching. Their TMAP implementation and
+`tmap/administrative_path.h` are independent of all three pages. Do not put a
+reverse-geocoding algorithm or region database in a screen.
 
-## 行政区查询
+Mark an inferred area with `~`, retain complete hierarchy segments and avoid
+splitting UTF-8 text. The compact card uses the final two available segments.
+An approximate area inferred from nearby POIs is not an exact administrative
+boundary lookup. Display an unknown area when map data lacks useful metadata.
 
-复用 TMAP 搜索任务的 PSRAM 工作区。行政区查询只保留 4 个附近 POI 结果，
-不创建名称搜索所用的额外 64 KiB 读缓存；结果缓冲在查询模式切换时调整容量。
-单包最多访问 256 个候选、枚举最多 256 个包；候选中心距离不超过 30 km。
-只使用实际包含行政区路径且不标记歧义的结果，按完整路径段取共同上级。
-没有行政区数据的旧包明确显示未知。后台查询不访问 LVGL，结果必须匹配请求版本。
-距离计算不依赖行政区查询完成。本机没有定位时仍可显示节点行政区。
+Distance needs valid node and local coordinates. Display meters for nearby
+nodes and kilometers otherwise; missing positions must not appear as zero
+distance. Region lookup does not require the local device to have a GNSS fix.
+Position age comes from its timestamp, not from the last message time. Mark a
+known position older than one hour as stale.
 
-## 验证与完成条件
+## Resource use and verification
 
-契约测试覆盖三协议完整身份、按需读取不枚举目录、名称／身份搜索、暂不可用，
-以及路径分歧、层级缺失和 UTF-8 完整段。真实 LVGL 验证覆盖卡片控件复用、
-布局、键盘／编码器／触控、详情及模式切换。测量不同节点数量下导航索引、
-完整投影、控件数与峰值；设备内存数值必须来自实测，不能由主机 sizeof 代替。
-只接受 PlatformIO 进程明确退出的构建结果。
+Reuse the shared TMAP worker and its PSRAM workspace. Region lookup keeps four
+result projections and avoids the additional 64 KiB name-search cache. It does
+not create a worker for each page. Background work must not access LVGL, and
+results must match the request version.
+
+The peer-directory contract checks full identities, on-demand reads, filtering,
+search and unavailable-directory behavior. The real-LVGL view test checks layout,
+constant widget count during repeated card updates and button events at 320×240
+and 480×222. These are host checks; device memory and physical interaction need
+their own acceptance evidence.

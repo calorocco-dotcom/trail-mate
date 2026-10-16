@@ -1,9 +1,9 @@
 #pragma once
+#include "track_sharing/cancel_publication.h"
 #include "track_sharing/publication_reply_receiver.h"
 #include "track_sharing/publication_send_step.h"
 #include "track_sharing/request_retry_window.h"
 #include "track_sharing/upload_send_step.h"
-#include "track_sharing/cancel_publication.h"
 
 namespace track_sharing
 {
@@ -43,14 +43,14 @@ class PublicationNetworkSession
     const chat::lxmf::TrackDeliveryBinding& binding() const { return binding_; }
     bool directoryCurrent() const { return publish_.directoryCurrent(); }
     // Runtime invokes under the same serialization as inbound deliveries.
-    PublicationStoreResult cancel(uint32_t generation,geocaching::ByteView author_hash)
+    PublicationStoreResult cancel(uint32_t generation, geocaching::ByteView author_hash)
     {
-        if(!validBuffers() || !publicationManifestMatches(current_,manifest_) || !lease_.holds(current_))return PublicationStoreResult::Conflict;
-        const auto result=cancelPublicationBeforePublish(jobs_,current_,next_,verify_,generation,author_hash,scratch_,scratch_capacity_);
-        if(result==PublicationStoreResult::Ready || result==PublicationStoreResult::StorageFailure)pause();
+        if (!validBuffers() || !publicationManifestMatches(current_, manifest_) || !lease_.holds(current_)) return PublicationStoreResult::Conflict;
+        const auto result = cancelPublicationBeforePublish(jobs_, current_, next_, verify_, generation, author_hash, scratch_, scratch_capacity_);
+        if (result == PublicationStoreResult::Ready || result == PublicationStoreResult::StorageFailure) pause();
         return result;
     }
-    bool dispatchRejected(uint64_t now) { return publishing_ ? window_.dispatchRejected(publish_,now) : window_.dispatchRejected(upload_,now); }
+    bool dispatchRejected(uint64_t now) { return publishing_ ? window_.dispatchRejected(publish_, now) : window_.dispatchRejected(upload_, now); }
     NetworkSessionResult advance(uint64_t now)
     {
         if (!validBuffers()) return NetworkSessionResult::Invalid;
@@ -98,7 +98,7 @@ class PublicationNetworkSession
     }
     bool resume(uint64_t now)
     {
-        if(current_.phase==PublicationPhase::Cancelled || current_.phase==PublicationPhase::Failed || current_.phase==PublicationPhase::Confirmed)return false;
+        if (current_.phase == PublicationPhase::Cancelled || current_.phase == PublicationPhase::Failed || current_.phase == PublicationPhase::Confirmed) return false;
         if (window_.request().size)
         {
             if (!window_.resume(now)) return false;

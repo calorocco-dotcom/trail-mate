@@ -1,5 +1,6 @@
 #include "ui/menu/menu_layout.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include "esp_log.h"
 #endif
 
+#include "platform/ui/psram_ui_lease.h"
 #include "ui/app_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
 #include "ui/localization.h"
@@ -45,7 +47,7 @@ constexpr const char* kTag = "ui-menu-layout";
 #define MENU_LAYOUT_DIAG(...)
 #endif
 
-constexpr size_t kMaxMenuApps = 17;
+constexpr size_t kMaxMenuApps = 18;
 constexpr const char* kBottomHelpPlainPrefix = "H Help";
 constexpr const char* kBottomHelpRichPrefix = "#D6403A H#elp";
 
@@ -455,7 +457,29 @@ void menuButtonKeyCallback(lv_event_t* e)
         return;
     }
 
-    const uint32_t key = lv_event_get_key(e);
+    uint32_t key = lv_event_get_key(e);
+    if (ui::menu::dashboard::handleKey(key)) return;
+    switch (key)
+    {
+    case 'w':
+    case 'W':
+        key = LV_KEY_UP;
+        break;
+    case 'a':
+    case 'A':
+        key = LV_KEY_LEFT;
+        break;
+    case 's':
+    case 'S':
+        key = LV_KEY_DOWN;
+        break;
+    case 'd':
+    case 'D':
+        key = LV_KEY_RIGHT;
+        break;
+    default:
+        break;
+    }
     if (key != LV_KEY_LEFT && key != LV_KEY_RIGHT && key != LV_KEY_UP && key != LV_KEY_DOWN)
     {
         return;
@@ -489,6 +513,7 @@ void menuButtonKeyCallback(lv_event_t* e)
 
     if (next == nullptr)
     {
+        if (nav_key == LV_KEY_LEFT && ui::menu::dashboard::handleKey(nav_key, true)) return;
         if (nav_key == LV_KEY_LEFT || nav_key == LV_KEY_UP)
         {
             next = lastMenuButton();
@@ -507,6 +532,7 @@ void menuButtonKeyCallback(lv_event_t* e)
 
 void menuButtonClickCallback(lv_event_t* e)
 {
+    if (ui::menu::dashboard::isFeedOpen()) return;
     if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_app_panel == nullptr)
     {
         return;
@@ -552,8 +578,8 @@ void menuButtonClickCallback(lv_event_t* e)
 #if defined(ESP_PLATFORM)
     ESP_LOGI(kTag, "direct app enter target=%s", target_app ? target_app->name() : "(null)");
 #endif
-    ui_switch_to_app(target_app, s_app_panel);
     menuHidden();
+    ui_switch_to_app(target_app, s_app_panel);
 }
 
 void positionChatBadge(lv_obj_t* badge, lv_obj_t* icon)
@@ -622,6 +648,29 @@ void chatBadgeSizeChangedCallback(lv_event_t* event)
                       static_cast<lv_obj_t*>(lv_event_get_user_data(event)));
 }
 
+struct GridTracks
+{
+    lv_coord_t card_width;
+    lv_coord_t pad_left;
+    lv_coord_t pad_right;
+};
+
+GridTracks gridTracks(const ui::menu_profile::MenuLayoutProfile& profile, lv_coord_t width)
+{
+    if (!profile.wrap_grid) return {profile.card_width, profile.grid_pad_left, profile.grid_pad_right};
+    const lv_coord_t available = std::max<lv_coord_t>(profile.card_width,
+                                                      width - profile.grid_pad_left - profile.grid_pad_right);
+    int columns = std::max(1, static_cast<int>((available + profile.grid_pad_column) /
+                                               (profile.card_width + profile.grid_pad_column)));
+    if (profile.max_columns > 0) columns = std::min(columns, static_cast<int>(profile.max_columns));
+    const lv_coord_t usable = available - profile.grid_pad_column * (columns - 1);
+    const lv_coord_t remainder = usable % columns;
+    // Every row shares these tracks, including an incomplete last row. Split
+    // indivisible pixels between the outer edges instead of leaving a right gutter.
+    return {usable / columns, profile.grid_pad_left + remainder / 2,
+            profile.grid_pad_right + remainder - remainder / 2};
+}
+
 void createAppButton(lv_obj_t* parent, AppScreen* app, size_t idx)
 {
     const auto& profile = ui::menu_profile::current();
@@ -629,7 +678,7 @@ void createAppButton(lv_obj_t* parent, AppScreen* app, size_t idx)
     const lv_image_dsc_t* image = app ? app->icon() : nullptr;
 
     lv_obj_t* btn = lv_btn_create(parent);
-    const lv_coord_t width = profile.card_width;
+    const lv_coord_t width = gridTracks(profile, lv_obj_get_width(parent)).card_width;
     const lv_coord_t height = profile.card_height;
 
     lv_obj_set_size(btn, width, height);
@@ -641,8 +690,10 @@ void createAppButton(lv_obj_t* parent, AppScreen* app, size_t idx)
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_outline_width(btn, 0, 0);
     lv_obj_set_style_bg_color(btn, ui::theme::accent(), LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_FOCUSED);
     lv_obj_set_style_border_color(btn, ui::theme::border(), LV_STATE_FOCUSED);
     lv_obj_set_style_bg_color(btn, ui::theme::accent(), LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_border_color(btn, ui::theme::border(), LV_STATE_FOCUS_KEY);
 
     if (profile.transparent_cards)
@@ -665,6 +716,14 @@ void createAppButton(lv_obj_t* parent, AppScreen* app, size_t idx)
     {
         lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(btn, 0, 0);
+        for (const auto state : {LV_STATE_FOCUSED, LV_STATE_FOCUS_KEY})
+        {
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0xF6E7C5), state);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, state);
+            lv_obj_set_style_radius(btn, 9, state);
+            lv_obj_set_style_border_width(btn, 1, state);
+            lv_obj_set_style_border_color(btn, lv_color_hex(0xE7C98F), state);
+        }
     }
 
     lv_obj_t* icon = nullptr;
@@ -1115,16 +1174,24 @@ void createAppGrid()
             (profile.card_width * profile.max_columns) +
             (profile.grid_pad_column * (profile.max_columns - 1)));
     }
+    lv_coord_t grid_top = profile.grid_top_offset;
     lv_obj_set_size(panel, panel_width, LV_PCT(profile.grid_height_pct));
+    if (profile.variant == ui::menu_profile::LayoutVariant::CompactGrid)
+    {
+        const lv_coord_t screen_height = lv_display_get_vertical_resolution(nullptr);
+        const lv_coord_t available = screen_height - 2 * profile.grid_top_offset;
+        const lv_coord_t rows = std::max<lv_coord_t>(1, (available + profile.grid_pad_row) /
+                                                            (profile.card_height + profile.grid_pad_row));
+        const lv_coord_t height = rows * profile.card_height + (rows - 1) * profile.grid_pad_row;
+        lv_obj_set_height(panel, height);
+        grid_top = (screen_height - height) / 2;
+    }
     lv_obj_set_style_pad_row(panel, profile.grid_pad_row, 0);
     lv_obj_set_style_pad_column(panel, profile.grid_pad_column, 0);
-    if (profile.variant != ui::menu_profile::LayoutVariant::CompactGrid)
-    {
-        lv_obj_set_style_pad_top(panel, 0, 0);
-        lv_obj_set_style_pad_bottom(panel, 0, 0);
-        lv_obj_set_style_pad_left(panel, profile.grid_pad_left, 0);
-        lv_obj_set_style_pad_right(panel, profile.grid_pad_right, 0);
-    }
+    lv_obj_set_style_pad_top(panel, 0, 0);
+    lv_obj_set_style_pad_bottom(panel, 0, 0);
+    lv_obj_set_style_pad_left(panel, profile.grid_pad_left, 0);
+    lv_obj_set_style_pad_right(panel, profile.grid_pad_right, 0);
     lv_obj_set_scroll_dir(panel, profile.vertical_scroll ? LV_DIR_VER : LV_DIR_HOR);
     if (profile.wrap_grid)
     {
@@ -1148,13 +1215,18 @@ void createAppGrid()
     lv_obj_set_flex_flow(panel, profile.wrap_grid ? LV_FLEX_FLOW_ROW_WRAP : LV_FLEX_FLOW_ROW);
     if (profile.grid_anchor_top_left)
     {
-        lv_obj_align(panel, LV_ALIGN_TOP_LEFT, 0, profile.grid_top_offset);
+        lv_obj_align(panel, LV_ALIGN_TOP_LEFT, 0, grid_top);
     }
     else
     {
-        lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, profile.grid_top_offset);
+        lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, grid_top);
     }
     lv_obj_add_style(panel, &frameless_style, 0);
+
+    lv_obj_update_layout(panel);
+    const auto tracks = gridTracks(profile, lv_obj_get_width(panel));
+    lv_obj_set_style_pad_left(panel, tracks.pad_left, 0);
+    lv_obj_set_style_pad_right(panel, tracks.pad_right, 0);
 
     if (!createAppButtonsFromUxMenu(panel))
     {
@@ -1255,6 +1327,11 @@ void init(const InitOptions& options)
 
     s_init_options = options;
 
+#if defined(ARDUINO_T_DECK) || defined(ARDUINO_T_LORA_PAGER) || defined(ARDUINO_WIO_TRACKER_L2) || defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    // The unified grid's additional labels belong to external memory too.
+    platform::ui::PsramUiLease menu_memory;
+#endif
+
     menu_g = lv_group_create();
     app_g = lv_group_create();
     set_default_group(menu_g);
@@ -1300,8 +1377,9 @@ bool launchAppByStableId(const char* stable_id)
         }
 
         set_default_group(nullptr);
-        ui_switch_to_app(app, s_app_panel);
+        // Release widget subscriptions before the app attaches to a service.
         menuHidden();
+        ui_switch_to_app(app, s_app_panel);
         return ui_get_active_app() == app;
     }
     return false;

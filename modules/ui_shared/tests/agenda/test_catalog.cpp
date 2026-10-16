@@ -24,6 +24,7 @@ bool show_notice(const char*, uint32_t) { return true; }
     }
 STUB_PAGE(chat::ui::shell)
 STUB_PAGE(calculator::ui::shell)
+STUB_PAGE(ui::music_page)
 STUB_PAGE(geocaching::ui::shell)
 STUB_PAGE(gps::ui::shell)
 namespace gps::ui::shell
@@ -52,6 +53,7 @@ extern "C"
 #define STUB_ICON(name) extern const lv_image_dsc_t name = {}
     STUB_ICON(Chat);
     STUB_ICON(calc);
+    STUB_ICON(music);
     STUB_ICON(gps_icon);
     STUB_ICON(Satellite);
     STUB_ICON(contact);
@@ -80,12 +82,12 @@ int main()
     ui::app_catalog_builder::FeatureFlags flags;
     flags.include_usb = flags.include_network = flags.include_walkie_talkie = flags.include_power_off = true;
     auto catalog = ui::app_catalog_builder::build(flags);
-    assert(ui::catalogCount(catalog) == 16);
+    assert(ui::catalogCount(catalog) == 17);
     flags.calendar_app = &calendar;
     catalog = ui::app_catalog_builder::build(flags);
-    assert(ui::catalogCount(catalog) == 17);
+    assert(ui::catalogCount(catalog) == 18);
     assert(ui::catalogAt(catalog, 0) == &calendar);
-    bool settings = false, shutdown = false, geocaching = false;
+    bool settings = false, shutdown = false, geocaching = false, music = false;
     for (std::size_t i = 0; i < ui::catalogCount(catalog); ++i)
     {
         auto* app = ui::catalogAt(catalog, i);
@@ -93,15 +95,16 @@ int main()
         settings |= std::strcmp(app->stable_id(), "settings") == 0;
         shutdown |= std::strcmp(app->stable_id(), "shutdown") == 0;
         geocaching |= std::strcmp(app->stable_id(), "geocaching") == 0;
+        music |= std::strcmp(app->stable_id(), "music") == 0;
         for (std::size_t j = i + 1; j < ui::catalogCount(catalog); ++j)
             assert(std::strcmp(app->stable_id(), ui::catalogAt(catalog, j)->stable_id()) != 0);
     }
-    assert(settings && shutdown && geocaching && !ui::catalogAt(catalog, 17));
+    assert(settings && shutdown && geocaching && music && !ui::catalogAt(catalog, 18));
     // The IDF catalog and callers that do not inject Agenda retain their shape.
     flags.calendar_app = nullptr;
     flags.profile = ui::app_catalog_builder::CatalogProfile::IdfDefault;
     catalog = ui::app_catalog_builder::build(flags);
-    assert(ui::catalogCount(catalog) == 16);
+    assert(ui::catalogCount(catalog) == 17);
     for (std::size_t i = 0; i < ui::catalogCount(catalog); ++i)
         assert(std::strcmp(ui::catalogAt(catalog, i)->stable_id(), "calendar") != 0);
 }

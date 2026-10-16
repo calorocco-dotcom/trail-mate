@@ -4,11 +4,13 @@
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/esp/common/memory_budget.h"
 #include "platform/esp/common/wifi_profile_snapshot.h"
+#include "platform/memory/psram_ptr.h"
 #include "platform/ui/settings_store.h"
 #include "platform/ui/wifi_access_runtime.h"
 #include "platform/ui/wifi_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -104,7 +106,6 @@ struct RuntimeState
     Config config{};
     Config profiles[kWifiProfileCapacity] = {};
     wifi_config_t station_config{};
-    wifi_ap_record_t auto_scan_records[kWifiAutoScanMaxRecords] = {};
     std::size_t profile_count = 0;
     std::size_t next_profile_index = 0;
     std::size_t automatic_profile_failures = 0;
@@ -378,6 +379,9 @@ const char* wifi_profile_name(WifiInitProfile profile)
 
 void apply_wifi_init_profile(wifi_init_config_t& config, WifiInitProfile profile)
 {
+    // Credentials are owned by settings_store. Avoid a second driver NVS
+    // owner, and bound AMPDU reordering to this profile's actual RX capacity.
+    config.nvs_enable = 0;
     config.tx_buf_type = kWifiTxBufferTypeDynamic;
     config.static_tx_buf_num = 0;
 
@@ -385,6 +389,7 @@ void apply_wifi_init_profile(wifi_init_config_t& config, WifiInitProfile profile
     {
     case WifiInitProfile::Lightweight:
         config.static_rx_buf_num = kWifiPrimaryStaticRxBufNum;
+        config.rx_ba_win = config.ampdu_rx_enable ? kWifiPrimaryStaticRxBufNum : 0;
         config.dynamic_rx_buf_num = kWifiPrimaryDynamicRxBufNum;
         config.dynamic_tx_buf_num = kWifiPrimaryDynamicTxBufNum;
         config.cache_tx_buf_num = std::max(1, kWifiPrimaryCacheTxBufNum);
@@ -1431,7 +1436,14 @@ bool stop_wifi_runtime(const char* success_message)
     if (s_runtime.wifi_started)
     {
         (void)esp_wifi_disconnect();
-        (void)esp_wifi_stop();
+        const auto stopped = esp_wifi_stop();
+        if (stopped != ESP_OK && stopped != ESP_ERR_WIFI_NOT_INIT)
+        {
+            set_status_message("Wi-Fi driver could not stop");
+            return false;
+        }
+        s_runtime.wifi_started = false;
+        clear_connection_details();
     }
     if (s_runtime.wifi_initialized)
     {
@@ -1440,6 +1452,10 @@ bool stop_wifi_runtime(const char* success_message)
         {
             std::printf("[WiFi] esp_wifi_deinit failed err=0x%x\n",
                         static_cast<unsigned>(deinit_err));
+            // Keep the initialization flag and reserve truthful so a retry
+            // can finish cleanup instead of allocating a second Wi-Fi owner.
+            set_status_message("Wi-Fi driver cleanup failed");
+            return false;
         }
         else
         {
@@ -1653,6 +1669,29 @@ bool apply_enabled(bool enabled)
         (void)connect(nullptr);
     }
     return true;
+}
+
+bool set_user_enabled(bool enabled)
+{
+    const auto access = ::platform::ui::wifi_access::status();
+    if (!is_supported() || s_runtime.externally_suspended || access.non_preemptible_active ||
+        access.ota_active || access.exclusive_owner != ::platform::ui::wifi_access::ExclusiveOwner::None)
+        return false;
+    Config previous{};
+    if (!load_config(previous)) return false;
+    const auto persist = [](bool value)
+    {
+        ::platform::ui::settings_store::put_bool(kSettingsNs, kWifiEnabledKey, value);
+        if (::platform::ui::settings_store::get_bool(kSettingsNs, kWifiEnabledKey, !value) != value) return false;
+        s_runtime.config.enabled = value;
+        s_runtime.config_cached = true;
+        return true;
+    };
+    if (!persist(enabled)) return false;
+    if (apply_enabled(enabled)) return true;
+    (void)persist(previous.enabled);
+    (void)apply_enabled(previous.enabled);
+    return false;
 }
 
 bool suspend_for_external_storage(ExternalStorageSuspension* out_suspension)
@@ -1883,6 +1922,14 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
         return false;
     }
 
+    using ScanRecords = std::array<wifi_ap_record_t, kWifiAutoScanMaxRecords>;
+    ::platform::memory::PsramPtr<ScanRecords> records(::platform::memory::createPsram<ScanRecords>());
+    if (!records)
+    {
+        set_status_message("Wi-Fi scan memory unavailable");
+        return false;
+    }
+
     if (!ensure_wifi_started())
     {
         return false;
@@ -1901,26 +1948,32 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
     }
 
     uint16_t ap_count = 0;
-    if (esp_wifi_scan_get_ap_num(&ap_count) != ESP_OK || ap_count == 0)
+    if (esp_wifi_scan_get_ap_num(&ap_count) != ESP_OK)
     {
+        (void)esp_wifi_clear_ap_list();
+        set_status_message("Read scan results failed");
+        return false;
+    }
+    if (ap_count == 0)
+    {
+        (void)esp_wifi_clear_ap_list();
         set_status_message("No Wi-Fi networks found");
         return true;
     }
 
     uint16_t record_count = std::min<uint16_t>(ap_count, kWifiAutoScanMaxRecords);
-    for (wifi_ap_record_t& record : s_runtime.auto_scan_records)
+    if (esp_wifi_scan_get_ap_records(&record_count, records->data()) != ESP_OK)
     {
-        record = wifi_ap_record_t{};
-    }
-    if (esp_wifi_scan_get_ap_records(&record_count, s_runtime.auto_scan_records) != ESP_OK)
-    {
+        // SDK-owned BSS records survive a failed fetch (including NO_MEM).
+        // Releasing our PSRAM output array alone does not release that list.
+        (void)esp_wifi_clear_ap_list();
         set_status_message("Read scan results failed");
         return false;
     }
 
     for (uint16_t i = 0; i < record_count; ++i)
     {
-        insert_scan_result_sorted(out_results, capacity, out_count, s_runtime.auto_scan_records[i]);
+        insert_scan_result_sorted(out_results, capacity, out_count, (*records)[i]);
     }
 
     char buffer[kMaxStatusMessageLength + 1];

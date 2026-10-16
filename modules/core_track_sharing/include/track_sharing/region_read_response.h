@@ -1,9 +1,9 @@
 #pragma once
 #include "geocaching/protocol/record_decoder.h"
-#include "track_sharing/network_upload_response.h"
-#include "track_sharing/region_read_request.h"
 #include "track_sharing/network_read_response.h"
+#include "track_sharing/network_upload_response.h"
 #include "track_sharing/read_query_response.h"
+#include "track_sharing/region_read_request.h"
 
 namespace track_sharing
 {
@@ -128,7 +128,7 @@ inline bool decodeRegionNode(geocaching::protocol::CmpReader& reader, geocaching
                              uint8_t depth, RegionNodeView& output, uint16_t* elements = nullptr)
 {
     if (!regionNamespace(name_space) || depth > 8 || !networkInputDisjoint(raw, reinterpret_cast<uint8_t*>(&output), sizeof(output)) ||
-        !networkInputDisjoint(regionBytes(name_space),reinterpret_cast<uint8_t*>(&output),sizeof(output))) return false;
+        !networkInputDisjoint(regionBytes(name_space), reinterpret_cast<uint8_t*>(&output), sizeof(output))) return false;
     output = {};
     size_t fields = 0, names = 0;
     uint64_t value = 0;
@@ -184,10 +184,10 @@ inline bool decodeRegionChildren(geocaching::ByteView raw, geocaching::ByteView 
         (!after.empty() && !regionInNamespace(after, name_space)) ||
         !networkInputDisjoint(version, reinterpret_cast<uint8_t*>(&output), sizeof(output)) ||
         !networkInputDisjoint(version, reinterpret_cast<uint8_t*>(&row), sizeof(row)) ||
-        !networkInputDisjoint({reinterpret_cast<const uint8_t*>(&row),sizeof(row)}, reinterpret_cast<uint8_t*>(&output), sizeof(output))) return false;
-    for (const auto value : {name_space,parent,after})
-        if (!readOptionalDisjoint(regionBytes(value),reinterpret_cast<uint8_t*>(&row),sizeof(row)) ||
-            !readOptionalDisjoint(regionBytes(value),reinterpret_cast<uint8_t*>(&output),sizeof(output))) return false;
+        !networkInputDisjoint({reinterpret_cast<const uint8_t*>(&row), sizeof(row)}, reinterpret_cast<uint8_t*>(&output), sizeof(output))) return false;
+    for (const auto value : {name_space, parent, after})
+        if (!readOptionalDisjoint(regionBytes(value), reinterpret_cast<uint8_t*>(&row), sizeof(row)) ||
+            !readOptionalDisjoint(regionBytes(value), reinterpret_cast<uint8_t*>(&output), sizeof(output))) return false;
     output = {};
     geocaching::protocol::CmpReader reader(raw);
     geocaching::ByteView received;
@@ -229,7 +229,7 @@ inline bool decodeRegionDescriptor(geocaching::ByteView raw, geocaching::ByteVie
 inline bool decodeRegionBoundaryResponse(geocaching::ByteView raw, geocaching::ByteView request, geocaching::ByteView digest,
                                          uint32_t bytes, uint32_t offset, uint16_t length, ReadFileResponse& output)
 {
-    return decodeTrackReadFileResponse(raw,request,digest,bytes,offset,length,output,12);
+    return decodeTrackReadFileResponse(raw, request, digest, bytes, offset, length, output, 12);
 }
 // The caller owns the immutable region ID/version scope and derives binding
 // with deriveRegionQueryBinding. The box is a prefilter only; exact geometry is
@@ -237,6 +237,6 @@ inline bool decodeRegionBoundaryResponse(geocaching::ByteView raw, geocaching::B
 inline bool decodeRegionQueryResponse(geocaching::ByteView raw, geocaching::ByteView request, const ReadQuery& query,
                                       geocaching::ByteView binding, ReadQueryRow& row, ReadQueryResponse& output)
 {
-    return decodeTrackReadQueryResponse(raw,request,query,binding,row,output,13);
+    return decodeTrackReadQueryResponse(raw, request, query, binding, row, output, 13);
 }
 } // namespace track_sharing

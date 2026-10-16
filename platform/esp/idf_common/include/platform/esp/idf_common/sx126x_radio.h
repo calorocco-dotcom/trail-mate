@@ -35,7 +35,7 @@ class Sx126xRadio
                       uint8_t crc_len);
 
     bool startReceive();
-    void standby();
+    bool standby();
     float readRssi();
 
     int startTransmit(const uint8_t* data, size_t size);

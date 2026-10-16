@@ -3,7 +3,15 @@
 #include <initializer_list>
 namespace track_sharing
 {
-enum class PublicationStoreResult : uint8_t { Ready, Missing, Corrupt, StorageFailure, Conflict, Invalid };
+enum class PublicationStoreResult : uint8_t
+{
+    Ready,
+    Missing,
+    Corrupt,
+    StorageFailure,
+    Conflict,
+    Invalid
+};
 // Borrowed canonical paths and metadata. Caller owns media/exclusive object
 // lease and verified publication evidence. Corrupt slots never authorize rollback.
 template <class Io>
@@ -14,9 +22,11 @@ class PublicationJournalStore
     PublicationStoreResult load(PublicationJournal& output, PublicationJournal& other, uint8_t* scratch, size_t capacity)
     {
         if (&output == &other || !valid(scratch, capacity)) return PublicationStoreResult::Invalid;
-        output = {}; other = {};
+        output = {};
+        other = {};
         const auto first = read(a_, output, scratch), second = read(b_, other, scratch);
-        const auto fail = [&](PublicationStoreResult result) { output = {}; other = {}; return result; };
+        const auto fail = [&](PublicationStoreResult result)
+        { output = {}; other = {}; return result; };
         if (first == PublicationStoreResult::StorageFailure || second == PublicationStoreResult::StorageFailure) return fail(PublicationStoreResult::StorageFailure);
         if (first == PublicationStoreResult::Missing && second == PublicationStoreResult::Missing) return PublicationStoreResult::Missing;
         if (first == PublicationStoreResult::Corrupt || second == PublicationStoreResult::Corrupt) return fail(PublicationStoreResult::Corrupt);
@@ -25,9 +35,14 @@ class PublicationJournalStore
         if (first == PublicationStoreResult::Ready && second == PublicationStoreResult::Ready)
         {
             if (output.sequence > other.sequence)
-            { if (!publicationAdvanceValid(other, output)) return fail(PublicationStoreResult::Corrupt); }
+            {
+                if (!publicationAdvanceValid(other, output)) return fail(PublicationStoreResult::Corrupt);
+            }
             else
-            { if (!publicationAdvanceValid(output, other)) return fail(PublicationStoreResult::Corrupt); output = other; }
+            {
+                if (!publicationAdvanceValid(output, other)) return fail(PublicationStoreResult::Corrupt);
+                output = other;
+            }
             return PublicationStoreResult::Ready;
         }
         if (first != PublicationStoreResult::Ready) return fail(PublicationStoreResult::Corrupt);
@@ -65,15 +80,16 @@ class PublicationJournalStore
         if (validated != PublicationStoreResult::Ready) return validated;
         return write(next.sequence & 1 ? a_ : b_, next, verify, scratch, capacity);
     }
+
   private:
     bool valid(uint8_t* scratch, size_t capacity) const { return scratch && capacity >= kPublicationJournalBytes && a_ && *a_ && b_ && *b_ && std::strcmp(a_, b_); }
     static bool same(const PublicationJournal& a, const PublicationJournal& b)
     {
         return a.sequence == b.sequence && a.generation == b.generation && a.revision == b.revision && a.phase == b.phase &&
                a.file_bytes == b.file_bytes && a.offset == b.offset &&
-               !std::memcmp(a.operation,b.operation,16) && !std::memcmp(a.object,b.object,32) &&
-               !std::memcmp(a.revision_hash,b.revision_hash,32) && !std::memcmp(a.directory,b.directory,16) &&
-               !std::memcmp(a.directory_epoch,b.directory_epoch,16) && !std::memcmp(a.file_hash,b.file_hash,32) && !std::memcmp(a.author_hash,b.author_hash,32);
+               !std::memcmp(a.operation, b.operation, 16) && !std::memcmp(a.object, b.object, 32) &&
+               !std::memcmp(a.revision_hash, b.revision_hash, 32) && !std::memcmp(a.directory, b.directory, 16) &&
+               !std::memcmp(a.directory_epoch, b.directory_epoch, 16) && !std::memcmp(a.file_hash, b.file_hash, 32) && !std::memcmp(a.author_hash, b.author_hash, 32);
     }
     PublicationStoreResult read(const char* path, PublicationJournal& output, uint8_t* scratch)
     {

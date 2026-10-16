@@ -38,6 +38,11 @@ void page_event(lv_event_t* event)
     last_page_key = lv_event_get_key(event);
 }
 
+void modal_back(lv_event_t* event)
+{
+    if (lv_event_get_key(event) == LV_KEY_ESC) ++page_keys;
+}
+
 void read()
 {
     lv_tick_inc(30);
@@ -67,6 +72,7 @@ void fresh_page(bool app)
     lv_group_remove_all_objs(app_g);
     lv_obj_clean(lv_screen_active());
     fake::app_active = app;
+    lv_group_set_default(app ? app_g : menu_g);
     clicks = presses = releases = page_keys = 0;
     last_page_key = 0;
     read();
@@ -124,6 +130,10 @@ int main()
     assert(lv_group_get_focused(menu_g) == second);
     tap(64);
     assert(clicks == 2);
+    edge(53, true);
+    tap(54); // Shift+Tab traverses backward.
+    edge(53, false);
+    assert(lv_group_get_focused(menu_g) == first);
 
     // Releasing an unrelated key does not release the held key. Native LVGL
     // repetition remains available while a text key is held.
@@ -145,6 +155,27 @@ int main()
     read();
     assert(std::strlen(lv_textarea_get_text(textarea)) == length);
 
+    // Modifiers follow physical edges: hold Shift across several letters,
+    // release Fn without typing, and ignore a duplicated hardware press.
+    fresh_page(true);
+    textarea = lv_textarea_create(lv_screen_active());
+    lv_obj_add_state(textarea, LV_STATE_FOCUSED);
+    edge(53, true); // Shift
+    tap(21);
+    tap(22);
+    edge(53, false);
+    tap(21);
+    assert(std::strcmp(lv_textarea_get_text(textarea), "QWq") == 0);
+    edge(51, true); // Fn
+    edge(51, false);
+    tap(21);
+    assert(std::strcmp(lv_textarea_get_text(textarea), "QWqq") == 0);
+    edge(21, true);
+    edge(21, true);
+    assert(s_pressed_number == 21);
+    edge(21, false);
+    assert(std::strcmp(lv_textarea_get_text(textarea), "QWqqq") == 0);
+
     // A page root is a child of the screen. Ordinary keys must reach it even
     // when the current group focuses a control with no KEY listener.
     fresh_page(true);
@@ -153,6 +184,28 @@ int main()
     lv_obj_add_event_cb(page, page_event, LV_EVENT_KEY, nullptr);
     tap(21);
     assert(page_keys == 1 && last_page_key == 'q');
+    const auto exits_before_back = fake::exits;
+    tap(11);
+    assert(page_keys == 2 && last_page_key == LV_KEY_ESC && fake::exits == exits_before_back);
+    tap(1); // Physical F1 opens map Help through the shared function-key code.
+    assert(page_keys == 3 && last_page_key == 0x110001U);
+
+    // Modal groups replace the app group while a dialog is open. Enter must
+    // activate the dialog and ESC must reach its KEY back handler.
+    fresh_page(true);
+    button(app_g);
+    auto* modal_group = lv_group_create();
+    auto* modal_button = button(modal_group);
+    lv_obj_set_parent(modal_button, lv_layer_top());
+    lv_obj_add_event_cb(modal_button, modal_back, LV_EVENT_KEY, nullptr);
+    lv_group_set_default(modal_group);
+    tap(64);
+    assert(clicks == 1);
+    tap(11);
+    assert(page_keys == 1 && fake::exits == exits_before_back);
+    lv_group_set_default(app_g);
+    lv_group_delete(modal_group);
+    lv_obj_delete(modal_button);
 
     // A focused object from another screen must not swallow Enter or receive
     // a click. The current page root receives the key instead.
@@ -224,5 +277,37 @@ int main()
     tap(21);
     assert(std::strlen(lv_textarea_get_text(textarea)) == before_overflow_tap + 1);
 
+    // PTT is a physical hold, never a repeated LVGL click on Monitor.
+    fresh_page(true);
+    button(app_g);
+    platform::ui::walkie::active = true;
+    edge(55, true);
+    assert(platform::ui::walkie::ptt && clicks == 0);
+    edge(55, false);
+    assert(!platform::ui::walkie::ptt && clicks == 0);
+    edge(55, true);
+    cpp_bus_driver::Tca8418::irq_flags = 8;
+    drain_fifo();
+    assert(!platform::ui::walkie::ptt);
+    read();
+    edge(55, true);
+    assert(platform::ui::walkie::ptt);
+    platform::ui::walkie::active = false;
+    read();
+    assert(!platform::ui::walkie::ptt);
+    read();
+    edge(55, false);
+    platform::ui::walkie::active = true;
+    edge(55, true);
+    assert(platform::ui::walkie::ptt);
+    fake::transfer_ok = false;
+    for (int i = 0; i < 3; ++i)
+    {
+        drain_fifo();
+        lv_tick_inc(kI2cFailureBackoffMs);
+    }
+    assert(!platform::ui::walkie::ptt && !s_ready);
+    fake::transfer_ok = true;
+    platform::ui::walkie::active = false;
     std::cout << "P4 keyboard: native click, focus, repeat, page routes and recovery passed\n";
 }

@@ -1,0 +1,59 @@
+cmake_minimum_required(VERSION 3.20)
+project(menu_widget_memory LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(LVGL_DIR "" CACHE PATH "Firmware LVGL source")
+set(LVGL_LIBRARY "" CACHE FILEPATH "Compatible prebuilt LVGL library")
+if(LVGL_LIBRARY)
+    add_library(lvgl STATIC IMPORTED)
+    set_target_properties(lvgl PROPERTIES IMPORTED_LOCATION "${LVGL_LIBRARY}")
+    target_include_directories(lvgl INTERFACE "${LVGL_DIR}" "${REPO}/tests/contacts_card_view")
+    target_compile_definitions(lvgl INTERFACE LV_CONF_INCLUDE_SIMPLE)
+else()
+    set(LV_BUILD_CONF_PATH "${REPO}/tests/contacts_card_view/lv_conf.h" CACHE PATH "" FORCE)
+    set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+    set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${LVGL_DIR}" lvgl)
+endif()
+enable_testing()
+add_executable(widget_ownership test_ownership.cpp)
+target_include_directories(widget_ownership PRIVATE fakes "${REPO}/modules/ui_shared/include" "${REPO}/modules/core_sys/include")
+target_compile_definitions(widget_ownership PRIVATE ESP_PLATFORM=1)
+target_link_libraries(widget_ownership PRIVATE lvgl)
+add_executable(widget_idf_allocator test_idf_allocator.cpp)
+target_include_directories(widget_idf_allocator PRIVATE idf_fakes fakes)
+add_library(widget_allocator_archive STATIC "${REPO}/platform/esp/idf_common/src/lvgl_memory.cpp")
+target_include_directories(widget_allocator_archive PRIVATE idf_fakes fakes)
+add_library(widget_allocator_consumer STATIC test_allocator_consumer.cpp)
+add_executable(widget_allocator_link test_allocator_link.cpp)
+target_include_directories(widget_allocator_link PRIVATE fakes)
+# Reproduce IDF's order: allocator archive scanned before LVGL references it.
+target_link_libraries(widget_allocator_link PRIVATE widget_allocator_archive widget_allocator_consumer)
+set(WIDGET_ALLOCATOR_LINK_SYMBOL lv_malloc_core)
+if(MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(WIDGET_ALLOCATOR_LINK_SYMBOL _lv_malloc_core)
+endif()
+target_link_options(widget_allocator_link PRIVATE "-Wl,--undefined=${WIDGET_ALLOCATOR_LINK_SYMBOL}")
+add_executable(widget_orientation test_orientation.cpp "${REPO}/platform/esp/arduino_common/src/platform_ui_orientation_runtime.cpp")
+target_include_directories(widget_orientation PRIVATE "${REPO}/modules/core_sys/include")
+add_executable(agenda_widget test_agenda_widget.cpp
+    "${REPO}/platform/esp/common/src/agenda_widget_runtime.cpp"
+    "${REPO}/platform/esp/common/src/storage/agenda_file_store.cpp"
+    "${REPO}/platform/esp/arduino_common/src/agenda_clock.cpp"
+    "${REPO}/modules/core_agenda/src/agenda_query.cpp"
+    "${REPO}/modules/core_agenda/src/agenda_service.cpp"
+    "${REPO}/modules/core_agenda/src/event_codec.cpp"
+    "${REPO}/modules/core_agenda/src/recurrence.cpp")
+target_include_directories(agenda_widget PRIVATE agenda_fakes fakes
+    "${REPO}/modules/core_sys/include" "${REPO}/modules/core_agenda/include"
+    "${REPO}/modules/ui_presentation/include" "${REPO}/platform/esp/common/include"
+    "${REPO}/platform/esp/arduino_common/include")
+target_compile_definitions(agenda_widget PRIVATE ESP_PLATFORM=1 TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4=1)
+foreach(TARGET widget_ownership widget_idf_allocator widget_allocator_link widget_orientation agenda_widget)
+    if(MSVC)
+        target_compile_options(${TARGET} PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${TARGET} PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+endforeach()

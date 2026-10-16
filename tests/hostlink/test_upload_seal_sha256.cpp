@@ -168,7 +168,7 @@ int main()
         assert(session.append(other_session, 9, 101, id, 0, reinterpret_cast<const uint8_t*>(content.data()), 320, scratch, sizeof(scratch)) == JournalStoreResult::Conflict);
         assert(io.files[owner.candidatePath()].empty());
         for (uint32_t offset = 0; offset < 750; offset += 320)
-            assert(session.append(session_id, 9, 102, id, offset, reinterpret_cast<const uint8_t*>(content.data() + offset), std::min(size_t(320), 750 - offset), scratch, sizeof(scratch)) == JournalStoreResult::Ready);
+            assert(session.append(session_id, 9, 102, id, offset, reinterpret_cast<const uint8_t*>(content.data() + offset), std::min(size_t(320), size_t(750 - offset)), scratch, sizeof(scratch)) == JournalStoreResult::Ready);
         assert(session.beginSeal(session_id, 9, 103, scratch, sizeof(scratch)) == UploadSealResult::Pending);
         assert(session.advance(9, 104, true, scratch, sizeof(scratch)) == UploadSealResult::Pending);
         const auto saved_files = io.files;
@@ -208,7 +208,7 @@ int main()
         assert(store.initialize(current, verify, scratch, sizeof(scratch)) == JournalStoreResult::Ready);
         UploadChunkWriter<SealIo, decltype(store)> writer(io, store, current, verify, "data", generation, author);
         for (uint32_t offset = 0; offset < 750; offset += 320)
-            assert(writer.append(current.id, offset, reinterpret_cast<const uint8_t*>(content.data() + offset), std::min(size_t(320), 750 - offset), scratch, sizeof(scratch)) == JournalStoreResult::Ready);
+            assert(writer.append(current.id, offset, reinterpret_cast<const uint8_t*>(content.data() + offset), std::min(size_t(320), size_t(750 - offset)), scratch, sizeof(scratch)) == JournalStoreResult::Ready);
         assert(io.files["data"] == std::vector<uint8_t>(content.begin(), content.end()));
         if (mode == 1) io.files["data"][500] ^= 1;
         using Check = FileIntegrityCheck<SealIo, decltype(hash)>;

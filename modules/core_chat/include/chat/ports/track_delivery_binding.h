@@ -64,11 +64,11 @@ bool trackBindingAuthorMatches(const TrackDeliveryBinding* binding, const Identi
     const auto* expected = binding->expected_local_author;
     return expected && binding->expected_author_generation && identity.isReady() && !identity.identityStorageError() &&
            identity.authorGeneration() == binding->expected_author_generation && identity.encryptionPublicKey() && identity.signingPublicKey() &&
-           !std::memcmp(expected,identity.encryptionPublicKey(),32) && !std::memcmp(expected + 32,identity.signingPublicKey(),32);
+           !std::memcmp(expected, identity.encryptionPublicKey(), 32) && !std::memcmp(expected + 32, identity.signingPublicKey(), 32);
 }
 template <class Identity>
 bool deliverVerifiedTrackForAuthor(const TrackDeliveryBinding* binding, bool source_unverified, bool group,
-                                    const CustomDeliveryView& view, const Identity& identity)
+                                   const CustomDeliveryView& view, const Identity& identity)
 {
     return trackBindingAuthorMatches(binding, identity) && deliverVerifiedTrack(binding, source_unverified, group, view);
 }

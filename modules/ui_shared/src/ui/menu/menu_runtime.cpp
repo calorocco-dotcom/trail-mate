@@ -17,6 +17,7 @@
 #include "ui/components/shortcut_help_modal.h"
 #endif
 #include "ui/formatters.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_layout.h"
 #include "ui/menu/menu_profile.h"
 #include "ui/ui_common.h"
@@ -250,7 +251,7 @@ void openMenuHelpModal()
         return;
     }
 
-    ::ui::components::shortcut_help_modal::Row rows[7] = {
+    ::ui::components::shortcut_help_modal::Row rows[8] = {
         {"WASD", nullptr, "Select app"},
         {"Enter", nullptr, "Open app"},
         {"B", nullptr, "Cycle screen brightness"},
@@ -260,6 +261,19 @@ void openMenuHelpModal()
         {"H", "Back", "Close help"},
     };
     std::size_t row_count = 2;
+    if (ui::menu::dashboard::isFeedOpen())
+    {
+        rows[0] = {"W/S", "Wheel", "Switch widget"};
+        rows[1] = {"D", "Back", "Return to menu"};
+    }
+    else
+    {
+#if defined(ARDUINO_T_DECK) || defined(ARDUINO_T_LORA_PAGER) || defined(ARDUINO_WIO_TRACKER_L2)
+        rows[row_count++] = {"A", nullptr, "Widgets at left edge"};
+#elif defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+        rows[row_count++] = {"Swipe", nullptr, "More dashboard widgets"};
+#endif
+    }
     if (screenBrightnessShortcutEnabled())
     {
         rows[row_count++] = {"B", nullptr, "Cycle screen brightness"};
@@ -924,6 +938,8 @@ bool handleShortcutKey(char key, int state)
     {
         return false;
     }
+
+    if (ui::menu::dashboard::handleKey(static_cast<uint32_t>(key))) return true;
 
     if (isMenuHelpKey(key))
     {

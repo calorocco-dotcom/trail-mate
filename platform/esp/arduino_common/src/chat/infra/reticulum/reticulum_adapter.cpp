@@ -188,7 +188,7 @@ bool ReticulumAdapter::getGeocachingAuthorKey(uint8_t out[64])
 }
 
 MeshSendResult ReticulumAdapter::sendTrackData(const uint8_t destination[16], lxmf::ByteSpan data,
-                                              bool response, std::array<uint8_t, 32>* accepted_hash)
+                                               bool response, std::array<uint8_t, 32>* accepted_hash)
 {
     if (accepted_hash) accepted_hash->fill(0);
     if (!service_) return MeshSendResult::fail(MeshOperationFailure::NotReady);
@@ -202,7 +202,7 @@ void ReticulumAdapter::setTrackDeliveryBinding(const lxmf::TrackDeliveryBinding*
 
 bool ReticulumAdapter::requestDirectoryPath(const uint8_t* destination)
 {
-    return service_&&service_->requestTrackDirectoryPath(destination);
+    return service_ && service_->requestTrackDirectoryPath(destination);
 }
 
 bool ReticulumAdapter::signGeocachingRecord(lxmf::ByteSpan record, uint8_t* workspace, size_t workspace_capacity,

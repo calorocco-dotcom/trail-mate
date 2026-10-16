@@ -103,7 +103,7 @@ class RequestRetryWindow
         }
         receiver.cancelPending();
         queued_ = ready_ = false;
-        deadline_ = after(now,backoff_ms_);
+        deadline_ = after(now, backoff_ms_);
         return true;
     }
     bool resume(uint64_t now)

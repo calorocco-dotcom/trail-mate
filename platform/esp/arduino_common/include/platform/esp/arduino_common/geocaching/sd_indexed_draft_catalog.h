@@ -1,6 +1,6 @@
 #pragma once
-#include "geocaching/storage/draft_catalog.h"
 #include "geocaching/storage/confirmed_publication.h"
+#include "geocaching/storage/draft_catalog.h"
 #include "platform/esp/arduino_common/geocaching/sd_index_get.h"
 #include "platform/esp/arduino_common/geocaching/sd_index_scan.h"
 #include "platform/memory/psram_ptr.h"
@@ -173,8 +173,7 @@ class SdIndexedDraftCatalog
                         if (marker.array(terminal_fields, 6) && terminal_fields == 4)
                         {
                             auto verified = ::platform::memory::PsramPtr<protocol::VerifiedRecordView>(::platform::memory::createPsram<protocol::VerifiedRecordView>());
-                            if (!verified || !verification_ || verifyConfirmedPublication(row.key, outgoing.request, outgoing.terminal_data,
-                                    crypto_, verification_, verification_capacity_, *verified) != protocol::VerificationResult::Valid)
+                            if (!verified || !verification_ || verifyConfirmedPublication(row.key, outgoing.request, outgoing.terminal_data, crypto_, verification_, verification_capacity_, *verified) != protocol::VerificationResult::Valid)
                             {
                                 unavailable_ = true;
                                 return IndexGetStep::Invalid;
@@ -185,22 +184,22 @@ class SdIndexedDraftCatalog
                         }
                         else
                         {
-                        // Decode the response identity before reusing the frame
-                        // for its task, then compare it with that task below.
-                        protocol::CmpReader ack(outgoing.terminal_data);
-                        uint64_t value = 0;
-                        ByteView bytes;
-                        if (ack.array(fields, 6) && ack.unsignedInteger(value) && ack.unsignedInteger(value) && ack.unsignedInteger(value) &&
-                            ack.binary(bytes, 16) && ack.unsignedInteger(value) && ack.array(fields, 7) && ack.binary(bytes, 32) && bytes.size == 32)
-                        {
-                            std::memcpy(ack_id_.bytes.data(), bytes.data, 32);
-                            if (ack.unsignedInteger(value) && ack.binary(bytes, 32) && bytes.size == 32)
+                            // Decode the response identity before reusing the frame
+                            // for its task, then compare it with that task below.
+                            protocol::CmpReader ack(outgoing.terminal_data);
+                            uint64_t value = 0;
+                            ByteView bytes;
+                            if (ack.array(fields, 6) && ack.unsignedInteger(value) && ack.unsignedInteger(value) && ack.unsignedInteger(value) &&
+                                ack.binary(bytes, 16) && ack.unsignedInteger(value) && ack.array(fields, 7) && ack.binary(bytes, 32) && bytes.size == 32)
                             {
-                                std::memcpy(ack_hash_.bytes.data(), bytes.data, 32);
-                                protocol::PublishDisposition disposition;
-                                acknowledged_ = protocol::decodePublishResponse(outgoing.terminal_data, request, ack_id_, ack_hash_, record.revision, record.state, disposition);
+                                std::memcpy(ack_id_.bytes.data(), bytes.data, 32);
+                                if (ack.unsignedInteger(value) && ack.binary(bytes, 32) && bytes.size == 32)
+                                {
+                                    std::memcpy(ack_hash_.bytes.data(), bytes.data, 32);
+                                    protocol::PublishDisposition disposition;
+                                    acknowledged_ = protocol::decodePublishResponse(outgoing.terminal_data, request, ack_id_, ack_hash_, record.revision, record.state, disposition);
+                                }
                             }
-                        }
                         }
                     }
                     std::memcpy(request_key_.data(), row.key.data, 48);

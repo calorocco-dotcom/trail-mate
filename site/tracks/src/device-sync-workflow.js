@@ -3,6 +3,7 @@ import {withIPPublicationLock} from '../../geocaching/src/ip-publication-journal
 import {encodeTrackIPCheckpoint,decodeTrackIPCheckpoint,loadTrackIPCheckpoint} from './ip-publication-journal.js';
 import {confirmDeviceTrackPublication} from './device-ip-confirmation.js';
 import {OPERATION} from '../../device/src/management-protocol.js';
+import {cleanupTrackAttachmentUploads} from './device-attachment-cleanup.js';
 const hex=value=>Array.from(value,byte=>byte.toString(16).padStart(2,'0')).join('');
 const name=record=>'trailmate.track.device-sync.v1.'+hex(record.authorKey)+'.'+hex(record.plan.operationId);
 
@@ -63,6 +64,7 @@ export async function syncTrackIPPublication(session,record,author,options={}){
    if(!Array.isArray(removed)||removed.length!==0)throw Error('Invalid cleanup acknowledgement');
    save({...state,cleaned:state.cleaned|(1<<index)});
   }
+  await cleanupTrackAttachmentUploads(session,current,options);check();
   save({...state,stage:2});options.onProgress?.({phase:'complete'});return state;
  },options);
 }

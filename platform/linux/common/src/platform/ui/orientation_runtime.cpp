@@ -2,6 +2,8 @@
 
 namespace platform::ui::orientation
 {
+bool acquire_heading() { return false; }
+void release_heading() {}
 
 HeadingState get_heading()
 {

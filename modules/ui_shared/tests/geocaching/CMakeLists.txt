@@ -10,6 +10,7 @@ target_compile_definitions(page_test_lvgl PUBLIC LV_CONF_SKIP=1 LV_USE_STDLIB_MA
     LV_MEM_SIZE=1048576 LV_USE_STDLIB_STRING=1 LV_USE_STDLIB_SPRINTF=1
     LV_USE_SNAPSHOT=1 LV_FONT_MONTSERRAT_12=1 LV_FONT_MONTSERRAT_16=1 LV_FONT_MONTSERRAT_20=1)
 add_executable(geocaching_page_test test_page.cpp
+    "${REPO_ROOT}/third_party/yxml/yxml.c"
     "${REPO_ROOT}/modules/ui_lvgl_ux_packs/tests/touch_editor/test_support.cpp"
     "${REPO_ROOT}/modules/ui_lvgl_ux_packs/src/common/touch_text_editor.cpp"
     "${REPO_ROOT}/modules/ui_lvgl_ux_packs/src/common/input_layout.cpp"
@@ -22,6 +23,9 @@ add_executable(geocaching_page_test test_page.cpp
     "${REPO_ROOT}/modules/ui_shared/src/ui/page/page_profile.cpp")
 target_include_directories(geocaching_page_test PRIVATE stubs
     "${REPO_ROOT}/modules/core_sys/include"
+    "${REPO_ROOT}/modules/core_gps/include"
+    "${REPO_ROOT}/modules/core_track_sharing/include"
+    "${REPO_ROOT}/third_party/yxml"
     "${REPO_ROOT}/modules/ui_lvgl_ux_packs/tests/touch_editor/stubs"
     "${REPO_ROOT}/modules/ui_lvgl_ux_packs/include"
     "${REPO_ROOT}/modules/ui_shared/include" "${REPO_ROOT}/modules/ui_presentation/include")

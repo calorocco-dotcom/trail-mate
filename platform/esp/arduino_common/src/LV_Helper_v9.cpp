@@ -17,6 +17,7 @@
 #include "sys/clock.h"
 #include "ui/LV_Helper.h"
 #include "ui/app_runtime.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/support/lvgl_fs_utils.h"
 #include "walkie/walkie_service.h"
@@ -1175,6 +1176,7 @@ static void lv_encoder_read(lv_indev_t* drv, lv_indev_data_t* data)
 #endif
         break;
     }
+    if (::ui::menu::dashboard::handleEncoder(data->enc_diff)) data->enc_diff = 0;
     if (msg.centerBtnPressed)
     {
         data->state = LV_INDEV_STATE_PRESSED;
@@ -1678,14 +1680,9 @@ bool lv_external_font_load_fs_was_busy()
 namespace
 {
 constexpr size_t kLvglLargeAllocThresholdBytes = 2048;
-#if defined(ARDUINO_WIO_TRACKER_L2)
-// Wio L2 has 8 MiB PSRAM. Its many small persistent UI objects must not
-// compete with task stacks, radio and DMA for the internal heap. Display DMA
-// buffers are allocated separately in beginLvglHelper with explicit caps.
+// All PSRAM boards keep small persistent UI objects away from the radio,
+// task-stack and DMA heap. Peripheral buffers have their own explicit caps.
 constexpr bool kLvglPreferPsramForSmallAllocations = true;
-#else
-constexpr bool kLvglPreferPsramForSmallAllocations = false;
-#endif
 
 bool lvgl_has_psram()
 {

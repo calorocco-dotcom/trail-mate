@@ -5,12 +5,12 @@
 
 #include "platform/esp/arduino_common/chat/infra/mesh_adapter_router.h"
 
+#include "geocaching/protocol/sign_record.h"
+#include "platform/esp/arduino_common/chat/infra/lxmf/local_identity_access.h"
 #include "platform/esp/arduino_common/chat/infra/meshcore/meshcore_adapter.h"
 #include "platform/esp/arduino_common/chat/infra/meshtastic/mt_adapter.h"
 #include "platform/esp/arduino_common/chat/infra/reticulum/reticulum_adapter.h"
 #include "platform/ui/reticulum_call_runtime.h"
-#include "platform/esp/arduino_common/chat/infra/lxmf/local_identity_access.h"
-#include "geocaching/protocol/sign_record.h"
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
 #include "hostlink/identity_backup_export.h"
 #include "platform/esp/common/radio_identity_management.h"
@@ -106,7 +106,7 @@ bool MeshAdapterRouter::processServiceQueue(MeshProtocol protocol)
 bool MeshAdapterRouter::bindTrackDelivery(const lxmf::TrackDeliveryBinding* binding)
 {
     // Legacy entry is acquire-only: removal/replacement must name its owner.
-    return replaceTrackDelivery(nullptr,binding) == TrackBindingChange::Applied;
+    return replaceTrackDelivery(nullptr, binding) == TrackBindingChange::Applied;
 }
 
 TrackBindingChange MeshAdapterRouter::replaceTrackDelivery(const lxmf::TrackDeliveryBinding* expected, const lxmf::TrackDeliveryBinding* replacement)
@@ -142,27 +142,29 @@ TrackBindingChange MeshAdapterRouter::visitTrackDelivery(const lxmf::TrackDelive
 bool MeshAdapterRouter::trackLocalDestination(uint8_t* output)
 {
     if (!output) return false;
-    std::memset(output,0,16);
-    LockGuard lock(mutex_,0);
+    std::memset(output, 0, 16);
+    LockGuard lock(mutex_, 0);
     if (!lock.locked()) return false;
-    const auto* backend=deviceAuthorBackendLocked();
-    return backend&&backend->isReady()&&geocachingDestinationLocked(output);
+    const auto* backend = deviceAuthorBackendLocked();
+    return backend && backend->isReady() && geocachingDestinationLocked(output);
 }
 
 bool MeshAdapterRouter::requestTrackDirectoryPath(const uint8_t* destination)
 {
-    if(!destination)return false;
-    uint8_t bits=0;for(size_t i=0;i<16;++i)bits|=destination[i];if(!bits)return false;
-    LockGuard lock(mutex_,0);
-    if(!lock.locked()||!track_delivery_binding_||!deviceAuthorBackendLocked())return false;
-    auto* backend=core_.backendForProtocol(MeshProtocol::Reticulum);
-    auto* transport=backend&&backend->isReady()?backend->trackTransport():nullptr;
-    return transport&&transport->requestDirectoryPath(destination);
+    if (!destination) return false;
+    uint8_t bits = 0;
+    for (size_t i = 0; i < 16; ++i) bits |= destination[i];
+    if (!bits) return false;
+    LockGuard lock(mutex_, 0);
+    if (!lock.locked() || !track_delivery_binding_ || !deviceAuthorBackendLocked()) return false;
+    auto* backend = core_.backendForProtocol(MeshProtocol::Reticulum);
+    auto* transport = backend && backend->isReady() ? backend->trackTransport() : nullptr;
+    return transport && transport->requestDirectoryPath(destination);
 }
 
 MeshSendResult MeshAdapterRouter::sendTrackData(const uint8_t destination[16], lxmf::ByteSpan data,
-                                               const uint8_t expected_author[64], uint32_t expected_generation,
-                                               bool response, std::array<uint8_t, 32>* accepted_hash)
+                                                const uint8_t expected_author[64], uint32_t expected_generation,
+                                                bool response, std::array<uint8_t, 32>* accepted_hash)
 {
     if (accepted_hash) accepted_hash->fill(0);
     if (!destination || !data.data || !data.size || data.size > 8192 || !expected_author || !expected_generation)
@@ -265,7 +267,8 @@ DeviceAuthorResult MeshAdapterRouter::readDeviceAuthorKey(uint8_t* public_key, u
     // Establish the device account on first USB use without starting RF.
     // init() only generates when all identity key storage is absent; partial
     // or unreadable material is refused by the existing persistence policy.
-    lxmf::LocalIdentityLease identity([](lxmf::LxmfIdentity& value) { return value.init(); });
+    lxmf::LocalIdentityLease identity([](lxmf::LxmfIdentity& value)
+                                      { return value.init(); });
     return identity.read(public_key, generation);
 }
 DeviceAuthorResult MeshAdapterRouter::exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const
@@ -362,7 +365,7 @@ DeviceAuthorResult MeshAdapterRouter::proveDeviceAuthor(const uint8_t* session, 
     const auto* backend = deviceAuthorBackendLocked();
     // Resolve and sign under one lock; no backend pointer survives a switch.
     if (backend) return backend->proveDeviceAuthor(session, challenge, expected_generation, workspace, capacity,
-                                                  public_key, generation, signature);
+                                                   public_key, generation, signature);
     lxmf::LocalIdentityLease identity;
     return identity.prove(session, challenge, expected_generation, workspace, capacity, public_key, generation, signature);
 }

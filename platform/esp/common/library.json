@@ -6,10 +6,12 @@
   ],
   "build": {
     "includeDir": "include",
-    "srcDir": "src",
-    "flags": ["-I../../../modules/core_hostlink/include"]
+    "srcDir": "src"
   },
   "dependencies": [
+    { "name": "ui_presentation" },
+    { "name": "core_music" },
+    { "name": "music_image" },
     { "name": "core_waypoint" },
     {
       "name": "core_agenda"

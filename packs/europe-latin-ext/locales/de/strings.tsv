@@ -838,3 +838,49 @@ Route position ambiguous	Routenposition mehrdeutig
 Route end (estimated)	Routenende (geschätzt)
 Route %u%% | %s left	Route %u%% | noch %s
 Matching route...	Route wird abgeglichen…
+Distance %.0f m	Entfernung %.0f m
+Distance %.1f km	Entfernung %.1f km
+Position unknown	Position unbekannt
+Region unknown	Verwaltungsgebiet unbekannt
+Location loading...	Standort wird gesucht…
+Distance unknown	Entfernung unbekannt
+My position unknown	Eigene Position unbekannt
+No nodes	Keine Knoten
+Old position	Veraltete Position
+Contacts unavailable	Kontakte nicht verfügbar
+Map Help	Kartenhilfe
+Map layer: %s	Kartenebene: %s
+Show contours	Höhenlinien anzeigen
+Hide contours	Höhenlinien ausblenden
+Search POI	Orte suchen
+Load navigation	Navigation laden
+Load track	Track laden
+No saved navigation	Keine gespeicherte Navigation
+Help	Hilfe
+Menu	Menü
+Navigation	Navigation
+Nav	Nav.
+New navigation	Neue Navigation
+Current location	Aktueller Standort
+Use current location	Aktuellen Standort verwenden
+Choose destination	Ziel auswählen
+Calculate route	Route berechnen
+Save and preview	Speichern und ansehen
+Calculating route...	Route wird berechnet...
+Route ready: %.1f km	Route bereit: %.1f km
+No TMAP routing data	Keine TMAP-Routingdaten
+No path found	Kein Weg gefunden
+Outside routing coverage	Außerhalb der Routingabdeckung
+Navigation memory limit	Speichergrenze der Navigation erreicht
+Navigation unavailable	Navigation nicht verfügbar
+Origin	Startpunkt
+Destination	Ziel
+Tap the origin to search for a place	Startpunkt antippen, um einen Ort zu suchen
+Search unavailable	Suche nicht verfügbar
+Cancelled	Abgebrochen
+No team	Keine Teammitglieder
+View	Anzeigen
+Current	Aktuell
+Contours	Höhenlinien
+Load	Laden
+Unload	Entladen

@@ -1,6 +1,7 @@
 #if defined(ARDUINO_T_LORA_PAGER)
 #include "boards/tlora_pager/tlora_pager_board.h"
 #include "board/sd_utils.h"
+#include "platform/radio/radio_power.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -18,6 +19,7 @@
 
 #include "display/drivers/ST7796.h"
 #include "pins_arduino.h"
+#include "platform/audio/audio_focus.h"
 #include "platform/esp/arduino_common/power/battery_adc.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/boards/board_runtime.h"
@@ -85,6 +87,7 @@ static uint32_t s_last_radio_spi_lock_timeout_log_ms = 0;
 static uint32_t s_suppressed_radio_spi_lock_timeout_logs = 0;
 static portMUX_TYPE s_audio_owner_mux = portMUX_INITIALIZER_UNLOCKED;
 static PagerAudioOwner s_audio_owner = PagerAudioOwner::None;
+static platform::audio::FocusToken s_audio_focus;
 
 const char* audioOwnerLabel(PagerAudioOwner owner)
 {
@@ -102,6 +105,8 @@ const char* audioOwnerLabel(PagerAudioOwner owner)
         return "walkie";
     case PagerAudioOwner::Sstv:
         return "sstv";
+    case PagerAudioOwner::Music:
+        return "music";
     case PagerAudioOwner::None:
     default:
         return "none";
@@ -123,13 +128,30 @@ bool claimAudioOwner(PagerAudioOwner owner)
         return false;
     }
 
+    platform::audio::FocusToken focus;
+    if (owner == PagerAudioOwner::Music)
+    {
+        if (platform::audio::music_blocked()) return false;
+    }
+    else
+    {
+        using platform::audio::FocusOwner;
+        const auto priority = owner == PagerAudioOwner::VoiceMessage ? FocusOwner::VoiceMessage : owner == PagerAudioOwner::Walkie                                                    ? FocusOwner::Walkie
+                                                                                              : owner == PagerAudioOwner::ReticulumCall || owner == PagerAudioOwner::IncomingCallTone ? FocusOwner::Call
+                                                                                              : owner == PagerAudioOwner::Sstv                                                        ? FocusOwner::Sstv
+                                                                                                                                                                                      : FocusOwner::Notification;
+        focus = platform::audio::request_focus(priority);
+        if (!focus) return false;
+    }
     portENTER_CRITICAL(&s_audio_owner_mux);
     const bool claimed = s_audio_owner == PagerAudioOwner::None;
     if (claimed)
     {
         s_audio_owner = owner;
+        s_audio_focus = focus;
     }
     portEXIT_CRITICAL(&s_audio_owner_mux);
+    if (!claimed) platform::audio::release_focus(focus);
     return claimed;
 }
 
@@ -140,12 +162,16 @@ bool audioOwnerMatches(PagerAudioOwner owner)
 
 void releaseAudioOwner(PagerAudioOwner owner)
 {
+    platform::audio::FocusToken focus;
     portENTER_CRITICAL(&s_audio_owner_mux);
     if (s_audio_owner == owner)
     {
         s_audio_owner = PagerAudioOwner::None;
+        focus = s_audio_focus;
+        s_audio_focus = {};
     }
     portEXIT_CRITICAL(&s_audio_owner_mux);
+    platform::audio::release_focus(focus);
 }
 
 // Temperature state (from BQ27220), used for safety / UI hints / brightness caps.
@@ -1761,6 +1787,7 @@ bool TLoRaPagerBoard::pushColorsResult(uint16_t x1,
 
 int TLoRaPagerBoard::transmitRadio(const uint8_t* data, size_t len)
 {
+    if (!platform::radio::power_policy().enabled()) return RADIOLIB_ERR_SPI_WRITE_FAILED;
     const uint32_t timeout_ms = radio_tx_timeout_ms(radio_, len);
     int rc = RADIOLIB_ERR_SPI_WRITE_FAILED;
     if (withSharedSpiRadioAccess("radio_tx", pdMS_TO_TICKS(50), [&]()
@@ -1816,6 +1843,7 @@ bool TLoRaPagerBoard::quiesceForExternalStorage()
 
 int TLoRaPagerBoard::startRadioReceive()
 {
+    if (!platform::radio::power_policy().enabled()) return RADIOLIB_ERR_SPI_WRITE_FAILED;
     int rc = RADIOLIB_ERR_SPI_WRITE_FAILED;
     if (withSharedSpiRadioAccess("radio_rx", pdMS_TO_TICKS(50), [&]()
                                  { rc = radio_.startReceive(); }))

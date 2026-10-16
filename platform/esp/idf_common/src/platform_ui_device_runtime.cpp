@@ -1,5 +1,6 @@
 ﻿#include "platform/ui/device_runtime.h"
 
+#include "platform/audio/media_volume.h"
 #include <cstring>
 #include <ctime>
 
@@ -205,10 +206,8 @@ uint8_t default_message_tone_volume()
 void set_message_tone_volume(uint8_t volume_percent)
 {
     const uint8_t volume = volume_percent > 100U ? 100U : volume_percent;
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
-    ::boards::t_display_p4::TDisplayP4Board::instance().setMessageToneVolume(volume);
-#endif
     ::platform::esp::idf_common::reticulum_call_support::set_speaker_volume(volume);
+    ::platform::audio::publish_media_volume(volume);
 }
 
 void play_message_tone()

@@ -13,8 +13,8 @@ int main()
     UploadSpaceBudget index(294912, UploadKind::AttachmentIndex), index_large(294913, UploadKind::AttachmentIndex);
     assert(index.add(294912, false) && index.add(108, false) && index.add(108, false) && !index.add(0, false));
     assert(!index_large.complete());
-    UploadSpaceBudget signed_manifest(4166,UploadKind::SignedManifest),signed_large(4167,UploadKind::SignedManifest);
-    assert(signed_manifest.add(4166,false)&&signed_manifest.add(108,false)&&signed_manifest.add(108,false)&&!signed_manifest.add(0,false));
+    UploadSpaceBudget signed_manifest(4166, UploadKind::SignedManifest), signed_large(4167, UploadKind::SignedManifest);
+    assert(signed_manifest.add(4166, false) && signed_manifest.add(108, false) && signed_manifest.add(108, false) && !signed_manifest.add(0, false));
     assert(!signed_large.complete());
     UploadSpaceBudget full(8388608);
     assert(full.add(8388608, false) && full.add(108, false) && full.add(108, false) && full.complete());

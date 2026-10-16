@@ -2945,6 +2945,13 @@ static bool advanceWebDraftFile(Session& s)
     if (!file.open(kWebDraftCandidatePath, "r") || file.size() != total || !file.seek(job.size) ||
         file.read(job.bytes + job.size, count) != static_cast<int>(count))
     {
+        // Map/other SD readers can own the filesystem briefly. Keep the edit
+        // and retry this same slice; only a real read failure rejects it.
+        if (file.read_busy())
+        {
+            next_step.store(millis() + 20);
+            return true;
+        }
         failWebDraftSave(job, WebReadResult::Unavailable);
         return true;
     }
@@ -3334,14 +3341,22 @@ WebReadResult queueWebSignature(const uint8_t operation[16], const uint8_t owner
     return WebReadResult::Ready;
 }
 
-bool validWebSignature(Session::WebSignature& job)
+WebReadResult validWebSignature(Session::WebSignature& job)
 {
-    if (job.failed || !router || job.media != storage::sd_media_session() || !storage::sd_card_ready() || storage::sd_external_block_owner_active() ||
-        now(nullptr).monotonic_ms - job.started >= 120000) return false;
+    if (job.failed || !router || job.media != storage::sd_media_session() || !storage::sd_card_ready() ||
+        now(nullptr).monotonic_ms - job.started >= 120000) return WebReadResult::StaleIdentity;
+    if (storage::sd_external_block_owner_active()) return WebReadResult::Pending;
     std::array<uint8_t, 64> author{};
     uint32_t generation = 0;
-    return router->readDeviceAuthorKey(author.data(), generation) == chat::DeviceAuthorResult::Ok &&
-           generation == job.generation && !std::memcmp(author.data(), job.author.data(), 64);
+    const auto result = router->readDeviceAuthorKey(author.data(), generation);
+    // A nonblocking router lock cannot establish an identity change. Keep the
+    // signed output available for the next read, as confirmation already does.
+    if (result == chat::DeviceAuthorResult::Unavailable) return WebReadResult::Pending;
+    if (result == chat::DeviceAuthorResult::StorageError) return WebReadResult::Unavailable;
+    return result == chat::DeviceAuthorResult::Ok && generation == job.generation &&
+                   !std::memcmp(author.data(), job.author.data(), 64)
+               ? WebReadResult::Ready
+               : WebReadResult::StaleIdentity;
 }
 void advanceWebSignature(Session& s)
 {
@@ -3351,22 +3366,47 @@ void advanceWebSignature(Session& s)
         return;
     }
     auto& job = *s.web_signature;
-    if (!validWebSignature(job))
+    if (job.failed) return;
+    const auto validity = validWebSignature(job);
+    if (validity == WebReadResult::Pending) return;
+    if (validity != WebReadResult::Ready)
     {
+        Serial.printf("[Geocaching][WebSign] failed validity=%u\n", static_cast<unsigned>(validity));
         job.fail();
         return;
     }
     if (job.offset < job.total)
     {
-        if (!job.file.is_open() && (!job.file.open("/trailmate/cache.sign.upload", "r", job.media) || job.file.size() != job.total))
+        const auto input_error = [&](const char* step)
         {
-            job.fail();
+            if (job.file.read_busy()) next_step.store(millis() + 20);
+            else
+            {
+                Serial.printf("[Geocaching][WebSign] failed input-%s\n", step);
+                job.fail();
+            }
+        };
+        if (!job.file.is_open() && !job.file.open("/trailmate/cache.sign.upload", "r", job.media))
+        {
+            input_error("open");
+            return;
+        }
+        if (!job.offset && job.file.size() != job.total)
+        {
+            input_error("size");
+            return;
+        }
+        // A contended read can consume only part of a slice. Retry from the
+        // last fully hashed offset, keeping the original input and digest.
+        if (!job.file.seek(job.offset))
+        {
+            input_error("seek");
             return;
         }
         const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
         if (job.file.read(job.record + job.offset, count) != static_cast<int>(count))
         {
-            job.fail();
+            input_error("read");
             return;
         }
         job.digest.update(job.record + job.offset, count);
@@ -3379,13 +3419,19 @@ void advanceWebSignature(Session& s)
         if (!job.digest.finalize(job.work, 32) || std::memcmp(job.work, job.hash.data(), 32) ||
             !job.issue.begin({job.record, job.total}, job.work, job.capacity))
         {
+            Serial.printf("[Geocaching][WebSign] failed input-binding\n");
             job.fail();
             return;
         }
         job.issuing = true;
     }
+    const auto previous_phase = job.issue.phase();
     job.issue.advance();
-    if (job.issue.phase() == gc::AuthorIssuePhase::Failed) job.fail();
+    if (job.issue.phase() == gc::AuthorIssuePhase::Failed)
+    {
+        Serial.printf("[Geocaching][WebSign] failed phase=%u\n", static_cast<unsigned>(previous_phase));
+        job.fail();
+    }
     else if (job.issue.phase() == gc::AuthorIssuePhase::Signed && job.record)
     {
         heap_caps_free(job.record);
@@ -3402,7 +3448,9 @@ WebReadResult readWebSignature(const uint8_t operation[16], const uint8_t owner[
     auto& job = *session->web_signature;
     if (std::memcmp(job.owner.data(), owner, 16)) return WebReadResult::Forbidden;
     if (std::memcmp(job.operation.data(), operation, 16)) return WebReadResult::NotFound;
-    if (!validWebSignature(job)) job.fail();
+    const auto validity = validWebSignature(job);
+    if (validity == WebReadResult::Pending) return WebReadResult::Pending;
+    if (validity != WebReadResult::Ready) job.fail();
     const auto signed_record = job.issue.signedRecord();
     const uint8_t phase = job.failed ? 2 : signed_record.size ? 1
                                                               : 0;
@@ -3416,7 +3464,7 @@ WebReadResult readWebSignature(const uint8_t operation[16], const uint8_t owner[
     {
         if (phase != 1) return WebReadResult::Pending;
         if (!maximum || maximum > 320 || offset >= signed_record.size) return WebReadResult::Invalid;
-        const size_t count = std::min(size_t(maximum), signed_record.size - offset);
+        const size_t count = std::min<size_t>(maximum, signed_record.size - offset);
         if (!writer.array(5) || !writer.binary({job.operation.data(), 16}) || !writer.unsignedInteger(offset) || !writer.unsignedInteger(signed_record.size) ||
             !writer.binary({job.hash.data(), 32}) || !writer.binary({signed_record.data + offset, count})) return WebReadResult::Invalid;
     }
@@ -3523,20 +3571,57 @@ void advanceWebConfirmation(Session& s)
     if (validity == WebReadResult::Pending) return;
     if (validity != WebReadResult::Ready)
     {
+        Serial.printf("[Geocaching][WebConfirm] failed validity=%u\n", static_cast<unsigned>(validity));
         job.fail();
         return;
     }
     if (job.released) return;
     if (job.offset < job.total)
     {
-        if (!job.file.is_open() && (!job.file.open("/trailmate/cache.confirm.upload", "r", job.media) || job.file.size() != job.total))
+        if (!job.file.is_open() && !job.file.open("/trailmate/cache.confirm.upload", "r", job.media))
         {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
+            Serial.printf("[Geocaching][WebConfirm] failed input-open\n");
+            job.fail();
+            return;
+        }
+        if (!job.offset && job.file.size() != job.total)
+        {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
+            Serial.printf("[Geocaching][WebConfirm] failed input-size\n");
+            job.fail();
+            return;
+        }
+        // A Busy read may have consumed part of the requested slice. Always
+        // restore the last fully hashed offset before retrying that slice.
+        if (!job.file.seek(job.offset))
+        {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
+            Serial.printf("[Geocaching][WebConfirm] failed input-seek\n");
             job.fail();
             return;
         }
         const size_t count = std::min(size_t(320), size_t(job.total - job.offset));
         if (job.file.read(job.source + job.offset, count) != static_cast<int>(count))
         {
+            if (job.file.read_busy())
+            {
+                next_step.store(millis() + 20);
+                return;
+            }
+            Serial.printf("[Geocaching][WebConfirm] failed input-read\n");
             job.fail();
             return;
         }
@@ -3550,13 +3635,45 @@ void advanceWebConfirmation(Session& s)
         if (!job.digest.finalize(job.work, 32) || std::memcmp(job.work, job.hash.data(), 32) ||
             !job.job.begin(job.transfer, {job.source, job.total}, {job.proof, job.proof_size}, {job.author.data(), 64}, now(nullptr), job.work, job.capacity))
         {
+            Serial.printf("[Geocaching][WebConfirm] failed input-binding\n");
             job.fail();
             return;
         }
         job.begun = true;
     }
+    const auto previous_phase = job.job.phase();
     job.job.advance();
-    if (job.job.phase() == WebConfirmationPhase::Failed || job.job.phase() == WebConfirmationPhase::Cancelled) job.fail();
+    if (job.job.phase() == WebConfirmationPhase::Failed || job.job.phase() == WebConfirmationPhase::Cancelled)
+    {
+        Serial.printf("[Geocaching][WebConfirm] failed phase=%u\n", static_cast<unsigned>(previous_phase));
+        // Diagnose a real rejected preparation with the existing payload and
+        // scratch, after failure only. Never print key, content or proof bytes.
+        if (previous_phase == WebConfirmationPhase::Prepare)
+        {
+            auto content = ::platform::memory::PsramPtr<gc::protocol::VerifiedRecordView>(::platform::memory::createPsram<gc::protocol::VerifiedRecordView>());
+            if (content)
+            {
+                const auto record = gc::protocol::verifyGeocache({job.source, job.total}, s.crypto, job.work, job.capacity, *content);
+                Serial.printf("[Geocaching][WebConfirm] record=%u author-match=%u\n", static_cast<unsigned>(record),
+                              static_cast<unsigned>(record == gc::protocol::VerificationResult::Valid && !std::memcmp(content->record.author_public_key.data, job.author.data(), 64)));
+                gc::storage::PublicationConfirmationView proof;
+                if (record == gc::protocol::VerificationResult::Valid && gc::storage::decodePublicationConfirmation({job.proof, job.proof_size}, proof))
+                {
+                    gc::protocol::CmpReader raw(proof.raw);
+                    size_t count = 0;
+                    uint64_t version = 0;
+                    gc::ByteView directory;
+                    if (raw.array(count, 8) && count == 8 && raw.unsignedInteger(version) && version == 1 && raw.binary(directory, 16) && directory.size == 16)
+                    {
+                        gc::protocol::PublicationReceiptView receipt;
+                        const auto verified = gc::storage::verifyPublicationConfirmation({job.proof, job.proof_size}, directory, *content, s.crypto, job.work, job.capacity, receipt);
+                        Serial.printf("[Geocaching][WebConfirm] proof=%u\n", static_cast<unsigned>(verified));
+                    }
+                }
+            }
+        }
+        job.fail();
+    }
     else if (job.job.phase() == WebConfirmationPhase::Confirmed) job.releasePayload();
 }
 WebReadResult readWebConfirmation(const uint8_t transfer[16], const uint8_t owner[16], uint8_t* output, size_t capacity, size_t& written)

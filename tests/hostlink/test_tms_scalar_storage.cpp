@@ -65,6 +65,7 @@ bool finishDocument(bool, uint16_t) { return accepted; }
 constexpr const char* kSettingsNs = "settings";
 constexpr const char* kPowerNs = "power";
 constexpr uint32_t kRequiredBase = 3;
+constexpr uint32_t SeenRadioEnabled = 1UL << 18U;
 struct ScalarState
 {
     uint32_t seen = kRequiredBase;
@@ -90,6 +91,7 @@ struct ScalarState
     uint8_t timezone_tzdef[192] = {};
     std::size_t timezone_tzdef_len = 0;
     bool wifi_enabled = false;
+    bool radio_enabled = true;
     int wifi_profiles[1] = {};
     uint8_t wifi_profile_count = 0;
     int network = 0;
@@ -201,6 +203,18 @@ int main()
     s_state.network_seen = 0;
     assert(finishDocument(nullptr, true, 2)); // Legacy omission retains existing settings.
     assert(store::writes == 0 && store::reads == 0 && store::other_writes == 0);
+    s_state = ScalarState{};
+    s_state.seen |= SeenRadioEnabled;
+    s_state.radio_enabled = false;
+    store::values.clear();
+    store::writes = store::reads = 0;
+    assert(write_base_scalar_settings());
+    assert(store::values.at("settings/radio_enabled") == 0);
+    assert(store::writes == 13 && store::reads == 13);
+    s_state.seen &= ~SeenRadioEnabled;
+    s_state.radio_enabled = true;
+    assert(write_base_scalar_settings());
+    assert(store::values.at("settings/radio_enabled") == 0); // Old documents preserve the current preference.
     s_state_storage = nullptr;
     assert(!finishDocument(nullptr, true, 7));
 }

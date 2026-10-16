@@ -26,6 +26,9 @@ class TDeckAudioRuntime
                          std::size_t encoded_media_len,
                          uint8_t volume_percent);
     bool isReady() const;
+    bool beginMusic(uint32_t sample_rate);
+    bool writeMusic(const int16_t* mono, std::size_t samples);
+    void endMusic();
 
   private:
     static constexpr std::size_t kPcmSampleCount = 128U * 2U;
@@ -39,6 +42,7 @@ class TDeckAudioRuntime
     std::atomic<bool> faulted_{false};
     std::atomic<uint8_t> volume_percent_{45};
     std::atomic_flag audio_busy_ = ATOMIC_FLAG_INIT;
+    bool music_active_ = false; // Only the single music worker accesses its session.
     std::array<int16_t, kPcmSampleCount> pcm_{};
 };
 

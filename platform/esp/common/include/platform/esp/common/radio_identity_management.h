@@ -2,7 +2,11 @@
 #include "chat/infra/meshcore/meshcore_identity_crypto.h"
 #include "hostlink/radio_identity_backup.h"
 #include "platform/esp/common/radio_identity_work.h"
+#if defined(ESP_PLATFORM) && !defined(ARDUINO)
+#include "platform/esp/common/reticulum_crypto_compat.h"
+#else
 #include <Curve25519.h>
+#endif
 
 namespace platform::esp::common
 {

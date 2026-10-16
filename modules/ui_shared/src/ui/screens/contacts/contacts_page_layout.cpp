@@ -10,7 +10,6 @@
 #include "chat/domain/chat_types.h"
 
 #include "ui/assets/fonts/font_utils.h"
-#include "ui/components/air_status_footer.h"
 #include "ui/components/info_card.h"
 #include "ui/components/two_pane_layout.h"
 #include "ui/localization.h"
@@ -138,11 +137,6 @@ lv_obj_t* create_header(lv_obj_t* root,
     ::ui::widgets::top_bar_set_back_callback(g_contacts_state.top_bar, back_callback, user_data);
 
     return header;
-}
-
-void create_footer(lv_obj_t* root)
-{
-    g_contacts_state.air_status_footer = ::ui::components::air_status_footer::create(root);
 }
 
 lv_obj_t* create_content(lv_obj_t* root)

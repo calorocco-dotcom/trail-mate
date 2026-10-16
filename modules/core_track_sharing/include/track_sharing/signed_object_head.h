@@ -24,11 +24,19 @@ inline bool createSignedObjectHead(const VerifiedManifestView& signed_view, cons
         signed_view.manifest.revision != reservation.revision || signed_view.manifest.state > 1) return false;
     if (reservation.revision != 1 && (!signed_view.manifest.previous.data || signed_view.manifest.previous.size != 32 || std::memcmp(reservation.parent, signed_view.manifest.previous.data, 32))) return false;
     if (current && (!objectHeadValid(*current) || current->sequence == UINT64_MAX || current->revision == UINT32_MAX || reservation.revision != current->revision + 1)) return false;
-    std::memcpy(output.object, reservation.object, 32); std::memcpy(output.hash, reservation.candidate, 32);
-    std::memcpy(output.parent, reservation.parent, 32); std::memcpy(output.operation, reservation.operation, 16);
-    output.generation = generation; output.revision = reservation.revision; output.sequence = current ? current->sequence + 1 : 1;
+    std::memcpy(output.object, reservation.object, 32);
+    std::memcpy(output.hash, reservation.candidate, 32);
+    std::memcpy(output.parent, reservation.parent, 32);
+    std::memcpy(output.operation, reservation.operation, 16);
+    output.generation = generation;
+    output.revision = reservation.revision;
+    output.sequence = current ? current->sequence + 1 : 1;
     output.archived = signed_view.manifest.state == 1;
-    if (!objectHeadValid(output) || (current ? !objectHeadAdvanceValid(*current, output) : output.revision != 1)) { output = {}; return false; }
+    if (!objectHeadValid(output) || (current ? !objectHeadAdvanceValid(*current, output) : output.revision != 1))
+    {
+        output = {};
+        return false;
+    }
     return true;
 }
 } // namespace track_sharing

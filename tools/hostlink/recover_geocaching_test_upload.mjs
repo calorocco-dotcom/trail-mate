@@ -20,6 +20,7 @@ const draftId=Uint8Array.from(Buffer.from(option('--draft'),'hex'));
 const kind=args.includes('--confirmed-record')?6:5;
 const resume=args.includes('--resume-confirmation');
 if(resume&&(kind!==6||args.includes('--abort')))throw Error('Confirmation resume requires the exact accepted record and excludes cleanup');
+if(args.includes('--retry-failed')&&!resume)throw Error('Retry requires the exact retained confirmation');
 const child=spawn(option('--python'),[fileURLToPath(new URL('./serial_transport.py',import.meta.url)),option('--port')],{stdio:['pipe','pipe','pipe'],windowsHide:true});
 let pending,sequence=0,stderr='';child.stderr.on('data',data=>{stderr=(stderr+data).slice(-4096);});
 const done=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>{pending?.reject(Error('Serial transport stopped'));pending=null;resolve(code);});});done.catch(()=>{});
@@ -30,10 +31,10 @@ async function exchange(type,payload,response){
  const frames=new FrameDecoder().push(Uint8Array.from(Buffer.from(reply.hex,'hex'))),frame=frames[0];
  if(frames.length!==1||frame.type!==response||frame.sequence!==next)throw Error('Invalid serial frame');return frame.payload;
 }
-let abortAllowed=false,abortIssued=false,confirmationBinding=null,ownedSession=false;
+let abortAllowed=false,abortIssued=false,confirmationBinding=null,confirmationCompleted=false,ownedSession=false;
 const session={id:crypto.getRandomValues(new Uint8Array(16)),async request(op,body){
- if(![0,1,2,3,38,64,65,36,75,76].includes(op)||(op===65&&!equal(body[0],draftId))||(op===38&&(body[0]!==kind||body[1]!==null))||(op===64&&kind!==6))throw Error('Unrelated command rejected');
- if([75,76].includes(op)&&(!resume||!confirmationBinding||!equal(body[0],confirmationBinding.id)||(op===75&&(!equal(body[1],confirmationBinding.hash)||body[2]!==confirmationBinding.authorGeneration||!equal(body[3],confirmationBinding.receipt.raw)||!equal(body[4],confirmationBinding.receipt.signature)||!equal(body[5],confirmationBinding.receipt.publicKey)||!equal(body[6],confirmationBinding.receipt.epoch)))))throw Error('Unverified confirmation rejected');
+ if(![0,1,2,3,38,64,65,36,75,76,77].includes(op)||(op===65&&!equal(body[0],draftId))||(op===38&&(body[0]!==kind||body[1]!==null))||(op===64&&kind!==6))throw Error('Unrelated command rejected');
+ if([75,76,77].includes(op)&&(!resume||!confirmationBinding||!equal(body[0],confirmationBinding.id)||(op===77&&!confirmationCompleted&&!args.includes('--retry-failed'))||(op===75&&(!equal(body[1],confirmationBinding.hash)||body[2]!==confirmationBinding.authorGeneration||!equal(body[3],confirmationBinding.receipt.raw)||!equal(body[4],confirmationBinding.receipt.signature)||!equal(body[5],confirmationBinding.receipt.publicKey)||!equal(body[6],confirmationBinding.receipt.epoch)))))throw Error('Unverified confirmation rejected');
  if(op===36){if(!abortAllowed||abortIssued)throw Error('Unverified or repeated abort rejected');abortIssued=true;}
  const requestId=crypto.getRandomValues(new Uint8Array(16)),reply=decodeManagement(await exchange(FRAME.MANAGEMENT_REQUEST,encodeManagement(this.id,requestId,op,body),FRAME.MANAGEMENT_RESPONSE));
  if(!equal(reply.session,this.id)||!equal(reply.request,requestId))throw Error('Management correlation mismatch');
@@ -76,8 +77,24 @@ try{
    if(!checked||!equal(checked.id,row.id)||!equal(checked.owner,row.owner)||!equal(checked.hash,expectedHash)||!equal(checked.draftId,draftId)||checked.total!==expectedSize)throw Error('Confirmation input changed; preserved');
    confirmationBinding={id:row.id.slice(),hash:expectedHash,authorGeneration:proved.generation,receipt};
    let result=await beginDevicePublicationConfirmation(session,{id:row.id,sha256:expectedHash,sealed:true,authorGeneration:proved.generation,receipt},proved);
-   const deadline=performance.now()+90000;
-   while(!result.confirmed){if(result.phase===2||performance.now()>=deadline)throw Error('Exact confirmation remains unconfirmed');await new Promise(resolve=>setTimeout(resolve,500));result=await readDevicePublicationConfirmation(session,result.binding,proved);}
+   const deadline=performance.now()+90000;let retried=false;
+   while(!result.confirmed){
+    if(result.phase===2){
+     if(!args.includes('--retry-failed')||retried)throw Error('Exact confirmation failed; retained source and proof preserved');
+     // Failure may arrive on a status poll rather than the begin response.
+     // Release only that failed job, retaining the exact source and receipt.
+     const released=await session.request(77,[row.id]);if(!Array.isArray(released)||released.length)throw Error('Invalid failed-job release');
+     retried=true;
+     result=await beginDevicePublicationConfirmation(session,{id:row.id,sha256:expectedHash,sealed:true,authorGeneration:proved.generation,receipt},proved);
+     console.log(JSON.stringify({retriedFailedRuntime:true,phase:result.phase,sourcePreserved:true}));
+     continue;
+    }
+    if(performance.now()>=deadline)throw Error('Exact confirmation remains unconfirmed');
+    await new Promise(resolve=>setTimeout(resolve,500));result=await readDevicePublicationConfirmation(session,result.binding,proved);
+   }
+   confirmationCompleted=true;
+   console.log(JSON.stringify({durableConfirmation:true,revision:result.binding.revision,draft:option('--draft')}));
+   const released=await session.request(77,[row.id]);if(!Array.isArray(released)||released.length)throw Error('Invalid completed-job release');
    const remaining=await readSignatureRecovery(session,proved,settings);if(remaining)throw Error('Confirmed input is still active');
    console.log(JSON.stringify({resumed:true,confirmed:true,revision:result.binding.revision,terminalInputReusable:true,draft:option('--draft'),newSignature:false}));
   }
@@ -93,4 +110,4 @@ try{
    console.log(JSON.stringify({aborted:true,onlyStagingKind:kind,savedDraftPreserved:true,confirmedVersionPreserved:kind===6}));
   }
  }
-}finally{if(ownedSession)await session.request(3,[]).catch(()=>{});child.stdin.end();const code=await done;lines.close();if(code!==0)throw Error('Serial transport failed: '+stderr);}
+}finally{if(ownedSession)await session.request(3,[]).catch(()=>{});child.stdin.end();const code=await done;lines.close();if(process.env.TRAIL_MATE_SERIAL_DIAGNOSTICS==='1'&&stderr)console.error(stderr.trim());if(code!==0)throw Error('Serial transport failed: '+stderr);}

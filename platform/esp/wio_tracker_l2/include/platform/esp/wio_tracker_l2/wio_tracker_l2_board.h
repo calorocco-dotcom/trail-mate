@@ -45,6 +45,9 @@ class WioTrackerL2Board final : public BoardBase,
     void setMessageToneVolume(uint8_t level) override;
     uint8_t getMessageToneVolume() const override { return tone_volume_; }
     bool isVoicePlaybackReady() const { return audio_ready_; }
+    bool beginMusic(uint32_t sample_rate);
+    bool writeMusic(const int16_t* mono, size_t samples);
+    void endMusic();
     bool playCodec2Voice(const uint8_t* data, size_t size, uint8_t volume);
 
     bool installSD() override;

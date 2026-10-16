@@ -79,6 +79,14 @@ This project is indexed by GitNexus as **trail-mate** (75989 symbols, 159079 rel
 - For repeated or complex local operations, write down the intended steps first and run them as small observable commands instead of one large opaque command.
 - After any failed or timed-out command, inspect the process state before retrying.
 
+## Documentation Language
+
+- Write documentation in English, including the README, Changelog, release notes,
+  engineering/UI guides, tool documentation and Wiki.
+- Chinese documentation is allowed only under `docs/locales/zh-Hans/`.
+- Keep literal UI examples, identifiers and existing links accurate; explain them
+  in English outside that locale directory.
+
 ## Formatting
 
 - Use clang-format 14 only; use a version that matches CI.

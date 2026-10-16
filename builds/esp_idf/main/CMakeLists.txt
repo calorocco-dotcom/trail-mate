@@ -44,6 +44,8 @@ idf_component_register(
         ${TRAILMATE_ESP_IDF_PRODUCT_COMPOSITION_SOURCES}
         ${TRAILMATE_ESP_IDF_CORE_HOSTLINK_SOURCES}
         ${TRAILMATE_ESP_IDF_CORE_SYS_SOURCES}
+        ${TRAILMATE_ESP_IDF_CORE_MUSIC_SOURCES}
+        ${TRAILMATE_ESP_IDF_AGENDA_WIDGET_SOURCES}
         ${TRAILMATE_ESP_IDF_CORE_DEVICE_SOURCES}
         ${TRAILMATE_ESP_IDF_CORE_GPS_SOURCES}
         ${TRAILMATE_ESP_IDF_CORE_CHAT_SOURCES}
@@ -103,3 +105,14 @@ if(TRAIL_MATE_IDF_TARGET STREQUAL "tdeck")
 endif()
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
+if(TRAIL_MATE_IDF_TARGET STREQUAL "t_display_p4_tft" OR
+   TRAIL_MATE_IDF_TARGET STREQUAL "t_display_p4_amoled")
+    # LVGL introduces these references after libmain's archive scan. Keep the
+    # custom allocator object reachable regardless of component archive order.
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--undefined=lv_malloc_core")
+endif()
+if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    include("${TRAILMATE_ROOT}/cmake/TrailMateTmap.cmake")
+    trailmate_add_tmap()
+    target_link_libraries(${COMPONENT_LIB} PUBLIC tmap::tmap)
+endif()

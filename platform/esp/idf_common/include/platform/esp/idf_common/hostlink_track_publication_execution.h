@@ -93,33 +93,41 @@ class TrackPublicationExecution
     }
     chat::TrackBindingChange snapshot(track_sharing::PublicationJournal& output)
     {
-        struct Copy {TrackPublicationExecution& work;track_sharing::PublicationJournal& output;} copy{*this,output};
-        return adapter_.visitTrackDelivery(&network_.binding(),author_,generation_,[](void* value)
+        struct Copy
         {
-            auto& data=*static_cast<Copy*>(value);data.output=data.work.input_.job_;
-        },&copy);
+            TrackPublicationExecution& work;
+            track_sharing::PublicationJournal& output;
+        } copy{*this, output};
+        return adapter_.visitTrackDelivery(
+            &network_.binding(), author_, generation_, [](void* value)
+            {
+            auto& data=*static_cast<Copy*>(value);data.output=data.work.input_.job_; },
+            &copy);
     }
-    Status cancel(geocaching::ByteView operation,uint32_t generation,track_sharing::PublicationJournal& output)
+    Status cancel(geocaching::ByteView operation, uint32_t generation, track_sharing::PublicationJournal& output)
     {
-        if(!operation.data || operation.size!=16 || !generation)return Status::InvalidField;
-        if(generation!=input_.request_.generation)return Status::StaleIdentity;
+        if (!operation.data || operation.size != 16 || !generation) return Status::InvalidField;
+        if (generation != input_.request_.generation) return Status::StaleIdentity;
         struct Cancel
         {
-            TrackPublicationExecution& work;geocaching::ByteView operation;track_sharing::PublicationJournal& output;
-            track_sharing::PublicationStoreResult result=track_sharing::PublicationStoreResult::Conflict;
-        } call{*this,operation,output};
-        const auto visited=adapter_.visitTrackDelivery(&network_.binding(),author_,generation_,[](void* value)
-        {
+            TrackPublicationExecution& work;
+            geocaching::ByteView operation;
+            track_sharing::PublicationJournal& output;
+            track_sharing::PublicationStoreResult result = track_sharing::PublicationStoreResult::Conflict;
+        } call{*this, operation, output};
+        const auto visited = adapter_.visitTrackDelivery(
+            &network_.binding(), author_, generation_, [](void* value)
+            {
             auto& data=*static_cast<Cancel*>(value);auto& work=data.work;
             if(std::memcmp(data.operation.data,work.input_.job_.operation,16))return;
             data.result=work.network_.cancel(work.generation_,{work.input_.author_hash_,32});
             if(data.result==track_sharing::PublicationStoreResult::Ready || data.result==track_sharing::PublicationStoreResult::StorageFailure)
             {work.bytes_=0;work.rejected_=false;}
-            if(data.result==track_sharing::PublicationStoreResult::Ready)data.output=work.input_.job_;
-        },&call);
-        if(visited!=chat::TrackBindingChange::Applied)return visited==chat::TrackBindingChange::Busy?Status::Busy:Status::StaleIdentity;
-        return call.result==track_sharing::PublicationStoreResult::Ready?Status::Ok:
-            call.result==track_sharing::PublicationStoreResult::StorageFailure?Status::StorageUnavailable:Status::Conflict;
+            if(data.result==track_sharing::PublicationStoreResult::Ready)data.output=work.input_.job_; },
+            &call);
+        if (visited != chat::TrackBindingChange::Applied) return visited == chat::TrackBindingChange::Busy ? Status::Busy : Status::StaleIdentity;
+        return call.result == track_sharing::PublicationStoreResult::Ready ? Status::Ok : call.result == track_sharing::PublicationStoreResult::StorageFailure ? Status::StorageUnavailable
+                                                                                                                                                               : Status::Conflict;
     }
     bool holds(const track_sharing::PublicationJournal& job) const
     {

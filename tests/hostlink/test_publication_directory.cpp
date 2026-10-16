@@ -1,7 +1,7 @@
 #include "track_sharing/admit_publication_intent.h"
+#include "track_sharing/cancel_publication.h"
 #include "track_sharing/load_publication_history.h"
 #include "track_sharing/publication_candidate_reader.h"
-#include "track_sharing/cancel_publication.h"
 #include <array>
 #include <cassert>
 #include <map>
@@ -214,62 +214,73 @@ int main()
     assert(admitPublicationIntent(pins, jobs, changed_directory, decoded, job, current, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Conflict);
     assert(admission_io.writes == admission_writes);
     assert(admitPublicationIntent(pins, jobs, desired, decoded, job, current, current, scratch.data(), scratch.size()) == PublicationStoreResult::Invalid);
-    next=current;++next.sequence;next.offset=320;
-    assert(jobs.advance(current,next,verify,scratch.data(),scratch.size())==PublicationStoreResult::Ready);
-    const auto history_files=admission_io.files;
-    const auto history_writes=admission_io.writes;
-    PublicationDirectoryStore<Io> restarted_pins(admission_io,"/op.dir");
-    PublicationJournalStore<Io> restarted_jobs(admission_io,"/op.pua","/op.pub");
-    assert(loadPublicationHistory(restarted_pins,restarted_jobs,desired,job,decoded,current,verify,scratch.data(),scratch.size())==PublicationStoreResult::Ready);
-    assert(current.sequence==3 && current.offset==320 && current.phase==PublicationPhase::Uploading);
-    assert(admission_io.files==history_files && admission_io.writes==history_writes && !admission_io.active);
-    auto wrong_author=job;wrong_author.author_hash[0]^=1;
-    assert(loadPublicationHistory(restarted_pins,restarted_jobs,desired,wrong_author,decoded,current,verify,scratch.data(),scratch.size())==PublicationStoreResult::Conflict);
+    next = current;
+    ++next.sequence;
+    next.offset = 320;
+    assert(jobs.advance(current, next, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Ready);
+    const auto history_files = admission_io.files;
+    const auto history_writes = admission_io.writes;
+    PublicationDirectoryStore<Io> restarted_pins(admission_io, "/op.dir");
+    PublicationJournalStore<Io> restarted_jobs(admission_io, "/op.pua", "/op.pub");
+    assert(loadPublicationHistory(restarted_pins, restarted_jobs, desired, job, decoded, current, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Ready);
+    assert(current.sequence == 3 && current.offset == 320 && current.phase == PublicationPhase::Uploading);
+    assert(admission_io.files == history_files && admission_io.writes == history_writes && !admission_io.active);
+    auto wrong_author = job;
+    wrong_author.author_hash[0] ^= 1;
+    assert(loadPublicationHistory(restarted_pins, restarted_jobs, desired, wrong_author, decoded, current, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Conflict);
     assert(!current.sequence && !verify.sequence && !decoded.file_limit);
-    assert(loadPublicationHistory(restarted_pins,restarted_jobs,changed_directory,job,decoded,current,verify,scratch.data(),scratch.size())==PublicationStoreResult::Conflict);
-    admission_io.files.erase("/op.pua");admission_io.files.erase("/op.pub");
-    assert(loadPublicationHistory(restarted_pins,restarted_jobs,desired,job,decoded,current,verify,scratch.data(),scratch.size())==PublicationStoreResult::Missing);
-    assert(admission_io.writes==history_writes && !current.sequence && !admission_io.active);
+    assert(loadPublicationHistory(restarted_pins, restarted_jobs, changed_directory, job, decoded, current, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Conflict);
+    admission_io.files.erase("/op.pua");
+    admission_io.files.erase("/op.pub");
+    assert(loadPublicationHistory(restarted_pins, restarted_jobs, desired, job, decoded, current, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Missing);
+    assert(admission_io.writes == history_writes && !current.sequence && !admission_io.active);
     {
-        Io cancel_io;cancel_io.files=history_files;
-        PublicationJournalStore<Io> cancel_jobs(cancel_io,"/op.pua","/op.pub");
-        PublicationJournal cancelling,next_cancel,verify_cancel;
-        assert(cancel_jobs.load(cancelling,verify_cancel,scratch.data(),scratch.size())==PublicationStoreResult::Ready);
-        uint8_t author[32];std::memcpy(author,job.author_hash,32);
-        assert(cancelPublicationBeforePublish(cancel_jobs,cancelling,next_cancel,verify_cancel,job.generation+1,{author,32},scratch.data(),scratch.size())==PublicationStoreResult::Conflict && !cancel_io.writes);
-        cancel_io.fail_sync=true;
-        assert(cancelPublicationBeforePublish(cancel_jobs,cancelling,next_cancel,verify_cancel,job.generation,{author,32},scratch.data(),scratch.size())==PublicationStoreResult::StorageFailure);
-        assert(cancelling.sequence==3 && cancelling.offset==320 && cancelling.phase==PublicationPhase::Uploading);
-        cancel_io.fail_sync=false;cancel_io.files=history_files;
-        assert(cancelPublicationBeforePublish(cancel_jobs,cancelling,next_cancel,verify_cancel,job.generation,{author,32},scratch.data(),scratch.size())==PublicationStoreResult::Ready);
-        assert(cancelling.sequence==4 && cancelling.offset==320 && cancelling.phase==PublicationPhase::Cancelled);
-        const auto writes=cancel_io.writes;
-        assert(cancelPublicationBeforePublish(cancel_jobs,cancelling,next_cancel,verify_cancel,job.generation,{author,32},scratch.data(),scratch.size())==PublicationStoreResult::Ready && cancel_io.writes==writes);
-        cancelling.phase=PublicationPhase::Publishing;cancelling.offset=cancelling.file_bytes;
-        assert(cancelPublicationBeforePublish(cancel_jobs,cancelling,next_cancel,verify_cancel,job.generation,{author,32},scratch.data(),scratch.size())==PublicationStoreResult::Conflict && cancel_io.writes==writes);
+        Io cancel_io;
+        cancel_io.files = history_files;
+        PublicationJournalStore<Io> cancel_jobs(cancel_io, "/op.pua", "/op.pub");
+        PublicationJournal cancelling, next_cancel, verify_cancel;
+        assert(cancel_jobs.load(cancelling, verify_cancel, scratch.data(), scratch.size()) == PublicationStoreResult::Ready);
+        uint8_t author[32];
+        std::memcpy(author, job.author_hash, 32);
+        assert(cancelPublicationBeforePublish(cancel_jobs, cancelling, next_cancel, verify_cancel, job.generation + 1, {author, 32}, scratch.data(), scratch.size()) == PublicationStoreResult::Conflict && !cancel_io.writes);
+        cancel_io.fail_sync = true;
+        assert(cancelPublicationBeforePublish(cancel_jobs, cancelling, next_cancel, verify_cancel, job.generation, {author, 32}, scratch.data(), scratch.size()) == PublicationStoreResult::StorageFailure);
+        assert(cancelling.sequence == 3 && cancelling.offset == 320 && cancelling.phase == PublicationPhase::Uploading);
+        cancel_io.fail_sync = false;
+        cancel_io.files = history_files;
+        assert(cancelPublicationBeforePublish(cancel_jobs, cancelling, next_cancel, verify_cancel, job.generation, {author, 32}, scratch.data(), scratch.size()) == PublicationStoreResult::Ready);
+        assert(cancelling.sequence == 4 && cancelling.offset == 320 && cancelling.phase == PublicationPhase::Cancelled);
+        const auto writes = cancel_io.writes;
+        assert(cancelPublicationBeforePublish(cancel_jobs, cancelling, next_cancel, verify_cancel, job.generation, {author, 32}, scratch.data(), scratch.size()) == PublicationStoreResult::Ready && cancel_io.writes == writes);
+        cancelling.phase = PublicationPhase::Publishing;
+        cancelling.offset = cancelling.file_bytes;
+        assert(cancelPublicationBeforePublish(cancel_jobs, cancelling, next_cancel, verify_cancel, job.generation, {author, 32}, scratch.data(), scratch.size()) == PublicationStoreResult::Conflict && cancel_io.writes == writes);
     }
     {
         PublicationSlotKey candidate;
-        std::memcpy(candidate.object,job.object,32);std::memcpy(candidate.operation,job.operation,16);
-        Io inventory_io;char canonical[kObjectPathCapacity];
-        assert(resolveObjectPath({candidate.object,32},ObjectFile::PublicationDirectory,{candidate.operation,16},canonical,sizeof(canonical)));
-        inventory_io.files[canonical]=history_files.at("/op.dir");
-        assert(resolveObjectPath({candidate.object,32},ObjectFile::PublicationA,{candidate.operation,16},canonical,sizeof(canonical)));
-        inventory_io.files[canonical]=history_files.at("/op.pua");
-        assert(resolveObjectPath({candidate.object,32},ObjectFile::PublicationB,{candidate.operation,16},canonical,sizeof(canonical)));
-        inventory_io.files[canonical]=history_files.at("/op.pub");
+        std::memcpy(candidate.object, job.object, 32);
+        std::memcpy(candidate.operation, job.operation, 16);
+        Io inventory_io;
+        char canonical[kObjectPathCapacity];
+        assert(resolveObjectPath({candidate.object, 32}, ObjectFile::PublicationDirectory, {candidate.operation, 16}, canonical, sizeof(canonical)));
+        inventory_io.files[canonical] = history_files.at("/op.dir");
+        assert(resolveObjectPath({candidate.object, 32}, ObjectFile::PublicationA, {candidate.operation, 16}, canonical, sizeof(canonical)));
+        inventory_io.files[canonical] = history_files.at("/op.pua");
+        assert(resolveObjectPath({candidate.object, 32}, ObjectFile::PublicationB, {candidate.operation, 16}, canonical, sizeof(canonical)));
+        inventory_io.files[canonical] = history_files.at("/op.pub");
         PublicationCandidateReader<Io> reader(inventory_io);
-        assert(reader.load(candidate,scratch.data(),scratch.size())==PublicationStoreResult::Ready);
-        assert(reader.unverifiedJournal()->sequence==3 && reader.unverifiedJournal()->offset==320 && reader.unverifiedDirectory());
-        candidate.slot=ObjectFile::PublicationB;
-        assert(reader.load(candidate,scratch.data(),scratch.size())==PublicationStoreResult::Ready && !inventory_io.writes && !inventory_io.active);
-        assert(reader.load(candidate,nullptr,0)==PublicationStoreResult::Invalid && !reader.unverifiedJournal());
-        assert(reader.load(candidate,scratch.data(),scratch.size())==PublicationStoreResult::Ready);
-        inventory_io.files[canonical][10]^=1;
-        assert(reader.load(candidate,scratch.data(),scratch.size())==PublicationStoreResult::Corrupt && !reader.unverifiedJournal() && !reader.unverifiedDirectory());
+        assert(reader.load(candidate, scratch.data(), scratch.size()) == PublicationStoreResult::Ready);
+        assert(reader.unverifiedJournal()->sequence == 3 && reader.unverifiedJournal()->offset == 320 && reader.unverifiedDirectory());
+        candidate.slot = ObjectFile::PublicationB;
+        assert(reader.load(candidate, scratch.data(), scratch.size()) == PublicationStoreResult::Ready && !inventory_io.writes && !inventory_io.active);
+        assert(reader.load(candidate, nullptr, 0) == PublicationStoreResult::Invalid && !reader.unverifiedJournal());
+        assert(reader.load(candidate, scratch.data(), scratch.size()) == PublicationStoreResult::Ready);
+        inventory_io.files[canonical][10] ^= 1;
+        assert(reader.load(candidate, scratch.data(), scratch.size()) == PublicationStoreResult::Corrupt && !reader.unverifiedJournal() && !reader.unverifiedDirectory());
         assert(!inventory_io.writes && !inventory_io.active);
     }
-    admission_io.files=history_files;admission_io.files["/op.pub"][10]^=1;
-    assert(loadPublicationHistory(restarted_pins,restarted_jobs,desired,job,decoded,current,verify,scratch.data(),scratch.size())==PublicationStoreResult::Corrupt);
-    assert(admission_io.writes==history_writes && !current.sequence && !admission_io.active);
+    admission_io.files = history_files;
+    admission_io.files["/op.pub"][10] ^= 1;
+    assert(loadPublicationHistory(restarted_pins, restarted_jobs, desired, job, decoded, current, verify, scratch.data(), scratch.size()) == PublicationStoreResult::Corrupt);
+    assert(admission_io.writes == history_writes && !current.sequence && !admission_io.active);
 }

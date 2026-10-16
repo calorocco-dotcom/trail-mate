@@ -77,6 +77,7 @@ class TDeckBoard : public BoardBase,
 
     /** @brief True after the board's I2S speaker runtime is available. */
     bool isVoicePlaybackReady() const;
+    TDeckAudioRuntime& audioRuntime() { return audio_runtime_; }
 
     /** @brief Plays one Codec2-1300 voice-message object through the speaker. */
     bool playCodec2Voice(const uint8_t* encoded_media,

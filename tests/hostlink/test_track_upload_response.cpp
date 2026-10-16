@@ -166,7 +166,8 @@ int main(int argc, char** argv)
         uint8_t local[16], message_hash[32]{};
         std::memset(local, 2, 16);
         UploadReplyReceiver<decltype(store), Lease> receiver(store, lease, current, next, verify, local, scratch.data(), scratch.size());
-        static_assert(sizeof(receiver) <= 160, "Receiver stores bounded metadata only");
+        // Seven borrowed pointer/size slots, one binding, and bounded scalar metadata.
+        static_assert(sizeof(receiver) <= 64 + 7 * sizeof(void*) + sizeof(chat::lxmf::TrackDeliveryBinding), "Receiver stores bounded metadata only");
         assert(receiver.arm(4, id));
         assert(!receiver.arm(4, id));
         io.files = initial_files;

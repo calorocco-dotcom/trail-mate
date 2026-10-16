@@ -34,9 +34,9 @@ inline bool holdsStorage()
 {
     return controller && (controller->read || controller->execution || (controller->request && controller->request->holdsAdmission())
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-        || controller->history
+                          || controller->history
 #endif
-    );
+                         );
 }
 inline bool destroyController()
 {
@@ -60,7 +60,7 @@ inline void disconnect()
 }
 inline void closeSession(const uint8_t* session)
 {
-    if (controller && controller->read_directory_cached && session && !std::memcmp(controller->local,session,16))
+    if (controller && controller->read_directory_cached && session && !std::memcmp(controller->local, session, 16))
     {
         if (controller->read) controller->read_retiring = true;
         disconnect();
@@ -73,7 +73,7 @@ inline void closeSession(const uint8_t* session)
         return;
     }
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-    if(controller && controller->history && controller->history->matchesSession(session))releaseHistory(controller->history);
+    if (controller && controller->history && controller->history->matchesSession(session)) releaseHistory(controller->history);
 #endif
     if (controller && controller->request && controller->request->matchesSession(session)) disconnect();
 }
@@ -87,8 +87,8 @@ inline void advancePending(chat::IMeshAdapter* adapter, uint8_t* scratch, size_t
     if (controller && controller->request && !controller->execution)
         advancePublicationRequest(controller->request, adapter, scratch, capacity, now, true);
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-    if(controller && controller->history && adapter==controller->adapter)
-        controller->history->advance(*adapter,scratch,capacity);
+    if (controller && controller->history && adapter == controller->adapter)
+        controller->history->advance(*adapter, scratch, capacity);
 #endif
 }
 inline void tick(uint64_t now)
@@ -144,7 +144,7 @@ inline Status encodeAdmission(const track_sharing::PublicationJournal& result, u
 // JobGet [operation, generation, 1] selects tracks. Retained memory is evidence
 // from the authenticated executor only; missing history must not imply success.
 inline Status getStatus(chat::IMeshAdapter& adapter, geocaching::ByteView operation, uint32_t generation,
-                        uint8_t* output, size_t capacity, size_t& written, const uint8_t* session=nullptr, uint64_t now=0)
+                        uint8_t* output, size_t capacity, size_t& written, const uint8_t* session = nullptr, uint64_t now = 0)
 {
     written = 0;
     if (!output || capacity < 448 || !operation.data || operation.size != 16 || !generation) return Status::InvalidField;
@@ -153,30 +153,36 @@ inline Status getStatus(chat::IMeshAdapter& adapter, geocaching::ByteView operat
         std::memcmp(operation.data, controller->latest.operation, 16))
     {
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-        if(!session)return Status::InvalidField;
-        if(controller && (controller->adapter!=&adapter || controller->execution || controller->request))return Status::Busy;
-        if(!controller)
+        if (!session) return Status::InvalidField;
+        if (controller && (controller->adapter != &adapter || controller->execution || controller->request)) return Status::Busy;
+        if (!controller)
         {
-            void* memory=heap_caps_malloc(sizeof(Controller),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-            if(!memory)return Status::Busy;
-            controller=new(memory) Controller;controller->adapter=&adapter;
+            void* memory = heap_caps_malloc(sizeof(Controller), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!memory) return Status::Busy;
+            controller = new (memory) Controller;
+            controller->adapter = &adapter;
         }
-        controller->last=now;
-        if(controller->history && !controller->history->matches(operation,generation,session))releaseHistory(controller->history);
-        if(!controller->history)controller->history=createHistory(operation,generation,session);
-        if(!controller->history)return Status::Busy;
-        const auto status=controller->history->step(adapter,output,capacity);
-        if(status!=Status::Ok){if(status!=Status::Busy)releaseHistory(controller->history);return status;}
-        if(!controller->history->result())return Status::Busy;
-        controller->latest=*controller->history->result();
-        controller->history_cached=true;
+        controller->last = now;
+        if (controller->history && !controller->history->matches(operation, generation, session)) releaseHistory(controller->history);
+        if (!controller->history) controller->history = createHistory(operation, generation, session);
+        if (!controller->history) return Status::Busy;
+        const auto status = controller->history->step(adapter, output, capacity);
+        if (status != Status::Ok)
+        {
+            if (status != Status::Busy) releaseHistory(controller->history);
+            return status;
+        }
+        if (!controller->history->result()) return Status::Busy;
+        controller->latest = *controller->history->result();
+        controller->history_cached = true;
         releaseHistory(controller->history);
 #else
-        (void)session;(void)now;
+        (void)session;
+        (void)now;
         return Status::Expired;
 #endif
     }
-    if(controller->history_cached && now)controller->last=now;
+    if (controller->history_cached && now) controller->last = now;
     if (generation != controller->latest.generation) return Status::StaleIdentity;
     if (controller->execution)
     {
@@ -202,28 +208,27 @@ inline Status getStatus(chat::IMeshAdapter& adapter, geocaching::ByteView operat
     written = writer.size();
     return Status::Ok;
 }
-inline Status cancelStatus(chat::IMeshAdapter& adapter,geocaching::ByteView operation,uint32_t generation,
-                           uint8_t* output,size_t capacity,size_t& written)
+inline Status cancelStatus(chat::IMeshAdapter& adapter, geocaching::ByteView operation, uint32_t generation,
+                           uint8_t* output, size_t capacity, size_t& written)
 {
-    written=0;
-    if(!operation.data || operation.size!=16 || !generation || !output || capacity<448)return Status::InvalidField;
-    if(!controller)return Status::Expired;
-    if(controller->adapter!=&adapter)return Status::Conflict;
-    if(controller->execution)
+    written = 0;
+    if (!operation.data || operation.size != 16 || !generation || !output || capacity < 448) return Status::InvalidField;
+    if (!controller) return Status::Expired;
+    if (controller->adapter != &adapter) return Status::Conflict;
+    if (controller->execution)
     {
-        const auto status=controller->execution->cancel(operation,generation,controller->latest);
-        if(status!=Status::Ok)return status;
-        controller->retiring=true;
+        const auto status = controller->execution->cancel(operation, generation, controller->latest);
+        if (status != Status::Ok) return status;
+        controller->retiring = true;
     }
     else
     {
-        if(std::memcmp(operation.data,controller->latest.operation,16))return Status::Expired;
-        if(generation!=controller->latest.generation)return Status::StaleIdentity;
-        if(controller->latest.phase!=track_sharing::PublicationPhase::Cancelled)
-            return controller->latest.phase==track_sharing::PublicationPhase::Publishing || controller->latest.phase==track_sharing::PublicationPhase::Confirmed?
-                Status::Conflict:Status::Unsupported;
+        if (std::memcmp(operation.data, controller->latest.operation, 16)) return Status::Expired;
+        if (generation != controller->latest.generation) return Status::StaleIdentity;
+        if (controller->latest.phase != track_sharing::PublicationPhase::Cancelled)
+            return controller->latest.phase == track_sharing::PublicationPhase::Publishing || controller->latest.phase == track_sharing::PublicationPhase::Confirmed ? Status::Conflict : Status::Unsupported;
     }
-    return getStatus(adapter,operation,generation,output,capacity,written);
+    return getStatus(adapter, operation, generation, output, capacity, written);
 }
 inline Status processCommit(chat::IMeshAdapter& adapter, const EnvelopeView& request, uint64_t now, uint8_t* scratch, size_t capacity, size_t& written)
 {
@@ -240,7 +245,7 @@ inline Status processCommit(chat::IMeshAdapter& adapter, const EnvelopeView& req
     auto& state = *controller;
     if (state.read) return Status::Busy;
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-    if(state.history)return Status::Busy;
+    if (state.history) return Status::Busy;
 #endif
     if (state.adapter != &adapter) return Status::Conflict;
     if (!track_sharing::decodeCommitRequest({request.body, request.body_size}, state.decoded)) return Status::InvalidField;
@@ -292,13 +297,14 @@ inline Status beginRead(chat::IMeshAdapter& adapter, uint8_t operation, geocachi
     if (!track_sharing::networkRequestId(request) || !track_sharing::networkRequestId(session)) return Status::InvalidField;
     if (controller && (controller->read || controller->execution || controller->request
 #if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
-        || controller->history
+                       || controller->history
 #endif
-        )) return Status::Busy;
+                       ))
+        return Status::Busy;
     const bool cached = controller && controller->read_directory_cached && controller->adapter == &adapter &&
-        now >= controller->last && now-controller->last < 30000 && !std::memcmp(controller->local,session.data,16) &&
-        track_sharing::readSpan(delivery,16) && track_sharing::readSpan(epoch,16) &&
-        !std::memcmp(controller->directory.delivery,delivery.data,16) && !std::memcmp(controller->directory.epoch,epoch.data,16);
+                        now >= controller->last && now - controller->last < 30000 && !std::memcmp(controller->local, session.data, 16) &&
+                        track_sharing::readSpan(delivery, 16) && track_sharing::readSpan(epoch, 16) &&
+                        !std::memcmp(controller->directory.delivery, delivery.data, 16) && !std::memcmp(controller->directory.epoch, epoch.data, 16);
     if (!cached)
     {
         if (controller && !destroyController()) return Status::Busy;
@@ -307,21 +313,30 @@ inline Status beginRead(chat::IMeshAdapter& adapter, uint8_t operation, geocachi
         controller = new (memory) Controller;
         controller->adapter = &adapter;
         const auto pinned = directory_runtime::pin(adapter, session.data, delivery, epoch, now, controller->directory);
-        if (pinned != Status::Ok) { destroyController(); return pinned; }
+        if (pinned != Status::Ok)
+        {
+            destroyController();
+            return pinned;
+        }
     }
     controller->last = now;
     controller->read = track_read_runtime::TrackReadOwner::create(adapter, operation, request, session, controller->directory, author, generation, expected);
-    if (!controller->read) { destroyController(); return Status::Busy; }
+    if (!controller->read)
+    {
+        destroyController();
+        return Status::Busy;
+    }
     const auto changed = directory_runtime::handoverRead(adapter, *controller->read, now);
     if (changed != chat::TrackBindingChange::Applied)
     {
         destroyController();
-        return changed == chat::TrackBindingChange::Busy ? Status::Busy : changed == chat::TrackBindingChange::Unsupported ? Status::Unsupported : Status::Conflict;
+        return changed == chat::TrackBindingChange::Busy ? Status::Busy : changed == chat::TrackBindingChange::Unsupported ? Status::Unsupported
+                                                                                                                           : Status::Conflict;
     }
     controller->read_state = track_sharing::ReadExchangeState::Waiting;
     controller->read_retiring = false;
     controller->read_directory_cached = true;
-    std::memcpy(controller->local,session.data,16);
+    std::memcpy(controller->local, session.data, 16);
     return Status::Ok;
 }
 inline Status readResult(chat::IMeshAdapter& adapter, geocaching::ByteView session, geocaching::ByteView request,
@@ -335,9 +350,13 @@ inline Status readResult(chat::IMeshAdapter& adapter, geocaching::ByteView sessi
     if (controller->adapter != &adapter || !controller->read->matchesSession(session.data)) return Status::Unauthorized;
     if (!controller->read->matchesRequest(request)) return Status::Conflict;
     track_sharing::ReadStoreResult result;
-    const auto changed = controller->read->read(offset,count,output,capacity,written,metadata,result);
+    const auto changed = controller->read->read(offset, count, output, capacity, written, metadata, result);
     if (changed != chat::TrackBindingChange::Applied) return changed == chat::TrackBindingChange::Busy ? Status::Busy : Status::StaleIdentity;
-    if (result == track_sharing::ReadStoreResult::Ready) { controller->last = now; return Status::Ok; }
+    if (result == track_sharing::ReadStoreResult::Ready)
+    {
+        controller->last = now;
+        return Status::Ok;
+    }
     if (result == track_sharing::ReadStoreResult::Invalid) return metadata.ready ? Status::InvalidField : Status::Busy;
     return result == track_sharing::ReadStoreResult::Conflict ? Status::Conflict : Status::StorageUnavailable;
 }

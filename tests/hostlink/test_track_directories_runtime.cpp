@@ -223,23 +223,25 @@ int main()
     assert(track_sharing::decodePublicationDirectory(persisted, sizeof(persisted), recovered));
     assert(track_sharing::publicationDirectoriesEqual(pinned, recovered));
     chat::lxmf::TrackDeliveryBinding job;
-    job.handler=[](const chat::lxmf::CustomDeliveryView&,void*) {return false;};
-    job.expected_local_author=public_key;job.expected_author_generation=1;
-    assert(runtime::list(adapter,request,80000,output,sizeof(output),written)==Status::Ok && runtime::owner && directory_live_allocations==1);
-    const auto* directory_binding=adapter.binding;
-    adapter.binding_busy=true;
-    assert(runtime::handover(adapter,&job)==chat::TrackBindingChange::Busy && adapter.binding==directory_binding && runtime::owner && directory_live_allocations==1);
-    assert(!runtime::release() && runtime::owner && adapter.binding==directory_binding);
-    adapter.binding_busy=false;
-    assert(runtime::handover(adapter,&job)==chat::TrackBindingChange::Applied && !runtime::owner && adapter.binding==&job && !directory_live_allocations);
+    job.handler = [](const chat::lxmf::CustomDeliveryView&, void*)
+    { return false; };
+    job.expected_local_author = public_key;
+    job.expected_author_generation = 1;
+    assert(runtime::list(adapter, request, 80000, output, sizeof(output), written) == Status::Ok && runtime::owner && directory_live_allocations == 1);
+    const auto* directory_binding = adapter.binding;
+    adapter.binding_busy = true;
+    assert(runtime::handover(adapter, &job) == chat::TrackBindingChange::Busy && adapter.binding == directory_binding && runtime::owner && directory_live_allocations == 1);
+    assert(!runtime::release() && runtime::owner && adapter.binding == directory_binding);
+    adapter.binding_busy = false;
+    assert(runtime::handover(adapter, &job) == chat::TrackBindingChange::Applied && !runtime::owner && adapter.binding == &job && !directory_live_allocations);
     runtime::closeSession(session);
-    assert(adapter.binding==&job);
-    assert(runtime::list(adapter,request,80001,output,sizeof(output),written)==Status::Busy && !runtime::owner && adapter.binding==&job && !directory_live_allocations);
-    assert(adapter.replaceTrackDelivery(&job,nullptr)==chat::TrackBindingChange::Applied);
-    assert(runtime::list(adapter,request,80002,output,sizeof(output),written)==Status::Ok && runtime::owner);
+    assert(adapter.binding == &job);
+    assert(runtime::list(adapter, request, 80001, output, sizeof(output), written) == Status::Busy && !runtime::owner && adapter.binding == &job && !directory_live_allocations);
+    assert(adapter.replaceTrackDelivery(&job, nullptr) == chat::TrackBindingChange::Applied);
+    assert(runtime::list(adapter, request, 80002, output, sizeof(output), written) == Status::Ok && runtime::owner);
     // Another owner has replaced the slot. Retire the obsolete directory
     // context after observing Conflict, without clearing the new registration.
-    adapter.binding=&job;
-    assert(runtime::release() && !runtime::owner && adapter.binding==&job && !directory_live_allocations);
-    assert(adapter.replaceTrackDelivery(&job,nullptr)==chat::TrackBindingChange::Applied);
+    adapter.binding = &job;
+    assert(runtime::release() && !runtime::owner && adapter.binding == &job && !directory_live_allocations);
+    assert(adapter.replaceTrackDelivery(&job, nullptr) == chat::TrackBindingChange::Applied);
 }

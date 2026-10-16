@@ -64,8 +64,8 @@ try{
    await ui.goto(origin+'/trail-mate/tracks/?lang=zh-Hans');
    const ip=trackIPText('zh-Hans'),conflict=trackConflictText('zh-Hans'),shared=trackSharedText('zh-Hans'),pack=trackPackageText('zh-Hans'),historyText=trackVersionHistoryText('zh-Hans');
    await ui.waitForFunction(value=>document.querySelector('input[type=url]')?.value===value,endpoint);
-   await ui.getByRole('button',{name:ip.connect,exact:true}).click();
    const directory=ui.getByLabel(ip.directory,{exact:true});await directory.waitFor();
+   await ui.waitForFunction(label=>[...document.querySelectorAll('select')].find(node=>node.getAttribute('aria-label')===label)?.options.length===2,ip.directory);
    const key=await directory.locator('option').nth(1).getAttribute('value');assert.ok(key);await directory.selectOption(key);
    const binary=text=>Uint8Array.from(text.match(/../g),part=>parseInt(part,16));
    const {trackId}=await import('../../site/tracks/src/shared-id.js');

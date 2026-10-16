@@ -28,7 +28,7 @@ inline Status parseGeocacheSignRequest(const uint8_t* input, size_t size, Geocac
         !reader.unsignedInteger(generation) || !generation || generation > UINT32_MAX ||
         !reader.binary(parsed.operation, 16) || parsed.operation.size != 16) return Status::InvalidField;
     if (count == 7 && (!reader.binary(parsed.draft, 16) || parsed.draft.size != 16 ||
-                      !reader.unsignedInteger(parsed.draft_generation) || !parsed.draft_generation)) return Status::InvalidField;
+                       !reader.unsignedInteger(parsed.draft_generation) || !parsed.draft_generation)) return Status::InvalidField;
     if (!reader.finished()) return Status::InvalidField;
     uint8_t transfer_bits = 0, operation_bits = 0;
     for (unsigned index = 0; index < 16; ++index)

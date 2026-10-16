@@ -1,6 +1,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 namespace ui::geocaching
 {

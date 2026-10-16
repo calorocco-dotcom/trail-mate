@@ -838,3 +838,49 @@ Route position ambiguous	Posizione sul percorso ambigua
 Route end (estimated)	Fine percorso (stimata)
 Route %u%% | %s left	Percorso %u%% | restano %s
 Matching route...	Confronto del percorso…
+Distance %.0f m	Distanza %.0f m
+Distance %.1f km	Distanza %.1f km
+Position unknown	Posizione sconosciuta
+Region unknown	Area amministrativa sconosciuta
+Location loading...	Ricerca della posizione…
+Distance unknown	Distanza sconosciuta
+My position unknown	La mia posizione è sconosciuta
+No nodes	Nessun nodo
+Old position	Posizione precedente
+Contacts unavailable	Contatti non disponibili
+Map Help	Guida della mappa
+Map layer: %s	Livello mappa: %s
+Show contours	Mostra curve di livello
+Hide contours	Nascondi curve di livello
+Search POI	Cerca luoghi
+Load navigation	Carica navigazione
+Load track	Carica traccia
+No saved navigation	Nessuna navigazione salvata
+Help	Aiuto
+Menu	Menu
+Navigation	Navigazione
+Nav	Nav.
+New navigation	Nuova navigazione
+Current location	Posizione attuale
+Use current location	Usa posizione attuale
+Choose destination	Scegli destinazione
+Calculate route	Calcola percorso
+Save and preview	Salva e visualizza
+Calculating route...	Calcolo del percorso...
+Route ready: %.1f km	Percorso pronto: %.1f km
+No TMAP routing data	Nessun dato di navigazione TMAP
+No path found	Nessun percorso trovato
+Outside routing coverage	Fuori dalla copertura stradale
+Navigation memory limit	Limite di memoria della navigazione
+Navigation unavailable	Navigazione non disponibile
+Origin	Partenza
+Destination	Destinazione
+Tap the origin to search for a place	Tocca la partenza per cercare un luogo
+Search unavailable	Ricerca non disponibile
+Cancelled	Annullato
+No team	Nessun membro del gruppo
+View	Visualizza
+Current	Corrente
+Contours	Curve di livello
+Load	Carica
+Unload	Scarica

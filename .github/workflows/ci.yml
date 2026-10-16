@@ -7,7 +7,37 @@ on:
       - "v*"
   pull_request:
 
+# Push and PR events for one branch share a queue. Keep a running validation;
+# replace duplicate pending runs instead of compiling the same change twice.
+concurrency:
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
+  firmware_scope:
+    name: Determine firmware build scope
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          build=true
+          if [[ "$EVENT_NAME" == push && "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" != 0000000000000000000000000000000000000000 && "$GITHUB_REF" != refs/tags/* ]]; then
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/trail-mate-changed-files.txt"
+            if ! grep -qEv '^(tests/|modules/[^/]+/tests/|apps/[^/]+/tests/|tools/hostlink/[^/]+\.mjs$|docs/|README\.md$|AGENTS(\.local)?\.md$)' "$RUNNER_TEMP/trail-mate-changed-files.txt"; then
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
   hostlink_management:
     name: USB Device Management and Author Proof
     runs-on: ubuntu-latest
@@ -33,13 +63,20 @@ jobs:
           mkdir -p .codex-build/hostlink-codec/library-deps
           pio pkg install --global --storage-dir .codex-build/hostlink-codec/library-deps --library "rweather/Crypto@0.4.0" --skip-dependencies
           pio pkg install --global --storage-dir .codex-build/hostlink-codec/library-deps --library "nanopb/Nanopb@0.4.92" --skip-dependencies
+      - name: Prepare pinned native SHA-256 source without installing an ESP SDK
+        run: |
+          curl --fail --location --retry 3 https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df --output "$RUNNER_TEMP/trail-mate-native-mbedtls.tar.gz"
+          echo "052dccf3a404dce25a467c6fe044b0c858d609ace8e883b59e9dfd479fdd4528  $RUNNER_TEMP/trail-mate-native-mbedtls.tar.gz" | sha256sum --check
+          mkdir -p .codex-build/hostlink-codec/mbedtls-source
+          tar --extract --gzip --file "$RUNNER_TEMP/trail-mate-native-mbedtls.tar.gz" --directory .codex-build/hostlink-codec/mbedtls-source --strip-components=1
       - name: Verify packet bridge pacing and origin boundaries
         working-directory: tools/geocaching
         run: ../../.codex-build/reticulum-directory/venv/bin/python -m unittest test_packet_bridge test_packet_bridge_pacing
       - name: Verify native protocol, storage policy and cryptographic vectors
         run: |
-          cmake -S tests/hostlink -B .codex-build/hostlink-codec/native -DCMAKE_BUILD_TYPE=Debug -DTRAIL_MATE_ARDUINO_CRYPTO_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Crypto" -DTRAIL_MATE_MODULE_NANOPB_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Nanopb" -DTRAIL_MATE_REQUIRE_RADIO_IDENTITY_TESTS=ON
+          cmake -S tests/hostlink -B .codex-build/hostlink-codec/native -DCMAKE_BUILD_TYPE=Debug -DTRAIL_MATE_ARDUINO_CRYPTO_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Crypto" -DTRAIL_MATE_MODULE_NANOPB_DIR="$PWD/.codex-build/hostlink-codec/library-deps/Nanopb" -DTRAIL_MATE_REQUIRE_RADIO_IDENTITY_TESTS=ON -DTRAIL_MATE_MBEDTLS_DIR="$PWD/.codex-build/hostlink-codec/mbedtls-source"
           cmake --build .codex-build/hostlink-codec/native --parallel 2
+          test -x .codex-build/hostlink-codec/native/track_snapshot_owner
           ctest --test-dir .codex-build/hostlink-codec/native --output-on-failure
           cmake -S tests/tracker_recording -B .codex-build/tracker-recording -DCMAKE_BUILD_TYPE=Debug
           cmake --build .codex-build/tracker-recording --parallel 2
@@ -74,7 +111,7 @@ jobs:
           node --test tests/site/track-manifest-native.test.mjs
           node --test tests/site/track-upload-native.test.mjs
           node --test tests/site/track-manifest-sign-native.test.mjs
-          node --test tests/site/track-device-ip-confirmation.test.mjs tests/site/track-device-sync.test.mjs
+          node --test tests/site/track-device-ip-confirmation.test.mjs tests/site/track-device-sync.test.mjs tests/site/track-attachment-cleanup.test.mjs tests/site/track-hardware-session.test.mjs
           node --test tests/site/track-shared-package.test.mjs tests/site/track-package-publication.test.mjs
           node --test tests/site/package-archive.test.mjs tests/site/track-kml-archive.test.mjs tests/site/track-draft-backup.test.mjs tests/site/kml-original-labels.test.mjs tests/site/recording-original.test.mjs
           node --test tests/site/track-bulk-transfer.test.mjs
@@ -83,6 +120,8 @@ jobs:
       - name: Verify native Geocaching replication and signature admission
         working-directory: tools/geocaching
         run: ../../.codex-build/reticulum-directory/venv/bin/python -m unittest test_directory_sync test_directory_transport test_publication_receipt test_snapshot_retention test_query_release
+      - name: Verify shipped global administrative catalog
+        run: .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_world_regions tools.tracks.test_region_catalog tools.tracks.test_region_application
       - name: Verify native Geocaching publication and offline replica recovery
         run: |
           .codex-build/reticulum-directory/venv/bin/python tools/geocaching/test_directory_network.py acceptance --work .codex-build/hostlink-codec/geocaching-network/state
@@ -94,12 +133,14 @@ jobs:
           npm run build:geocaching
             npm run build:tracks
           npx playwright install --with-deps chromium
-      - name: Verify actual device page and KML parser in Chromium
+      - name: Verify device configuration and identity in Chromium
         run: |
           mkdir -p docs/locales/zh-Hans/web-outdoor-management/assets docs/locales/zh-Hans/web-outdoor-management/images
           node tests/site/device-page.browser.mjs
           node tests/site/device-page.browser.mjs --normal-flow
           node tests/site/radio-identity.browser.mjs
+      - name: Verify KML workspace and file maintenance in Chromium
+        run: |
           node tests/site/track-kml.browser.mjs
             node tests/site/track-kml-edit.browser.mjs
             node tests/site/track-kml-style.browser.mjs
@@ -116,7 +157,9 @@ jobs:
             node tests/site/recording-original.browser.mjs
             node tests/site/original-format-migration.browser.mjs
             node tests/site/track-map-icons.browser.mjs
-            node --test tests/site/track-ground-overlays.test.mjs
+      - name: Verify existing KML display and editing features in Chromium
+        run: |
+          node --test tests/site/track-ground-overlays.test.mjs
             node tests/site/track-ground-overlays.browser.mjs
             node --test tests/site/track-time-filter.test.mjs tests/site/track-time-editor.test.mjs
             node tests/site/track-time-filter.browser.mjs
@@ -147,6 +190,8 @@ jobs:
             node tests/site/track-gpx.browser.mjs
             node tests/site/track-device-catalog.browser.mjs
           node tests/site/track-device-upload.browser.mjs
+      - name: Verify device-authored Geocaching and trail workflows in Chromium
+        run: |
           node tests/site/geocaching-maintenance.browser.mjs
           node tests/site/geocaching-save-recovery.browser.mjs
           node tests/site/geocaching-signature-recovery.browser.mjs
@@ -161,9 +206,13 @@ jobs:
           node tests/site/track-conflict.browser.mjs
           node tests/site/track-version-history.browser.mjs
           node tests/site/track-multidirectory.browser.mjs
+      - name: Verify Reticulum directory service workflows
+        run: |
           .codex-build/reticulum-directory/venv/bin/python -m unittest discover -s tests/deployment -p test_shared_directory_network.py
           .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_replication_network
           .codex-build/reticulum-directory/venv/bin/python -m unittest tools.tracks.test_storage_network
+      - name: Verify browser device trail synchronization
+        run: |
           node tests/site/track-device-sync.browser.mjs
 
   geocaching_web:
@@ -326,6 +375,8 @@ jobs:
             | xargs -0 clang-format-14 --dry-run --Werror
 
   build:
+    needs: firmware_scope
+    if: needs.firmware_scope.outputs.build == 'true'
     name: PlatformIO Build (${{ matrix.env }})
     runs-on: ubuntu-latest
     strategy:
@@ -363,7 +414,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION=$(iconv -f UTF-16LE -t UTF-8 CHANGELOG.md | awk -F'[][]' '/^## \[[0-9]/ {print $2; exit}')
+            VERSION=$(python3 scripts/read_changelog.py --version)
           fi
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
@@ -383,10 +434,22 @@ jobs:
           key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini', 'builds/pio_nrf52/platformio.ini') }}
 
       - name: Install PlatformIO
-        run: python -m pip install --upgrade platformio
+        run: python -m pip install --upgrade platformio pyelftools
 
       - name: Build (${{ matrix.env }})
         run: pio run -d ${{ matrix.project_dir }} -e ${{ matrix.env }}
+
+      - name: Report linked RAM allocation
+        run: |
+          python scripts/report_elf_ram.py "${{ matrix.build_root }}/${{ matrix.env }}/firmware.elf" \
+            --revision "${GITHUB_SHA}" --output "ram-report/${{ matrix.env }}.json"
+
+      - name: Retain RAM allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-report-${{ matrix.env }}
+          path: ram-report/
+          retention-days: 7
 
       - name: Validate OTA slot size
         if: matrix.env != 'gat562_mesh_evb_pro' && matrix.env != 't-echo-lite'
@@ -528,7 +591,80 @@ jobs:
       - name: Run P4 product contract tests
         run: ctest --test-dir build.p4-contract --output-on-failure
 
+      - name: Verify P4 keyboard with the real LVGL input state machine
+        run: |
+          mkdir -p .codex-build/p4-keyboard-deps/lvgl
+          curl --fail --location --retry 3 https://codeload.github.com/lvgl/lvgl/tar.gz/85aa60d18b3d5e5588d7b247abf90198f07c8a63 --output "$RUNNER_TEMP/p4-keyboard-lvgl.tar.gz"
+          tar --extract --gzip --file "$RUNNER_TEMP/p4-keyboard-lvgl.tar.gz" --directory .codex-build/p4-keyboard-deps/lvgl --strip-components=1
+          cmake -S tests/p4_keyboard -B .codex-build/p4-keyboard -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLVGL_DIR="$PWD/.codex-build/p4-keyboard-deps/lvgl"
+          cmake --build .codex-build/p4-keyboard --parallel 2
+          ctest --test-dir .codex-build/p4-keyboard --output-on-failure
+
+      - name: Verify P4 hardware failures and recovery
+        run: |
+          cmake -S tests/p4_hardware -B .codex-build/p4-hardware -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build .codex-build/p4-hardware --parallel 2
+          ctest --test-dir .codex-build/p4-hardware --output-on-failure
+
+      - name: Verify isolated widget ownership and strict PSRAM allocation
+        run: |
+          cmake -S tests/menu_widgets -B .codex-build/menu-widgets -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLVGL_DIR="$PWD/.codex-build/p4-keyboard-deps/lvgl" -DLVGL_LIBRARY="$PWD/.codex-build/p4-keyboard/lvgl/lib/liblvgl.a"
+          cmake --build .codex-build/menu-widgets --parallel 2
+          ctest --test-dir .codex-build/menu-widgets --output-on-failure
+
+      - name: Verify music, audio focus and device control ownership
+        run: |
+          cmake -S tests/music -B .codex-build/music -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLVGL_DIR="$PWD/.codex-build/p4-keyboard-deps/lvgl"
+          cmake --build .codex-build/music --parallel 2
+          ctest --test-dir .codex-build/music --output-on-failure
+
+      - name: Verify demand-driven TCP and Wi-Fi memory ownership
+        run: |
+          cmake -S tests/ram -B .codex-build/ram-audit/native -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build .codex-build/ram-audit/native --parallel 2
+          ctest --test-dir .codex-build/ram-audit/native --output-on-failure
+
+  p4_rendered_ui:
+    name: T-Display P4 Rendered UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned Emscripten and firmware LVGL
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/p4-emsdk"
+          "$RUNNER_TEMP/p4-emsdk/emsdk" install 4.0.10
+          "$RUNNER_TEMP/p4-emsdk/emsdk" activate 4.0.10
+          mkdir -p .codex-build/p4-preview/lvgl
+          curl --fail --location --retry 3 https://codeload.github.com/lvgl/lvgl/tar.gz/85aa60d18b3d5e5588d7b247abf90198f07c8a63 --output "$RUNNER_TEMP/p4-preview-lvgl.tar.gz"
+          tar --extract --gzip --file "$RUNNER_TEMP/p4-preview-lvgl.tar.gz" --directory .codex-build/p4-preview/lvgl --strip-components=1
+      - name: Render both P4 panels and stress dashboard ownership
+        run: |
+          source "$RUNNER_TEMP/p4-emsdk/emsdk_env.sh"
+          emcmake cmake -S tools/web_simulator -B .codex-build/p4-preview/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRAIL_MATE_PREVIEW_P4=ON -DLVGL_SOURCE_DIR="$PWD/.codex-build/p4-preview/lvgl"
+          cmake --build .codex-build/p4-preview/build --target trailmate_p4_tft trailmate_p4_amoled trailmate_pager trailmate_tdeck trailmate_wio --parallel 2
+          P4_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/p4-native-ui.test.mjs
+          WIDGET_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/menu-widgets-native.test.mjs
+          MUSIC_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/music-native-ui.test.mjs
+          WIDGET_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/quick-controls-native.test.mjs
+          node tests/site/settings-catalog-native.test.mjs
+      - name: Retain actual LVGL frames and layout coordinates
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t-display-p4-rendered-ui
+          path: .codex-build/p4-preview/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
   build_c6:
+    needs: firmware_scope
+    if: needs.firmware_scope.outputs.build == 'true'
     name: ESP-IDF C6 Companion Build
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.4
@@ -543,7 +679,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION=$(iconv -f UTF-16LE -t UTF-8 CHANGELOG.md | awk -F'[][]' '/^## \[[0-9]/ {print $2; exit}')
+            VERSION=$(python3 scripts/read_changelog.py --version)
           fi
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
@@ -556,6 +692,24 @@ jobs:
           source "${IDF_PATH}/export.sh"
           idf.py -C firmware/c6_companion \
             -B "${GITHUB_WORKSPACE}/firmware/c6_companion/build.c6_companion" build
+
+      - name: Report linked RAM allocation
+        shell: bash
+        run: |
+          source "${IDF_PATH}/export.sh"
+          python scripts/report_elf_ram.py firmware/c6_companion/build.c6_companion/trail-mate-c6-companion.elf \
+            --revision "${GITHUB_SHA}" --output ram-report/c6_companion.json \
+            --sdkconfig firmware/c6_companion/build.c6_companion/sdkconfig.c6_companion \
+            --expect-config CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4 \
+            --expect-config CONFIG_ESP_WIFI_RX_BA_WIN=4 \
+            --expect-config CONFIG_ESP_WIFI_NVS_ENABLED=n
+
+      - name: Retain RAM allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-report-c6_companion
+          path: ram-report/
+          retention-days: 7
 
       - name: Validate C6 companion partition size
         shell: bash
@@ -610,6 +764,8 @@ jobs:
         run: python scripts/prepare_pages_site.py --site-root site --repo ${{ github.repository }}
 
   build_idf:
+    needs: firmware_scope
+    if: needs.firmware_scope.outputs.build == 'true'
     name: ESP-IDF Build (${{ matrix.env }})
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.4
@@ -632,7 +788,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION=$(iconv -f UTF-16LE -t UTF-8 CHANGELOG.md | awk -F'[][]' '/^## \[[0-9]/ {print $2; exit}')
+            VERSION=$(python3 scripts/read_changelog.py --version)
           fi
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
@@ -646,17 +802,30 @@ jobs:
           idf.py -B "${GITHUB_WORKSPACE}/build.${{ matrix.env }}" \
             -D "TRAIL_MATE_IDF_TARGET=${{ matrix.env }}" build
 
+      - name: Report linked RAM allocation
+        shell: bash
+        run: |
+          source "${IDF_PATH}/export.sh"
+          python scripts/report_elf_ram.py "build.${{ matrix.env }}/trail-mate.elf" \
+            --revision "${GITHUB_SHA}" --output "ram-report/${{ matrix.env }}.json" \
+            --sdkconfig "build.${{ matrix.env }}/sdkconfig.${{ matrix.env }}" \
+            --expect-config CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y \
+            --expect-config CONFIG_LV_USE_CUSTOM_MALLOC=y
+
+      - name: Retain RAM allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-report-${{ matrix.env }}
+          path: ram-report/
+          retention-days: 7
+
       - name: Validate OTA slot size
         shell: bash
         run: |
           BUILD_DIR="build.${{ matrix.env }}"
-          SIZE=$(stat -c%s "${BUILD_DIR}/trail-mate.bin")
-          MAX_SIZE=$((0x400000))
-          echo "trail-mate.bin size=${SIZE} max=${MAX_SIZE}"
-          if [ "${SIZE}" -gt "${MAX_SIZE}" ]; then
-            echo "trail-mate.bin exceeds OTA slot size" >&2
-            exit 1
-          fi
+          python scripts/check_ota_slot_size.py \
+            --firmware "${BUILD_DIR}/trail-mate.bin" \
+            --partitions "${BUILD_DIR}/partition_table/partition-table.bin"
 
       - name: Collect firmware and web flasher image
         shell: bash
@@ -735,7 +904,7 @@ jobs:
       - name: Extract changelog entry
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          iconv -f UTF-16LE -t UTF-8 CHANGELOG.md > CHANGELOG.utf8.md
+          python3 scripts/read_changelog.py > CHANGELOG.utf8.md
           awk -v version="$VERSION" '
             $0 ~ "^## \\[" version "\\]" {capture=1}
             capture {

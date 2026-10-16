@@ -181,7 +181,12 @@ class TrackPrepareWork : public PrepareSchedulerWork
     bool parent_present_ = false, terminal_ = false, identity_verified_ = false;
     bool package_request_ = false, package_present_ = false;
 };
-static_assert(sizeof(TrackPrepareWork) <= 320, "Prepare result metadata cannot retain big buffers");
+// Four borrowed stage pointers and the scheduler's virtual pointer grow on a
+// 64-bit host, with one extra alignment gap before last_. The ESP budget stays
+// exactly 320 bytes; this check does not permit an owned response/file buffer.
+static_assert(sizeof(void*) != 4 || sizeof(TrackPrepareWork) <= 320, "ESP prepare metadata exceeded its budget");
+static_assert(sizeof(TrackPrepareWork) <= 320 + 5 * (sizeof(void*) - 4) + (sizeof(void*) > 4 ? 4 : 0),
+              "Prepare result metadata cannot retain big buffers");
 inline TrackPrepareWork* createPrepareWork(TrackPrepareOwner* input, const uint8_t* session, uint64_t now)
 {
     if (!input || !session) return nullptr;

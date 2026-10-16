@@ -4,6 +4,11 @@
 #include "ui/widgets/top_bar.h"
 #include <string>
 
+namespace ui::support
+{
+struct CardLocation;
+}
+
 namespace tracker
 {
 namespace ui
@@ -14,7 +19,8 @@ struct TrackerPageState
     enum class Mode : uint8_t
     {
         Record = 0,
-        Route = 1
+        Route = 1,
+        Navigation = 2
     };
     enum class FocusColumn : uint8_t
     {
@@ -28,12 +34,25 @@ struct TrackerPageState
     lv_obj_t* filter_panel = nullptr;
     lv_obj_t* list_panel = nullptr;
     lv_obj_t* list_container = nullptr;
+    lv_obj_t* item_card = nullptr;
+    lv_obj_t* card_name = nullptr;
+    lv_obj_t* card_format = nullptr;
+    lv_obj_t* card_location = nullptr;
+    lv_obj_t* card_distance = nullptr;
+    ::ui::support::CardLocation* card_location_model = nullptr;
+    lv_timer_t* card_timer = nullptr;
+    lv_obj_t* card_counter = nullptr;
+    lv_obj_t* card_previous = nullptr;
+    lv_obj_t* card_next = nullptr;
+    lv_obj_t* card_actions = nullptr;
     lv_obj_t* bottom_bar = nullptr;
 
     lv_obj_t* mode_record_btn = nullptr;
     lv_obj_t* mode_record_label = nullptr;
     lv_obj_t* mode_route_btn = nullptr;
     lv_obj_t* mode_route_label = nullptr;
+    lv_obj_t* mode_navigation_btn = nullptr;
+    lv_obj_t* mode_navigation_label = nullptr;
 
     lv_obj_t* status_label = nullptr;
 

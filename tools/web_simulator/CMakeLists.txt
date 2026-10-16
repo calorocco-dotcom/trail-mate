@@ -32,6 +32,9 @@ add_executable(${PREVIEW_TARGET}
   native_chat.cpp
   preview_platform.cpp
   preview_sensors.cpp
+  preview_agenda.cpp
+  preview_music.cpp
+  preview_controls.cpp
   preview_facade.cpp
   preview_status.cpp
   preview_extensions.cpp
@@ -116,11 +119,23 @@ target_include_directories(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_sys/include"
   "${REPO_ROOT}/modules/core_chat/include"
   "${REPO_ROOT}/modules/core_gps/include"
+  "${REPO_ROOT}/modules/core_agenda/include"
+  "${REPO_ROOT}/modules/core_music/include"
+  "${REPO_ROOT}/modules/core_track_sharing/include"
+  "${REPO_ROOT}/modules/core_geocaching/include"
+  "${REPO_ROOT}/third_party/yxml"
   "${REPO_ROOT}/platform/esp/arduino_common/include")
 target_compile_features(${PREVIEW_TARGET} PRIVATE cxx_std_17)
 target_compile_options(${PREVIEW_TARGET} PRIVATE -O2)
 target_compile_definitions(${PREVIEW_TARGET} PRIVATE LV_CONF_INCLUDE_SIMPLE TRAIL_MATE_LORA_TX_POWER_MAX_DBM=22 ${BOARD_DEFINITION}=1)
 target_link_libraries(${PREVIEW_TARGET} PRIVATE lvgl)
+file(GLOB DASHBOARD_WIDGET_SOURCES "${UI}/menu/dashboard/*.cpp")
+file(GLOB MUSIC_UI_SOURCES "${UI}/screens/music/*.cpp")
+target_sources(${PREVIEW_TARGET} PRIVATE ${MUSIC_UI_SOURCES})
+target_sources(${PREVIEW_TARGET} PRIVATE "${UI}/menu/menu_dashboard.cpp" ${DASHBOARD_WIDGET_SOURCES}
+  preview_p4_dashboard.cpp
+  "${UI}/presentation_sources/runtime_mesh_status_source.cpp"
+  "${REPO_ROOT}/modules/ui_presentation/src/mesh/mesh_status_model.cpp")
 file(GLOB PREVIEW_ASSETS "${UI}/assets/*.c")
 target_sources(${PREVIEW_TARGET} PRIVATE ${PREVIEW_ASSETS})
 file(GLOB CHAT_VIEW_SOURCES
@@ -134,6 +149,8 @@ target_sources(${PREVIEW_TARGET} PRIVATE ${CHAT_VIEW_SOURCES}
   "${UI}/components/two_pane_styles.cpp"
   "${UI}/components/two_pane_layout.cpp"
   "${UI}/components/two_pane_nav.cpp"
+  "${UI}/components/bottom_bar.cpp"
+  "${UI}/components/dialog_frame.cpp"
   "${UI}/components/floating_search_box.cpp"
   "${UI}/components/map_poi_search.cpp"
   "${UI}/components/air_status_footer.cpp"
@@ -173,6 +190,10 @@ target_sources(${PREVIEW_TARGET} PRIVATE ${CORE_TEAM_SOURCES} ${EXTRA_VIEW_SOURC
   "${REPO_ROOT}/modules/core_chat/src/infra/reticulum/reticulum_wire.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/team_ui_store_runtime.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/tracker_runtime.cpp"
+  "${REPO_ROOT}/platform/linux/common/src/platform/ui/music_runtime.cpp"
+    "${REPO_ROOT}/platform/linux/common/src/platform/ui/agenda_widget_runtime.cpp"
+    "${REPO_ROOT}/platform/linux/common/src/platform/resource_lock.cpp"
+    "${REPO_ROOT}/platform/linux/common/src/platform/ui/quick_controls_runtime.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/route_storage.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/linux/runtime_paths.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/firmware_update_runtime.cpp"
@@ -183,7 +204,6 @@ target_sources(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_sys/src/platform/ui/timezone_profile.cpp"
   "${REPO_ROOT}/modules/core_sys/src/platform/ui/screen_power_state_machine.cpp"
   "${UI}/team_presence/team_presence_model.cpp"
-  "${UI}/menu/dashboard/dashboard_style.cpp"
   "${UI}/presentation_sources/runtime_map_workspace_source.cpp"
   "${UI}/presentation_sources/team_map_overlay_source.cpp"
   "${REPO_ROOT}/modules/ui_presentation/src/map/map_workspace_model.cpp"
@@ -212,6 +232,7 @@ set_source_files_properties(
 file(GLOB PROBE_PROTO_SOURCES "${REPO_ROOT}/modules/core_chat/generated/meshtastic/*.cpp")
 file(GLOB PROBE_ED25519_SOURCES "${REPO_ROOT}/modules/core_chat/src/infra/meshcore/crypto/ed25519/*.c")
 target_sources(${PREVIEW_TARGET} PRIVATE ${PROBE_PROTO_SOURCES} ${PROBE_ED25519_SOURCES}
+  "${REPO_ROOT}/third_party/yxml/yxml.c"
   "${NANOPB_SOURCE_DIR}/pb_common.c"
   "${NANOPB_SOURCE_DIR}/pb_decode.c"
   "${NANOPB_SOURCE_DIR}/pb_encode.c"
@@ -229,6 +250,14 @@ endfunction()
 add_native_preview(trailmate_pager ARDUINO_T_LORA_PAGER pager)
 add_native_preview(trailmate_tdeck ARDUINO_T_DECK tdeck)
 add_native_preview(trailmate_wio ARDUINO_WIO_TRACKER_L2 wio-tracker-l2)
+option(TRAIL_MATE_PREVIEW_P4 "Build both P4 panel layouts for hardware UI review" OFF)
+if(TRAIL_MATE_PREVIEW_P4)
+  foreach(PANEL IN ITEMS tft amoled)
+    add_native_preview(trailmate_p4_${PANEL} TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4 t-display-p4-${PANEL})
+    target_include_directories(trailmate_p4_${PANEL} PRIVATE "${REPO_ROOT}/boards/t_display_p4/include")
+  endforeach()
+  target_compile_definitions(trailmate_p4_tft PRIVATE CONFIG_TRAIL_MATE_T_DISPLAY_P4_PANEL_HI8561=1)
+endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_custom_target(native_asset_manifest ALL
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/write_manifest.py" "${REPO_ROOT}/site/assets/native"

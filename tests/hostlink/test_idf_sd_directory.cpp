@@ -24,8 +24,8 @@ static bool s_external_block_owner_active = false, lock_available = true, replac
 static bool missing = false, open_error = false, entry_end = false, entry_error = false, name_error = false;
 static bool read_error = false, replace_on_read = false;
 static unsigned closes = 0, next_calls = 0;
-static const char* entry_name="track.gpx";
-static bool entry_directory=false;
+static const char* entry_name = "track.gpx";
+static bool entry_directory = false;
 static uint64_t probe_bytes = 16;
 static platform::esp::storage::MountIoState s_mounted;
 using SdIoErrorScope = platform::esp::storage::MountIoErrorScope;
@@ -57,7 +57,7 @@ struct FsFile
     bool getName(char* name, size_t capacity)
     {
         if (name_error || capacity <= std::strlen(entry_name)) return false;
-        std::memcpy(name, entry_name, std::strlen(entry_name)+1);
+        std::memcpy(name, entry_name, std::strlen(entry_name) + 1);
         return true;
     }
     int getError() const { return 0; }
@@ -133,21 +133,31 @@ int main()
     assert(strict_allocation_attempts == 2);
     {
         using namespace hostlink::management::publication_runtime;
-        s_mounted=true;
+        s_mounted = true;
         SdRuntimeDir directory(SdRuntimeMemoryPolicy::PsramOnly);
-        HistoryScan scan(directory,media);track_sharing::PublicationSlotKey key;
-        entry_name="1111111111111111111111111111111111111111111111111111111111111111";entry_directory=true;
-        lock_available=false;assert(scan.step(key)==HistoryScanResult::Busy && !directory.is_open());lock_available=true;
-        assert(scan.step(key)==HistoryScanResult::Pending && !directory.is_open());
-        entry_name="22222222222222222222222222222222.pua";entry_directory=false;
-        const auto candidate=scan.step(key);
-        assert(candidate==HistoryScanResult::Candidate && !directory.is_open() && key.object[0]==0x11 && key.operation[0]==0x22);
-        entry_end=true;assert(scan.step(key)==HistoryScanResult::Pending && !directory.is_open());
-        assert(scan.step(key)==HistoryScanResult::End && !directory.is_open());entry_end=false;
-        ++media;assert(scan.step(key)==HistoryScanResult::Unavailable);
-        entry_name="track.gpx";
+        HistoryScan scan(directory, media);
+        track_sharing::PublicationSlotKey key;
+        entry_name = "1111111111111111111111111111111111111111111111111111111111111111";
+        entry_directory = true;
+        lock_available = false;
+        assert(scan.step(key) == HistoryScanResult::Busy && !directory.is_open());
+        lock_available = true;
+        assert(scan.step(key) == HistoryScanResult::Pending && !directory.is_open());
+        entry_name = "22222222222222222222222222222222.pua";
+        entry_directory = false;
+        const auto candidate = scan.step(key);
+        assert(candidate == HistoryScanResult::Candidate && !directory.is_open() && key.object[0] == 0x11 && key.operation[0] == 0x22);
+        entry_end = true;
+        assert(scan.step(key) == HistoryScanResult::Pending && !directory.is_open());
+        assert(scan.step(key) == HistoryScanResult::End && !directory.is_open());
+        entry_end = false;
+        ++media;
+        assert(scan.step(key) == HistoryScanResult::Unavailable);
+        entry_name = "track.gpx";
     }
-    media=1;closes=0;next_calls=0;
+    media = 1;
+    closes = 0;
+    next_calls = 0;
     using namespace platform::esp::arduino_common::storage;
     s_mounted = true;
     SdRuntimeDir dir;

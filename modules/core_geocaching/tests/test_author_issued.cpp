@@ -18,14 +18,17 @@ int main()
     if (storage::decodeAuthorIssued({key, 36}, {bytes, size}, out)) return 3;
     time.utc_trusted = true;
     if (storage::encodeAuthorIssued(hash, {public_key, 64}, time, bytes, sizeof(bytes), size) || size) return 4;
-    key[35] = 3;time.utc_trusted = false;time.has_utc = true;time.utc_seconds = 0;
-    if (!storage::encodeAuthorIssued(hash,{public_key,64},time,bytes,sizeof(bytes),size,0) || bytes[0] != 0x94 ||
-        !storage::decodeAuthorIssued({key,36},{bytes,size},out) || !out.has_recovered_creation || out.recovered_created_at != 0) return 5;
+    key[35] = 3;
+    time.utc_trusted = false;
+    time.has_utc = true;
+    time.utc_seconds = 0;
+    if (!storage::encodeAuthorIssued(hash, {public_key, 64}, time, bytes, sizeof(bytes), size, 0) || bytes[0] != 0x94 ||
+        !storage::decodeAuthorIssued({key, 36}, {bytes, size}, out) || !out.has_recovered_creation || out.recovered_created_at != 0) return 5;
     time.utc_seconds = 100;
-    if (!storage::encodeAuthorIssued(hash,{public_key,64},time,bytes,sizeof(bytes),size,50) ||
-        !storage::decodeAuthorIssued({key,36},{bytes,size},out) || out.recovered_created_at != 50) return 6;
-    if (storage::encodeAuthorIssued(hash,{public_key,64},time,bytes,sizeof(bytes),size,101) || size) return 7;
+    if (!storage::encodeAuthorIssued(hash, {public_key, 64}, time, bytes, sizeof(bytes), size, 50) ||
+        !storage::decodeAuthorIssued({key, 36}, {bytes, size}, out) || out.recovered_created_at != 50) return 6;
+    if (storage::encodeAuthorIssued(hash, {public_key, 64}, time, bytes, sizeof(bytes), size, 101) || size) return 7;
     time.has_utc = false;
-    if (storage::encodeAuthorIssued(hash,{public_key,64},time,bytes,sizeof(bytes),size,0) || size) return 8;
+    if (storage::encodeAuthorIssued(hash, {public_key, 64}, time, bytes, sizeof(bytes), size, 0) || size) return 8;
     return 0;
 }

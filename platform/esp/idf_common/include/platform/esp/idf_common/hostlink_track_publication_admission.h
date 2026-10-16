@@ -6,9 +6,9 @@
 #include "platform/esp/idf_common/hostlink_track_upload_identity.h"
 #include "track_sharing/admit_publication_intent.h"
 #include "track_sharing/commit_publication_head.h"
+#include "track_sharing/load_publication_history.h"
 #include "track_sharing/object_paths.h"
 #include "track_sharing/publication_intent.h"
-#include "track_sharing/load_publication_history.h"
 #include "track_sharing/publication_receipt_loader.h"
 #include "track_sharing/reservation_store.h"
 #include "track_sharing/signed_manifest_reader.h"
@@ -24,6 +24,7 @@ namespace sd = platform::esp::arduino_common::storage;
 class TrackPublicationAdmission
 {
     friend class TrackPublicationExecution;
+
   public:
     TrackPublicationAdmission(const track_sharing::CommitRequest& request, const track_sharing::PublicationDirectory& directory,
                               uint32_t media, const uint8_t* author, const uint8_t* author_hash, bool read_only = false)
@@ -71,8 +72,8 @@ class TrackPublicationAdmission
             if (read == FileIntegrityResult::Pending) return Status::Busy;
             if (read != FileIntegrityResult::Ready) return fail(Status::StorageUnavailable);
             if (verifyManifest(reader_.bytes(), crypto_, hash_, workspace_, sizeof(workspace_), manifest_, {author_, 64}) != ManifestVerification::Valid) return fail(Status::Conflict);
-            if(read_only_)historicalHead();
-            if(!requestMatchesHead() || !signedHeadMatches(head_, manifest_, reservation_, request_.generation, {author_, 64}, {author_hash_, 32})) return fail(Status::Conflict);
+            if (read_only_) historicalHead();
+            if (!requestMatchesHead() || !signedHeadMatches(head_, manifest_, reservation_, request_.generation, {author_, 64}, {author_hash_, 32})) return fail(Status::Conflict);
             if (manifest_.manifest.file_bytes > directory_.file_limit) return fail(Status::LimitExceeded);
             if (!resolveObjectPath(request_.object, ObjectFile::KmlFile, manifest_.manifest.file_hash, kml_path_, sizeof(kml_path_))) return fail(Status::InvalidField);
             if (file_check_.begin(kml_path_, manifest_.manifest.file_bytes, manifest_.manifest.file_hash.data) != FileIntegrityResult::Pending) return fail(Status::StorageUnavailable);
@@ -97,14 +98,14 @@ class TrackPublicationAdmission
         }
         // Re-read both durable evidence sets after all sliced reads. Runtime
         // holds exclusive object paths; replacement media is rejected above.
-        if(!read_only_)
+        if (!read_only_)
         {
             const auto loaded = heads_.load(head_, head_verify_, scratch, capacity);
             if (loaded != HeadStoreResult::Ready) return fail(loaded == HeadStoreResult::StorageFailure ? Status::StorageUnavailable : Status::Conflict);
         }
         const auto reserved = reservations_.load(reservation_, reservation_verify_, scratch, capacity);
         if (reserved != ReservationStoreResult::Ready) return fail(reserved == ReservationStoreResult::StorageFailure ? Status::StorageUnavailable : Status::Conflict);
-        if(read_only_)historicalHead();
+        if (read_only_) historicalHead();
         if (!requestMatchesHead() || !signedHeadMatches(head_, manifest_, reservation_, request_.generation, {author_, 64}, {author_hash_, 32})) return fail(Status::Conflict);
         // A Committed head is legal only with an already durable matching job.
         // Construct identical desired evidence using a shadow Signed head; no
@@ -115,7 +116,7 @@ class TrackPublicationAdmission
         if (read_only_ || head_.phase == HeadPhase::Committed)
         {
             const auto existing = loadPublicationHistory(directories_, jobs_, directory_, desired_, directory_verify_,
-                                                        job_, job_verify_, scratch, capacity);
+                                                         job_, job_verify_, scratch, capacity);
             if (existing != PublicationStoreResult::Ready) return fail(existing == PublicationStoreResult::StorageFailure ? Status::StorageUnavailable : Status::Conflict);
         }
         else
@@ -125,9 +126,9 @@ class TrackPublicationAdmission
         }
         if (!read_only_)
         {
-        const auto committed = commitPublicationHead(heads_, jobs_, job_, job_verify_, manifest_, reservation_, request_.generation,
-                                                     {author_, 64}, {author_hash_, 32}, head_, head_next_, head_verify_, scratch, capacity);
-        if (committed != HeadStoreResult::Ready) return fail(committed == HeadStoreResult::StorageFailure ? Status::StorageUnavailable : Status::Conflict);
+            const auto committed = commitPublicationHead(heads_, jobs_, job_, job_verify_, manifest_, reservation_, request_.generation,
+                                                         {author_, 64}, {author_hash_, 32}, head_, head_next_, head_verify_, scratch, capacity);
+            if (committed != HeadStoreResult::Ready) return fail(committed == HeadStoreResult::StorageFailure ? Status::StorageUnavailable : Status::Conflict);
         }
         if (job_.phase == PublicationPhase::Confirmed)
         {
@@ -150,10 +151,16 @@ class TrackPublicationAdmission
     // reservation authenticate historical bindings independently of latest head.
     void historicalHead()
     {
-        head_={};head_.sequence=1;head_.generation=reservation_.generation;head_.revision=reservation_.revision;
-        head_.phase=track_sharing::HeadPhase::Signed;head_.archived=manifest_.manifest.state==1;
-        std::memcpy(head_.object,reservation_.object,32);std::memcpy(head_.hash,reservation_.candidate,32);
-        std::memcpy(head_.parent,reservation_.parent,32);std::memcpy(head_.operation,reservation_.operation,16);
+        head_ = {};
+        head_.sequence = 1;
+        head_.generation = reservation_.generation;
+        head_.revision = reservation_.revision;
+        head_.phase = track_sharing::HeadPhase::Signed;
+        head_.archived = manifest_.manifest.state == 1;
+        std::memcpy(head_.object, reservation_.object, 32);
+        std::memcpy(head_.hash, reservation_.candidate, 32);
+        std::memcpy(head_.parent, reservation_.parent, 32);
+        std::memcpy(head_.operation, reservation_.operation, 16);
     }
     enum class Stage : uint8_t
     {
@@ -182,7 +189,7 @@ class TrackPublicationAdmission
             !resolveObjectPath(request_.object, ObjectFile::PublicationDirectory, request_.operation, directory_path_, sizeof(directory_path_)) ||
             !resolveObjectPath(request_.object, ObjectFile::PublicationA, request_.operation, job_a_, sizeof(job_a_)) ||
             !resolveObjectPath(request_.object, ObjectFile::PublicationB, request_.operation, job_b_, sizeof(job_b_))) return fail(Status::InvalidField);
-        if(!read_only_)
+        if (!read_only_)
         {
             const auto loaded = heads_.load(head_, head_verify_, scratch, capacity);
             if (loaded != HeadStoreResult::Ready) return fail(loaded == HeadStoreResult::StorageFailure ? Status::StorageUnavailable : Status::Conflict);

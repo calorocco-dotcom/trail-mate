@@ -53,7 +53,7 @@ inline bool read_persisted_wifi_profiles(bool* enabled, std::size_t* count,
     {
         auto& profile = profiles[loaded];
         profile = {};
-        char key[24]{};
+        char key[25]{};
         std::snprintf(key, sizeof(key), "wifi_ssid_%u", static_cast<unsigned>(slot));
         const auto ssid_result = read_text(key, profile.ssid, sizeof(profile.ssid));
         if (ssid_result != Text::Ok && ssid_result != Text::Missing) return fail();

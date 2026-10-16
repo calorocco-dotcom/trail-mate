@@ -141,8 +141,9 @@ int main()
     assert(text.find("ui.timezone.offset_minutes=i32:60\n") != std::string::npos);
     assert(text.find("ui.screen.timeout_ms=u32:300000\n") != std::string::npos);
     assert(text.find("ui.audio.speaker_volume=i32:0\n") != std::string::npos);
+    assert(text.find("radio.enabled=bool:1\n") != std::string::npos);
     assert(text.find("ui.haptics.vibration_enabled=bool:0\n") != std::string::npos);
-    assert(store::reads.size() == 12 && later_owners == 2);
+    assert(store::reads.size() == 13 && later_owners == 2);
     const auto keys = store::reads;
     for (const auto& key : keys)
     {

@@ -180,8 +180,10 @@ int main()
 
     assert(prepare("<k:LineString><k:coordinates>0,0 .001,0</k:coordinates></k:LineString>"));
     sys::time += 6000;
-    complete(0, .0001);
-    assert(s_route_navigation->navigation(0, .0001, sys::time).percent == 10);
+    // Stay inside the 10% integer interval; the exact 10% boundary can
+    // evaluate just below ten with different floating-point implementations.
+    complete(0, .000105);
+    assert(s_route_navigation->navigation(0, .000105, sys::time).percent == 10);
     sys::time += 6000;
     complete(0, .000995);
     assert(s_route_navigation->navigation(0, .000995, sys::time).status == RouteNavigationStatus::Position);

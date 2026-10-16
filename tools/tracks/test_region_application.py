@@ -103,7 +103,7 @@ class RegionApplicationTests(unittest.TestCase):
         self.assertEqual(self.request(9,[1])[4],422)
         self.assertEqual(self.request(14,[])[4],422)
         with self.assertRaisesRegex(ValueError,"envelope"):
-            self.request(19,[])
+            self.request(20,[])
         feature = {"type":"Feature","id":"region","properties":{"name":"Region","names":{locale:"x"*128 for locale in ("en","de","es","fr")}},
                    "geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}}
         self.application.regions = RegionCatalog("large",{"type":"FeatureCollection","features":[feature]})

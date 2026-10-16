@@ -1,37 +1,40 @@
-# T-Display-P4 显示运行时最终架构
+# T-Display-P4 Final Display Runtime Architecture
 
-## 状态与适用范围
+## Status and scope
 
-本文是 Trail Mate 在 ESP32-P4 T-Display-P4 TFT（HI8561）和 AMOLED（RM69A10）
-目标上的显示运行时架构约束。它取代了历史上的应用层三 framebuffer
-presenter，不允许再引入独立的 front/back swapchain、软件整帧旋转或 DPI
-panel-owned LVGL buffer。
+This document defines the display runtime constraints for Trail Mate's ESP32-P4
+T-Display-P4 TFT (HI8561) and AMOLED (RM69A10) targets. It replaces the historical
+application-level three-framebuffer presenter. Do not reintroduce an independent
+front/back swapchain, software full-frame rotation or DPI panel-owned LVGL buffer.
 
-本文只定义显示数据路径。面板时序、MIPI-DSI lane/bit-rate、面板驱动、触控
-I2C、SD、NVS、LoRa 和业务 UI 不属于本次架构替换的修改范围。
+The scope is the display data path. Panel timing, MIPI-DSI lane/bit rates, panel
+drivers, touch I2C, SD, NVS, LoRa and business UI are outside this architecture
+replacement.
 
-## 目标
+## Goals
 
-显示在 UI 动画、SD I/O 和 NVS/Flash 提交同时发生时必须维持稳定。实现依赖
-ESP32-P4 的 PPA，而不是在 CPU 与 PSRAM 上执行整帧旋转 copy。显示运行时必须：
+The display must remain stable while UI animation, SD I/O and NVS/Flash commits
+run concurrently. Use the ESP32-P4 PPA rather than rotating and copying entire
+frames through the CPU and PSRAM. The display runtime must:
 
-- 让 LVGL 和 DPI driver 拥有清晰、互不重叠的 buffer ownership；
-- 对 dirty area 使用 LVGL `PARTIAL` rendering；
-- 使用 PPA 完成 90 度旋转；
-- 在颜色传输完成时释放 LVGL flush；
-- 让 DPI driver 负责传输，不把它当作应用层 swapchain；
-- 在 TFT 与 AMOLED 两个 target 使用同一条显示内存模型。
+- Give LVGL and the DPI driver clear, non-overlapping buffer ownership.
+- Use LVGL `PARTIAL` rendering for dirty areas.
+- Use PPA for 90-degree rotation.
+- Complete the LVGL flush when color transfer completes.
+- Let the DPI driver handle transfer rather than treating it as an
+  application-level swapchain.
+- Use the same display memory model on TFT and AMOLED targets.
 
-## 最终数据流
+## Final data flow
 
 ```text
-LVGL logical dirty area（横屏 UI）
+LVGL logical dirty area (landscape UI)
         |
         v
-独立 LVGL draw buffer（PSRAM | DMA）
+Independent LVGL draw buffer (PSRAM | DMA)
         |
         v
-esp_lvgl_port PPA rotation（blocking PPA operation）
+esp_lvgl_port PPA rotation (blocking PPA operation)
         |
         v
 PPA cache-line-aligned output buffer
@@ -46,72 +49,81 @@ DPI / DMA2D / MIPI-DSI
 on_color_trans_done -> lv_display_flush_ready()
 ```
 
-`buffer_size` 可以覆盖完整物理屏幕，以容纳最大 dirty area；这不表示 full-frame
-rendering。`full_refresh` 和 `direct_mode` 必须关闭，因此 LVGL 的 render mode 是
-`PARTIAL`。
+`buffer_size` may cover the complete physical display to accommodate the largest
+dirty area. This does not imply full-frame rendering. Disable `full_refresh` and
+`direct_mode`, so LVGL uses `PARTIAL` rendering.
 
-## 所有权与同步契约
+## Ownership and synchronization contracts
 
-| 资源 | 所有者 | 使用规则 |
+| Resource | Owner | Usage rule |
 | --- | --- | --- |
-| LVGL draw buffer | `esp_lvgl_port` | 从 PSRAM + DMA capability 分配，作为 LVGL 的独立渲染输入。 |
-| PPA output buffer | `esp_lvgl_port` PPA helper | 按 L2 cache line 对齐，仅保存当前旋转的 dirty area。 |
-| DPI driver 内部资源 | ESP-IDF DPI driver | `num_fbs = 0`；应用层不得获取、保留或交换 panel framebuffer。 |
-| LVGL flush 生命周期 | `on_color_trans_done` | 只有颜色传输完成才调用 `lv_display_flush_ready()`。 |
+| LVGL draw buffer | `esp_lvgl_port` | Allocate with PSRAM + DMA capabilities as independent LVGL rendering input. |
+| PPA output buffer | `esp_lvgl_port` PPA helper | Align to the L2 cache line and hold only the current rotated dirty area. |
+| DPI driver internal resources | ESP-IDF DPI driver | Set `num_fbs = 0`; the application must not obtain, retain or swap panel framebuffers. |
+| LVGL flush lifecycle | `on_color_trans_done` | Call `lv_display_flush_ready()` only after color transfer completes. |
 
-这意味着运行时没有 `front_buffer`、`pending_front_buffer`、`awaiting_refresh`、
-refresh-boundary semaphore 或应用层 back-buffer 选择状态。
+The runtime therefore has no `front_buffer`, `pending_front_buffer`,
+`awaiting_refresh`, refresh-boundary semaphore or application back-buffer
+selection state.
 
-## 实现约束
+## Implementation constraints
 
 ### DPI panel
 
-- `dpi_cfg.num_fbs` 必须为 `0`。
-- `dpi_cfg.flags.use_dma2d` 必须保持 `true`。
-- `lvgl_port_display_dsi_cfg_t.flags.avoid_tearing` 必须为 `false`。
-- 不得调用 `esp_lcd_dpi_panel_get_frame_buffer()`。
-- 不得以 `on_refresh_done` 驱动 LVGL flush completion。
+- `dpi_cfg.num_fbs` must be `0`.
+- `dpi_cfg.flags.use_dma2d` must remain `true`.
+- `lvgl_port_display_dsi_cfg_t.flags.avoid_tearing` must be `false`.
+- Do not call `esp_lcd_dpi_panel_get_frame_buffer()`.
+- Do not drive LVGL flush completion through `on_refresh_done`.
 
-### LVGL 与 PPA
+### LVGL and PPA
 
-- 两个 T-Display-P4 target 必须设置 `CONFIG_LVGL_PORT_ENABLE_PPA=y`。
-- 显示必须由 `lvgl_port_add_disp_dsi()` 创建。
-- 显示配置必须使用 `buff_spiram=true`、`buff_dma=true` 和 `sw_rotate=true`。
-  在 ESP32-P4 且 PPA Kconfig 已启用时，`esp_lvgl_port` 的这个历史字段会调用
-  PPA，不会调用 `lv_draw_sw_rotate()`。
-- `double_buffer=false`、`full_refresh=false`、`direct_mode=false`。
-- 逻辑方向通过 `lv_display_set_rotation(display, LV_DISPLAY_ROTATION_90)` 建立。
-- 运行时不得直接 include `driver/ppa.h` 或自行注册 PPA client；PPA client、output
-  buffer、对齐、dirty-area coordinate transform 和 `draw_bitmap()` 调用由已锁定的
-  `esp_lvgl_port` 实现统一管理。
+- Both T-Display-P4 targets must set `CONFIG_LVGL_PORT_ENABLE_PPA=y`.
+- Create the display through `lvgl_port_add_disp_dsi()`.
+- Set `buff_spiram=true`, `buff_dma=true` and `sw_rotate=true` in the display
+  configuration. On ESP32-P4 with PPA enabled in Kconfig, this historical
+  `esp_lvgl_port` field invokes PPA rather than `lv_draw_sw_rotate()`.
+- Set `double_buffer=false`, `full_refresh=false` and `direct_mode=false`.
+- Establish logical orientation with
+  `lv_display_set_rotation(display, LV_DISPLAY_ROTATION_90)`.
+- The runtime must not directly include `driver/ppa.h` or register its own PPA
+  client. The pinned `esp_lvgl_port` implementation manages the PPA client,
+  output buffer, alignment, dirty-area coordinate transformation and
+  `draw_bitmap()` calls.
 
-## 明确禁止的旧架构
+## Prohibited legacy architecture
 
-以下模式不得恢复为 fallback、feature flag 或条件编译分支：
+Do not restore any of these patterns as a fallback, feature flag or conditional
+compilation branch:
 
-- `P4DsiRotatingPresenter`；
-- `dpi_cfg.num_fbs = 3`；
-- panel-owned LVGL logical buffer；
-- 自建 front/back/logical 三 framebuffer swapchain；
-- `LV_DISPLAY_RENDER_MODE_FULL`；
-- `lv_draw_sw_rotate()`；
-- 每次 flush 的全屏 `esp_lcd_panel_draw_bitmap()`；
-- `on_refresh_done -> lv_display_flush_ready()`。
+- `P4DsiRotatingPresenter`.
+- `dpi_cfg.num_fbs = 3`.
+- A panel-owned logical LVGL buffer.
+- A custom front/back/logical three-framebuffer swapchain.
+- `LV_DISPLAY_RENDER_MODE_FULL`.
+- `lv_draw_sw_rotate()`.
+- A full-screen `esp_lcd_panel_draw_bitmap()` on every flush.
+- `on_refresh_done -> lv_display_flush_ready()`.
 
-## 触控与业务边界
+## Touch and business boundaries
 
-触控继续将物理坐标绑定到同一个 `lv_display_t`。LVGL display rotation 负责从物理
-portrait 面板到 logical landscape UI 的映射。因此本架构不需要改写触控控制器读数、
-I2C 锁、键盘输入、SD 或 NVS 代码。
+Touch continues to bind physical coordinates to the same `lv_display_t`.
+LVGL display rotation maps the physical portrait panel to the logical landscape
+UI. This architecture does not require changes to touch-controller readings,
+I2C locks, keyboard input, SD or NVS code.
 
-## 验收要求
+## Acceptance requirements
 
-每次修改 P4 显示运行时时，至少满足：
+Every change to the P4 display runtime must satisfy at least these requirements:
 
-1. TFT 与 AMOLED target 都能配置和编译。
-2. 架构 contract test 断言 PPA enabled、`num_fbs=0`、`avoid_tearing=false` 和
-   `lvgl_port_add_disp_dsi()`，并断言旧 presenter 不存在。
-3. 真机检查启动画面、四角触控、边缘触控、滑动、键盘焦点和 UI animation。
-4. 真机在持续 UI animation、每 500 ms NVS commit 与持续 SD write 并发时无闪屏、
-   无 PPA error、无 LVGL flush stall。
-5. 所有自动化验证完成后，执行影响审计，确认改动只影响本架构及其验证文件。
+1. Both TFT and AMOLED targets configure and compile.
+2. Architecture contract tests assert PPA is enabled, `num_fbs=0`,
+   `avoid_tearing=false` and `lvgl_port_add_disp_dsi()`, and assert that the old
+   presenter is absent.
+3. Check startup rendering, touch at all four corners and edges, swiping,
+   keyboard focus and UI animation on physical hardware.
+4. With continuous UI animation, an NVS commit every 500 ms and continuous SD
+   writes running concurrently, physical hardware shows no flicker, PPA errors
+   or LVGL flush stalls.
+5. After automated validation, audit the impact and confirm that changes affect
+   only this architecture and its verification files.

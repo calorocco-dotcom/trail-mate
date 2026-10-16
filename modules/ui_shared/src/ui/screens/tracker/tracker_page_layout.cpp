@@ -24,16 +24,6 @@ const ::ui::page_profile::PageLayoutProfile& page_profile()
     return ::ui::page_profile::current();
 }
 
-lv_coord_t panel_gap()
-{
-    const auto& profile = page_profile();
-    if (profile.dense)
-    {
-        return 0;
-    }
-    return profile.large_touch_hitbox ? 6 : 3;
-}
-
 lv_coord_t panel_pad()
 {
     const auto& profile = page_profile();
@@ -146,25 +136,6 @@ lv_obj_t* create_list_container(lv_obj_t* list_panel)
     lv_obj_set_style_bg_color(container, lv_color_hex(0xFAF0D8), 0);
     apply_base_container_style(container);
     return container;
-}
-
-lv_obj_t* create_bottom_bar(lv_obj_t* list_panel)
-{
-    const auto& profile = page_profile();
-    lv_obj_t* bar = lv_obj_create(list_panel);
-    lv_obj_set_size(bar, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(bar, panel_gap(), LV_PART_MAIN);
-    lv_obj_set_style_pad_left(bar, profile.list_panel_pad_left, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(bar, profile.list_panel_pad_right, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(bar, panel_pad(), LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(bar, profile.list_panel_margin_bottom, LV_PART_MAIN);
-    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0xFAF0D8), 0);
-    apply_base_container_style(bar);
-    return bar;
 }
 
 } // namespace layout

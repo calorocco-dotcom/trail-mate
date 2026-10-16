@@ -17,12 +17,14 @@ inline Status admitRetainedKml(uint32_t media, geocaching::ByteView object, geoc
     if (opened == sd::SdFileReadStatus::Busy) return Status::Busy;
     if (opened != sd::SdFileReadStatus::Ready) return Status::StorageUnavailable;
     uint64_t total = 0, temporary_bytes = 0;
-    unsigned files = 0;bool has_temporary = false, has_final = false;
+    unsigned files = 0;
+    bool has_temporary = false, has_final = false;
     constexpr char hex[] = "0123456789abcdef";
     auto* name = reinterpret_cast<char*>(scratch + capacity - 128);
     for (unsigned scan = 0; scan <= 128; ++scan)
     {
-        bool is_directory = false;uint64_t length = 0, next = 0;
+        bool is_directory = false;
+        uint64_t length = 0, next = 0;
         const auto entry = directory.read_next_info(name, 128, &is_directory, &length, &next);
         if (entry == sd::SdDirReadStatus::Busy) return Status::Busy;
         if (entry == sd::SdDirReadStatus::End)
@@ -42,7 +44,8 @@ inline Status admitRetainedKml(uint32_t media, geocaching::ByteView object, geoc
         if (!std::strcmp(name + 64, ".ktm"))
         {
             if (length > bytes) return Status::Conflict;
-            has_temporary = true;temporary_bytes = length;
+            has_temporary = true;
+            temporary_bytes = length;
         }
     }
     return Status::LimitExceeded;

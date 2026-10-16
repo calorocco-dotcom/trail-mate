@@ -1,20 +1,24 @@
-# 多入口部署
+# Deployment with Multiple Entry Points
 
-群晖 DDNS + TCP 18434 的 Docker Compose 部署见 [COMPOSE.md](COMPOSE.md)，配置文件为 [compose.yaml](compose.yaml)。此方案不使用 Cloudflare，不占用 NAS 的 80／443 端口。
+For Docker Compose with Synology DDNS and TCP 18434, see
+[COMPOSE.md](COMPOSE.md) and [compose.yaml](compose.yaml). That setup does not
+use Cloudflare or occupy the NAS's ports 80/443.
 
-网页自动连接我们维护的 WSS 服务。服务器上的一个 Reticulum 实例同时连接多个
-公共 TCP 入口，并承载持久寻宝目录。普通访客没有网络设置界面。
+The Web map automatically connects to the maintained WSS service. One server
+Reticulum instance connects to multiple public TCP entrypoints and hosts the
+persistent Geocaching directory. Ordinary map visitors do not configure its
+server-side interfaces.
 
 ```text
-浏览器 RNS/LXMF Worker
-        │ WSS 原始 RNS 数据包
-        ▼
-TLS 反向代理 → packet_bridge.py → 本机 127.0.0.1:44242
-                                      │
-                           Reticulum transport + 寻宝目录
-                             ├── 悉尼 TCP 入口
-                             ├── ReticulumNet NL TCP 入口
-                             └── RMAP TCP 入口
+Browser RNS/LXMF Worker
+        | WSS raw RNS packets
+        v
+TLS reverse proxy -> packet_bridge.py -> local 127.0.0.1:44242
+                                               |
+                                Reticulum transport + Geocaching directory
+                                  |-- Sydney TCP entrypoint
+                                  |-- ReticulumNet NL TCP entrypoint
+                                  '-- RMAP TCP entrypoint
 ```
 
 `reticulum/config` enables native interface discovery with a minimum stamp value
@@ -31,57 +35,84 @@ implement another routing or failover layer. A lost application link can still
 require path rediscovery and a request retry. If no cached or bootstrap endpoint
 is reachable, native discovery alone cannot obtain new Internet entrypoints.
 
-部署时将 `reticulum/` 复制到服务器私有持久目录，以该目录作为服务的
-`--rns-config`。例如将配置置于 `/srv/trail-mate/reticulum/config` 后，分别运行：
+Copy `reticulum/` into a private persistent directory on the server and pass it
+as `--rns-config`. For example, with the configuration at
+`/srv/trail-mate/reticulum/config`, run:
 
 ```sh
 python tools/geocaching/directory_service.py --state /srv/trail-mate/directory --rns-config /srv/trail-mate/reticulum --name "Trail Mate public directory"
 python tools/geocaching/packet_bridge.py --tcp-host 127.0.0.1 --tcp-port 44242 --port 8787 --origin https://vicliu624.github.io
 ```
 
-用具备有效证书的 TLS 反向代理将自有域名的 WSS 请求转发至 `127.0.0.1:8787`，
-保留 WebSocket 升级、二进制消息与 Origin。然后将真实 WSS URL 写入
-`site/geocaching/network.json` 的 `endpoint`。若网站改用自定义域名，也要更新
-桥接的 `--origin`。这些配置只由运营方修改。
+Use a TLS reverse proxy with a valid certificate to forward your domain's WSS
+requests to `127.0.0.1:8787`. Preserve the WebSocket upgrade, binary messages and
+Origin. Set the actual WSS URL as `endpoint` in `site/geocaching/network.json`.
+If the website uses a custom domain, update the bridge's `--origin` as well.
+Operators manage these deployment settings.
 
-默认上游为 `sydney.reticulum.au:4242`、`node.reticulumnet.nl:4242` 和
-`rmap.world:4242`。按长期观测记录和公共服务说明筛选，已移除只有一次连通性
-检查证据的裸 IP。依据与限制见[设备网络配置](../../../docs/reticulum_network_config.md)。
-观测时长不是连续在线率；本机 DNS 经代理，TCP 连接成功也不能证明源站可用。
-已通过临时接入验证公网寻宝目录发现和测试点读取，尚未验证公网运营方故障恢复或长期可用性。
-多个上游不意味着存在多个寻宝目录，也不会消除单台桥接服务器的故障风险。
-可在后续部署第二台桥接及目录副本后增加浏览器的自动备用连接。
+Configured bootstrap defaults are `sydney.reticulum.au:4242`,
+`node.reticulumnet.nl:4242` and `rmap.world:4242`. They were selected from
+observation records and public-service descriptions; bare IPs backed only by
+one successful connectivity check were removed. See
+[device network configuration](../../../docs/reticulum_network_config.md)
+for the basis and limits of those observations. Observation duration is not
+continuous uptime. Local DNS was proxied, and TCP connection success alone
+does not prove origin-service availability.
 
-截至 2026-09-24，GitHub Pages 已发布，`network.json` 已配置开发机临时 WSS
-隧道及公开目录的 discovery seed。线上页面已查询到测试点、验证作者签名并下载
-GPX；另一次未拦截地图请求的检查确认真实 OpenStreetMap 瓦片加载成功。
-测试点位于 0,0，仅用于联调，没有实体宝藏。临时服务依赖开发机在线，隧道地址
-可能失效；以下 systemd/Caddy 配置仍需部署到运营方的常驻服务器。
+Temporary access verified public-directory discovery and test-point retrieval.
+Public-operator failure recovery and long-term availability were not verified.
+Multiple upstreams do not imply multiple Geocaching directories or remove the
+single bridge server's failure risk. A second bridge and directory replica could
+later provide an automatic browser fallback.
 
-本机多接口恢复已有真实 RNS/LXMF 测试：浏览器完成列表查询后，关闭实际选中
-上游的 TCP 转发端口，拒绝其重连，再从另一接口完成签名详情和 GPX 下载。
-随后重启 WSS 桥接，原标签页无需刷新或设置即可重新查询。测试入口为：
+## Deployment and verification history
+
+On 2026-09-24, GitHub Pages was published with `network.json` pointing to a
+temporary development-machine WSS tunnel and a public directory discovery seed.
+The live page queried a test point, verified its author signature and downloaded
+GPX. A separate check without intercepting map requests confirmed actual
+OpenStreetMap tiles loaded. The point at 0,0 was an integration fixture, not a
+physical cache. That temporary service depended on the development machine and
+did not constitute persistent-server deployment.
+
+As of 2026-10-14, the existing NAS Compose directory/bridge deployment has been
+updated while preserving its identity, epoch and records. Public queries,
+author signatures and directory publication proofs pass through the maintained
+WSS endpoint. The temporary-tunnel limitation above is historical. Real-Wio
+acceptance of the new browser create/update/archive workflow remains pending.
+The systemd/Caddy instructions below describe an alternative Linux deployment;
+the NAS deployment does not prove those alternative units or TLS settings.
+
+Local multi-interface recovery has a real RNS/LXMF test: after the browser
+queries the list, close the selected upstream's TCP forwarder, refuse its
+reconnection, and retrieve signed details/GPX through another interface.
+Restarting the WSS bridge then allows the original tab to query again without
+refreshing or changing settings. Test entrypoint:
 
 ```sh
 node tests/site/geocaching-browser.mjs --multi-upstream --reconnect --work .codex-build/browser-recovery-run --python /path/to/venv/python
 ```
 
-两个本机上游连接同一个目录，证明的是独立 TCP 接口失效后的恢复，不代表
-两个独立公网运营方、不同地理位置或目录副本的故障验收已经完成。
+Both local upstreams connect to one directory. This proves recovery after an
+independent TCP interface fails, not completed failure acceptance across two
+public operators, different geographic locations or directory replicas.
 
-## Linux 常驻服务
+## Persistent Linux services
 
-仓库附带 `trail-mate-directory.service`、`trail-mate-bridge.service`、
-`bridge.env` 和 `Caddyfile`。以下布局适用于具有 systemd、Python 3.10+
-和 Caddy 2 的 Linux 服务器。部署代码位于 `/opt/trail-mate`，由管理员拥有，
-服务账户只能写 `/var/lib/trail-mate` 中的目录数据、身份及 Reticulum 状态。
+The repository includes `trail-mate-directory.service`,
+`trail-mate-bridge.service`, `bridge.env` and `Caddyfile`. This layout is for
+Linux servers with systemd, Python 3.10+ and Caddy 2. Administrators own the code
+at `/opt/trail-mate`; the service account can write only directory data,
+identities and Reticulum state under `/var/lib/trail-mate`.
 
-验证边界：当前开发机仅完成文件审查与 `git diff --check`。本机 WSL 的
-`systemd-analyze verify` 因 control group 权限错误未能初始化管理器，
-未完成 unit 验证；本机无 Caddy 可执行文件，也尚未验证真实 TLS 配置。
-以下服务器侧检查是正式部署前仍需执行的步骤，不是已通过的记录。
+Validation boundary for the initial setup: file review and `git diff --check`
+passed. Local WSL `systemd-analyze verify` could not initialize its manager
+because of control-group permissions. Caddy was unavailable locally, and real
+TLS configuration had not been verified. The server checks below are deployment
+instructions rather than a record of those checks passing.
 
-安装代码后，由管理员创建专用账户和虚拟环境：
+After installing the code, create the dedicated account and virtual environment
+as an administrator:
 
 ```sh
 sudo useradd --system --home-dir /var/lib/trail-mate --shell /usr/sbin/nologin trail-mate
@@ -94,18 +125,22 @@ sudo install -m 0644 /opt/trail-mate/tools/geocaching/deploy/trail-mate-director
 sudo install -m 0644 /opt/trail-mate/tools/geocaching/deploy/trail-mate-bridge.service /etc/systemd/system/
 ```
 
-首次安装时复制 Reticulum 配置；升级时保留已有配置和整个状态目录：
+Copy Reticulum configuration on first installation. Preserve existing
+configuration and the entire state directory during upgrades:
 
 ```sh
 sudo test -e /var/lib/trail-mate/reticulum/config || sudo install -o trail-mate -g trail-mate -m 0600 /opt/trail-mate/tools/geocaching/deploy/reticulum/config /var/lib/trail-mate/reticulum/config
 sudo systemd-analyze verify /etc/systemd/system/trail-mate-directory.service /etc/systemd/system/trail-mate-bridge.service
 ```
 
-将 `Caddyfile` 中的 `geocaching.example.org` 替换为真实域名，合入服务器的
-`/etc/caddy/Caddyfile`，保留服务器已有站点。域名 DNS 必须指向该服务器，
-允许外部访问 TCP 80/443；8787 和 44242 保持 loopback，不开放公网端口。
-若网站使用自定义域名，先修改 `/etc/trail-mate/bridge.env` 中的精确 Origin。
-Origin 不含 URL 路径：GitHub Pages 项目路径不应写入该值。
+Replace `geocaching.example.org` in `Caddyfile` with your real domain, merge it
+into `/etc/caddy/Caddyfile`, and preserve existing sites. DNS must point to the
+server, with public TCP 80/443 access. Ports 8787 and 44242 stay on loopback and
+must not be exposed publicly.
+
+For a custom website domain, first update the exact Origin in
+`/etc/trail-mate/bridge.env`. An Origin has no URL path; do not include the
+GitHub Pages project path.
 
 ```sh
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -115,46 +150,65 @@ sudo systemctl reload caddy
 sudo journalctl -u trail-mate-directory.service -u trail-mate-bridge.service -n 100 --no-pager
 ```
 
-这两项服务在异常退出后自动重启。目录重启期间已有桥接连接可能断开，
-浏览器需要重新连接、发现路径并重试请求；systemd 的启动顺序不等于目录已就绪。
-Caddy 负责证书和 WebSocket 转发。桥接进程重启也会断开现有连接。
+Both services restart after abnormal exits. Directory restart may interrupt
+existing bridge connections, requiring the browser to reconnect, rediscover a
+path and retry. systemd startup order does not prove directory readiness. Caddy
+handles certificates and WebSocket forwarding. Bridge restart also disconnects
+existing clients.
 
-先通过真实 HTTPS 网页验证 WSS 连接、目录发现、签名详情与 GPX 下载，
-再将 `wss://真实域名/rns` 写入 `site/geocaching/network.json` 的 `endpoint` 并发布网站。
-同时将该目录实际公告的 discovery destination 写入 `discoverySeeds`（最多三个
-32 位十六进制字符串）；这里是发现目的地址，不是 LXMF delivery 地址。网页会
-在连接和重连后请求这些目的的路径，仍验证发现公告和 delivery 的同身份绑定。
-本仓库示例域名不是可用服务，不得直接作为生产 endpoint。
-设备的启动发现种子位于 `geocaching_discovery_probe.h`，必须填写 discovery
-目的地址，同样不能填 delivery 地址。当前种子与网页一致，指向联调目录，
-不是已完成常驻部署的服务。迁移服务时保留目录身份，地址即可保持不变。
-设备打开 Geocaching 且 TCP 就绪后主动请求种子路径，之后至多每分钟一次；
-通话、Nomad 和屏保期间暂缓。收到公告后仍保留这个刷新间隔，避免业务回调
-因存储锁繁忙暂未接收公告时又陷入长期等待。
-关闭功能停止请求；请求只走 IP 接口，不向 LoRa 额外广播。
-种子仅帮助启动发现，不跳过签名、目录能力检查，也不排除其他目录。
-还需验证重启服务器后目录身份不变、已发布记录仍可查询，以及单个上游
-中断后的恢复；这些验收尚未执行。
+First verify WSS connection, directory discovery, signed details and GPX
+download through a real HTTPS page. Then set the deployed endpoint, such as
+`wss://your-domain.example/rns`, in `site/geocaching/network.json` and publish
+the site.
 
-备份时先停止桥接和目录服务，再复制完整 `/var/lib/trail-mate`，完成后恢复服务。
-不要只复制正在写入的 SQLite 主文件而遗漏 WAL。该目录含私钥，备份必须私有保存。
-升级应用代码和虚拟环境时停止服务，保留状态目录、Origin 和 Caddy 配置；
-回退代码前检查数据库格式兼容性。
+Set the directory's announced discovery destination in `discoverySeeds`: at
+most three 32-character hexadecimal strings. This is the discovery address,
+not the LXMF delivery address. After connection/reconnection, the page requests
+paths for these seeds while still verifying the same-identity binding between
+discovery announces and delivery. Example domains in this repository are not
+usable production endpoints.
 
-协议配置参考：<https://reticulum.network/manual/interfaces.html>
+Device startup discovery seeds live in `geocaching_discovery_probe.h` and must
+also contain discovery rather than delivery addresses. The initial device seed
+matched the Web integration directory. Preserve the directory identity during
+migration to retain its addresses.
 
-### Updating public archive handling
+When Geocaching is open and TCP is ready, the device actively requests seed
+paths, then at most once per minute. Calls, Nomad and screen-saving defer probes.
+Retain this refresh interval after an announce so that a callback delayed by a
+busy storage lock does not lead to indefinite waiting. Disabling the feature
+stops probes. Requests use only IP interfaces and add no LoRa broadcasts.
+Seeds assist startup discovery; they do not bypass signature/capability checks
+or exclude other directories.
 
-After pulling `codex/geocaching`, rebuild the NAS application image and recreate
-the services from the repository root:
+For a new deployment, verify that server restart preserves the directory
+identity and published records, and that a single-upstream outage recovers.
+The initial alternative Linux setup had not completed these acceptance checks.
+
+Stop the bridge and directory before copying all of `/var/lib/trail-mate` for
+backup, then restore service operation. Do not copy only an actively written
+SQLite main file and omit its WAL. State contains private keys; keep backups
+private.
+
+Stop services when upgrading application code or the virtual environment.
+Preserve state, Origin and Caddy configuration. Check database-format
+compatibility before rolling code back.
+
+Protocol configuration reference:
+<https://reticulum.network/manual/interfaces.html>
+
+## Updating public archive handling
+
+After pulling the revision you intend to deploy, rebuild the NAS application
+image and recreate services from the repository root:
 
 ```sh
-git pull --ff-only origin codex/geocaching
+git pull --ff-only
 docker compose -f tools/geocaching/deploy/compose.yaml up -d --build
 docker compose -f tools/geocaching/deploy/compose.yaml logs --tail=50 directory
 ```
 
-Keep the existing volumes and configuration. This update does not require a new
+Keep existing volumes and configuration. This update does not require a new
 directory identity, discovery address, WSS address or GitHub Pages deployment.
 Updating firmware alone does not update the NAS directory. The updated directory
 hides archived caches and rejects old active-version downloads with

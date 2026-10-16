@@ -64,6 +64,7 @@ uint8_t days_in_month(int year, uint8_t month)
 
 uint8_t bcd_to_dec(uint8_t value)
 {
+    if ((value & 0x0F) > 9 || (value >> 4) > 9) return UINT8_MAX;
     return static_cast<uint8_t>(((value >> 4) * 10) + (value & 0x0F));
 }
 
@@ -157,6 +158,12 @@ bool read_rtc_epoch(std::time_t* out_epoch)
     }
 
     uint8_t date[7] = {};
+    uint8_t control1 = 0;
+    if (rtc.read8(kRegControl1, &control1) != ESP_OK || (control1 & kControl1Stop) != 0)
+    {
+        ESP_LOGW(kTag, "PCF8563 stopped or control register unavailable; RTC time not trusted");
+        return false;
+    }
     if (rtc.read(kRegSeconds, date, sizeof(date)) != ESP_OK)
     {
         ESP_LOGW(kTag, "Failed to read PCF8563 datetime registers");

@@ -535,7 +535,12 @@ int main()
         std::memset(local, 6, 16);
         PublicationReplyReceiver<decltype(publication), decltype(receipt_guard), decltype(receipt_crypto), Lease> receiver(
             publication, receipt_guard, receipt_crypto, lease, stored_job, progressed, job_verify, proof, {directory_public, 64}, local, 0, workspace, sizeof(workspace));
-        static_assert(sizeof(receiver) <= 160, "Publication receiver owns no response buffer");
+        // Borrowed references, views, address and callback binding only. Keep
+        // this bound strict while accounting for 64-bit host pointer widths.
+        constexpr size_t receiver_header_budget = 8 * sizeof(void*) + sizeof(geocaching::ByteView) +
+                                                  sizeof(uint8_t*) + sizeof(size_t) + 16 + alignof(void*) +
+                                                  sizeof(chat::lxmf::TrackDeliveryBinding);
+        static_assert(sizeof(receiver) <= receiver_header_budget, "Publication receiver owns no response buffer");
         struct PublicationSender
         {
             Io& io;
@@ -791,6 +796,9 @@ int main()
             std::memcpy(cancel_author, network_job.author_hash, 32);
             assert(execution.cancel(network_job.generation, {cancel_author, 32}) == PublicationStoreResult::Conflict);
             network_io.files = initial_network_files;
+            // Restoring the backing vectors invalidates the borrowed manifest
+            // fields. Verify the restored bytes before constructing a session.
+            assert(verifyManifest({network_io.files["updated"].data(), network_io.files["updated"].size()}, crypto, hash, workspace, sizeof(workspace), network_manifest, author) == ManifestVerification::Valid);
             assert(network_jobs.load(network_job, network_verify, workspace, sizeof(workspace)) == PublicationStoreResult::Ready);
             decltype(execution) cancelled_execution(network_io, network_jobs, network_receipts, receipt_crypto, lease, packet_sender, nonce, network_job, network_next, network_verify,
                                                     network_manifest, network_proof, {directory_public, 64}, local, author.data, "data", network_wire, sizeof(network_wire), network_scratch, sizeof(network_scratch),

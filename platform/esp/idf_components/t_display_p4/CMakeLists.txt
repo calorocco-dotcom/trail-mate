@@ -20,6 +20,7 @@ idf_component_register(
         "include/bsp"
         "."
     PRIV_INCLUDE_DIRS
+        "${CMAKE_SOURCE_DIR}/modules/core_sys/include"
         "${CMAKE_SOURCE_DIR}/boards/t_display_p4/include"
         "${CMAKE_SOURCE_DIR}/platform/shared/include"
         "${LILYGO_CPP_BUS_DRIVER_DIR}/src"

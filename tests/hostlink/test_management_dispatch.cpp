@@ -1,6 +1,6 @@
 #include "platform/esp/arduino_common/hostlink/hostlink_management_service.h"
-#include "platform/esp/arduino_common/hostlink/web_geocache_signature.h"
 #include "platform/esp/arduino_common/hostlink/web_geocache_confirmation.h"
+#include "platform/esp/arduino_common/hostlink/web_geocache_signature.h"
 #include <array>
 #include <cassert>
 #include <vector>
@@ -23,30 +23,43 @@ static std::array<uint8_t, 32> local_signature_hash{};
 namespace platform::esp::arduino_common::geocaching::browse_runtime
 {
 WebReadResult queueWebSignature(const uint8_t* operation, const uint8_t*, const uint8_t* transfer,
-                               const uint8_t* hash, uint32_t total, const uint8_t* author, uint32_t generation,
-                               const uint8_t*, uint64_t)
+                                const uint8_t* hash, uint32_t total, const uint8_t* author, uint32_t generation,
+                                const uint8_t*, uint64_t)
 {
     assert(transfer[0] == 33 && total == 100 && generation == 7);
     for (unsigned i = 0; i < 64; ++i) assert(author[i] == i);
-    std::memcpy(local_signature_operation.data(), operation, 16); std::memcpy(local_signature_hash.data(), hash, 32);
-    ++local_signature_queues; return WebReadResult::Ready;
+    std::memcpy(local_signature_operation.data(), operation, 16);
+    std::memcpy(local_signature_hash.data(), hash, 32);
+    ++local_signature_queues;
+    return WebReadResult::Ready;
 }
 WebReadResult readWebSignature(const uint8_t* operation, const uint8_t*, bool status, uint32_t, uint16_t,
-                              uint8_t* output, size_t capacity, size_t& written)
+                               uint8_t* output, size_t capacity, size_t& written)
 {
     assert(status && !std::memcmp(operation, local_signature_operation.data(), 16));
     ::geocaching::protocol::CmpWriter writer(output, capacity);
     assert(writer.array(5) && writer.binary({local_signature_operation.data(), 16}) && writer.binary({local_signature_hash.data(), 32}) &&
            writer.unsignedInteger(7) && writer.unsignedInteger(0) && writer.unsignedInteger(0));
-    written = writer.size(); return WebReadResult::Ready;
+    written = writer.size();
+    return WebReadResult::Ready;
 }
 WebReadResult releaseWebSignature(const uint8_t*, const uint8_t*) { return WebReadResult::Ready; }
-WebReadResult queueWebConfirmation(const uint8_t* transfer,const uint8_t*,const uint8_t* hash,uint32_t total,const uint8_t*,uint32_t generation,const uint8_t* proof,size_t proof_size)
-{ assert(transfer[0]==33&&hash[0]==44&&total==100&&generation==7&&proof&&proof_size>0);++local_signature_queues;return WebReadResult::Ready; }
-WebReadResult readWebConfirmation(const uint8_t*,const uint8_t*,uint8_t* output,size_t,size_t& written)
-{ output[0]=0x90;written=1;return WebReadResult::Ready; }
-WebReadResult releaseWebConfirmation(const uint8_t*,const uint8_t*){return WebReadResult::Ready;}
+WebReadResult queueWebConfirmation(const uint8_t* transfer, const uint8_t*, const uint8_t* hash, uint32_t total, const uint8_t*, uint32_t generation, const uint8_t* proof, size_t proof_size)
+{
+    assert(transfer[0] == 33 && hash[0] == 44 && total == 100 && generation == 7 && proof && proof_size > 0);
+    ++local_signature_queues;
+    return WebReadResult::Ready;
 }
+WebReadResult readWebConfirmation(const uint8_t* transfer, const uint8_t*, uint8_t* output, size_t capacity, size_t& written)
+{
+    ::geocaching::protocol::CmpWriter writer(output, capacity);
+    assert(writer.array(8) && writer.binary({transfer, 16}) && writer.binary({local_signature_hash.data(), 32}) &&
+           writer.unsignedInteger(7) && writer.unsignedInteger(0) && writer.nil() && writer.nil() && writer.nil() && writer.nil());
+    written = writer.size();
+    return WebReadResult::Ready;
+}
+WebReadResult releaseWebConfirmation(const uint8_t*, const uint8_t*) { return WebReadResult::Ready; }
+} // namespace platform::esp::arduino_common::geocaching::browse_runtime
 static std::array<uint8_t, 16> job_operation{};
 static WebResult draft_put_check = WebResult::Ready, draft_put_queue = WebResult::Pending;
 static WebResult prepare_binding_result = WebResult::Ready, prepare_latest_result = WebResult::Pending;
@@ -113,7 +126,11 @@ bool queueWebDraftPublication(const uint8_t*, uint64_t generation, const uint8_t
     assert(!std::memcmp(operation, job_operation.data(), 16));
     for (unsigned i = 0; i < 64; ++i) assert(author[i] == i);
     assert(platform::esp::arduino_common::storage::fake_files.at(hostlink::management::kPublicationTicketPath)[4] == 1);
-    if (job_queue_admit) { ++job_admissions; job_current_result = WebResult::Ready; }
+    if (job_queue_admit)
+    {
+        ++job_admissions;
+        job_current_result = WebResult::Ready;
+    }
     return job_queue_admit;
 }
 WebReadResult readWebLatestRevision(const uint8_t*, const uint8_t*, uint8_t* output, size_t capacity)
@@ -541,7 +558,8 @@ int main()
     geocaching::protocol::CmpWriter commit_encoder(commit_body.data(), commit_body.size());
     assert(commit_encoder.array(3) && commit_encoder.binary({prepare_id.data(), 16}) &&
            commit_encoder.binary({prepare_binding.data(), 32}) && commit_encoder.unsignedInteger(7));
-    const auto commit = [&] { return dispatch(68, commit_body.data(), commit_encoder.size()); };
+    const auto commit = [&]
+    { return dispatch(68, commit_body.data(), commit_encoder.size()); };
     job_history_result = WebResult::Ready;
     assert(commit().code == 4 && !job_queue_calls); // A retained ID cannot be reused by a new ticket.
     job_history_result = WebResult::NotFound;
@@ -597,31 +615,42 @@ int main()
     assert(prepare(2).code == 0); // A verified terminal result allows the next prepare.
     assert(job_admissions == 1 && job_operation == old_prepare_id);
     management::web_config::Metadata signature_metadata;
-    signature_metadata.owner[0] = 22; signature_metadata.id[0] = 33;
-    signature_metadata.hash[0] = 44; signature_metadata.kind = 5;
-    signature_metadata.phase = 1; signature_metadata.total = signature_metadata.offset = 100;
+    signature_metadata.owner[0] = 22;
+    signature_metadata.id[0] = 33;
+    signature_metadata.hash[0] = 44;
+    signature_metadata.kind = 5;
+    signature_metadata.phase = 1;
+    signature_metadata.total = signature_metadata.offset = 100;
     std::array<uint8_t, 512> arena{};
     assert(management::web_config::save(signature_metadata, arena.data()));
-    std::array<uint8_t, 16> signature_operation{}; signature_operation[0] = 55;
+    std::array<uint8_t, 16> signature_operation{};
+    signature_operation[0] = 55;
     geocaching::protocol::CmpWriter signature_writer(arena.data() + 41, arena.size() - 41);
     assert(signature_writer.array(5) && signature_writer.binary({signature_metadata.id, 16}) && signature_writer.binary({signature_metadata.hash, 32}) &&
            signature_writer.unsignedInteger(100) && signature_writer.unsignedInteger(7) && signature_writer.binary({signature_operation.data(), 16}));
     management::EnvelopeView signature_request;
-    signature_request.session = signature_metadata.owner; signature_request.code = uint16_t(management::Operation::CacheSignBegin);
-    signature_request.body = arena.data() + 41; signature_request.body_size = signature_writer.size();
+    signature_request.session = signature_metadata.owner;
+    signature_request.code = uint16_t(management::Operation::CacheSignBegin);
+    signature_request.body = arena.data() + 41;
+    signature_request.body_size = signature_writer.size();
     size_t signature_written = 0;
     assert(management::cache_signature(signature_request, arena.data() + 41, arena.size() - 41, signature_written) == management::Status::Ok);
     assert(local_signature_queues == 1 && local_signature_operation == signature_operation && local_signature_hash[0] == 44);
     {
-    signature_metadata.kind=6;assert(management::web_config::save(signature_metadata,arena.data()+41));
-    std::array<uint8_t,192> proof_raw{};std::array<uint8_t,16> epoch{};epoch.fill(9);std::array<uint8_t,64> proof_signature{},directory_key{};
-    ::geocaching::protocol::CmpWriter proof_writer(proof_raw.data(),proof_raw.size());
-    assert(proof_writer.array(8)&&proof_writer.unsignedInteger(1)&&proof_writer.binary({epoch.data(),16})&&proof_writer.binary({epoch.data(),16})&&
-           proof_writer.binary({signature_metadata.hash,32})&&proof_writer.unsignedInteger(1)&&proof_writer.binary({signature_metadata.hash,32})&&proof_writer.unsignedInteger(0)&&proof_writer.unsignedInteger(1800000000));
-    ::geocaching::protocol::CmpWriter confirmation_writer(arena.data()+41,arena.size()-41);
-    assert(confirmation_writer.array(7)&&confirmation_writer.binary({signature_metadata.id,16})&&confirmation_writer.binary({signature_metadata.hash,32})&&confirmation_writer.unsignedInteger(7)&&
-           confirmation_writer.binary({proof_raw.data(),proof_writer.size()})&&confirmation_writer.binary({proof_signature.data(),64})&&confirmation_writer.binary({directory_key.data(),64})&&confirmation_writer.binary({epoch.data(),16}));
-    signature_request.code=uint16_t(management::Operation::CacheConfirmBegin);signature_request.body_size=confirmation_writer.size();
-    assert(management::cache_confirmation(signature_request,arena.data()+41,arena.size()-41,signature_written)==management::Status::Ok&&local_signature_queues==2);
+        signature_metadata.kind = 6;
+        assert(management::web_config::save(signature_metadata, arena.data() + 41));
+        std::array<uint8_t, 192> proof_raw{};
+        std::array<uint8_t, 16> epoch{};
+        epoch.fill(9);
+        std::array<uint8_t, 64> proof_signature{}, directory_key{};
+        ::geocaching::protocol::CmpWriter proof_writer(proof_raw.data(), proof_raw.size());
+        assert(proof_writer.array(8) && proof_writer.unsignedInteger(1) && proof_writer.binary({epoch.data(), 16}) && proof_writer.binary({epoch.data(), 16}) &&
+               proof_writer.binary({signature_metadata.hash, 32}) && proof_writer.unsignedInteger(1) && proof_writer.binary({signature_metadata.hash, 32}) && proof_writer.unsignedInteger(0) && proof_writer.unsignedInteger(1800000000));
+        ::geocaching::protocol::CmpWriter confirmation_writer(arena.data() + 41, arena.size() - 41);
+        assert(confirmation_writer.array(7) && confirmation_writer.binary({signature_metadata.id, 16}) && confirmation_writer.binary({signature_metadata.hash, 32}) && confirmation_writer.unsignedInteger(7) &&
+               confirmation_writer.binary({proof_raw.data(), proof_writer.size()}) && confirmation_writer.binary({proof_signature.data(), 64}) && confirmation_writer.binary({directory_key.data(), 64}) && confirmation_writer.binary({epoch.data(), 16}));
+        signature_request.code = uint16_t(management::Operation::CacheConfirmBegin);
+        signature_request.body_size = confirmation_writer.size();
+        assert(management::cache_confirmation(signature_request, arena.data() + 41, arena.size() - 41, signature_written) == management::Status::Ok && local_signature_queues == 2);
     }
 }

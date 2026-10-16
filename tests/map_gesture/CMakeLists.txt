@@ -27,6 +27,10 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/map_gesture_actual.inc" "${THRESHOLD}\n$
 
 # Compile the production marker cache/visitor/draw/binding implementation with
 # a deterministic projector and a counting source; no duplicated state machine.
+string(FIND "${SOURCE}" "lv_color_t overlay_color(" FIRST)
+string(FIND "${SOURCE}" "void clear_overlay_layer(" LAST)
+math(EXPR LENGTH "${LAST} - ${FIRST}")
+string(SUBSTRING "${SOURCE}" ${FIRST} ${LENGTH} MARKER_COLORS)
 string(FIND "${SOURCE}" "struct MarkerSession" FIRST)
 string(FIND "${SOURCE}" "struct RuntimeImpl" LAST)
 math(EXPR LENGTH "${LAST} - ${FIRST}")
@@ -40,7 +44,7 @@ string(FIND "${SOURCE}" "void apply_overlay(" LAST)
 math(EXPR LENGTH "${LAST} - ${FIRST}")
 string(SUBSTRING "${SOURCE}" ${FIRST} ${LENGTH} MARKER_BINDING)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/map_marker_state.inc" "${MARKER_STATE}")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/map_marker_actual.inc" "${MARKER_CALLBACKS}\n${MARKER_BINDING}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/map_marker_actual.inc" "${MARKER_COLORS}\n${MARKER_CALLBACKS}\n${MARKER_BINDING}")
 add_executable(map_marker_regression test_markers.cpp)
 target_include_directories(map_marker_regression PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}" "${REPO}/modules/ui_shared/include"

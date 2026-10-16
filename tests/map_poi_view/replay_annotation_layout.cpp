@@ -102,9 +102,7 @@ int main(int argc, char** argv)
     ui::map_poi::AnnotationLayoutOptions options;
     options.width = 480;
     options.height = 222;
-    options.max_labels = zoom <= 6 ? 8 : zoom <= 11 ? 16
-                                     : zoom <= 15   ? 24
-                                                    : 32;
+    options.max_labels = ui::map_poi::annotation_label_budget(zoom);
     options.road_reservation = zoom <= 6 ? 0 : zoom <= 11 ? 3
                                                           : 8;
     options.place_reservation = zoom <= 11 ? 6 : 2;

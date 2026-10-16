@@ -457,7 +457,7 @@ MapTileReadResult TmapMapTileSource::annotations(const MapTileRef& ref, uint8_t*
         const auto now = storage_.nowMs();
         const auto increment = std::max<uint32_t>(16, (selected->cursor.expected + 1) / 2);
         if (header->count > selected->published_count &&
-            (!selected->published_count || header->count - selected->published_count >= increment || now - selected->published_ms >= 1000U))
+            (!selected->published_count || uint32_t(header->count - selected->published_count) >= increment || now - selected->published_ms >= 1000U))
         {
             header->partial = true;
             auto snapshot = result(tmap::Status::Ok);

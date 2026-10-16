@@ -13,6 +13,20 @@ if(EXISTS "${TRAIL_MATE_MODULE_NANOPB_DIR}/pb_decode.c")
 endif()
 enable_testing()
 get_filename_component(REPO "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+add_executable(contacts_peer_directory
+    "${REPO}/modules/core_chat/tests/test_mesh_peer_directory_contract.cpp"
+    "${REPO}/modules/core_chat/src/infra/mesh_peer_directory_core.cpp"
+    "${REPO}/modules/core_chat/src/usecase/contact_service.cpp"
+    "${REPO}/modules/core_sys/src/sys/clock.cpp")
+target_compile_features(contacts_peer_directory PRIVATE cxx_std_17)
+target_include_directories(contacts_peer_directory PRIVATE
+    "${REPO}/modules/core_chat/include" "${REPO}/modules/core_sys/include")
+if(MSVC)
+    target_compile_options(contacts_peer_directory PRIVATE /UNDEBUG)
+else()
+    target_compile_options(contacts_peer_directory PRIVATE -UNDEBUG)
+endif()
+add_test(NAME contacts_peer_directory COMMAND contacts_peer_directory)
 if(EXISTS "${TRAIL_MATE_MODULE_NANOPB_DIR}/pb_decode.c")
     add_executable(meshtastic_position_precision
         "${REPO}/modules/core_chat/tests/test_meshtastic_position_core.cpp"
@@ -1003,7 +1017,8 @@ if(TRAIL_MATE_MBEDTLS_DIR)
     hostlink_test(verify_ip_confirmation test_verify_ip_confirmation.cpp
         "${ED25519_DIR}/keypair.c" "${ED25519_DIR}/sign.c" "${ED25519_DIR}/verify.c"
         "${ED25519_DIR}/sha512.c" "${ED25519_DIR}/ge.c" "${ED25519_DIR}/fe.c" "${ED25519_DIR}/sc.c"
-        "${TRAIL_MATE_MBEDTLS_DIR}/library/sha256.c" "${TRAIL_MATE_MBEDTLS_DIR}/library/platform.c")
+        "${TRAIL_MATE_MBEDTLS_DIR}/library/sha256.c" "${TRAIL_MATE_MBEDTLS_DIR}/library/platform.c"
+        "${TRAIL_MATE_MBEDTLS_DIR}/library/platform_util.c")
     target_include_directories(verify_ip_confirmation PRIVATE "${REPO}/platform/esp/common/include" "${CMAKE_CURRENT_LIST_DIR}")
     target_include_directories(verify_ip_confirmation BEFORE PRIVATE "${TRAIL_MATE_MBEDTLS_DIR}/include")
     target_compile_definitions(verify_ip_confirmation PRIVATE MBEDTLS_CONFIG_FILE="snapshot_hash_config.h")

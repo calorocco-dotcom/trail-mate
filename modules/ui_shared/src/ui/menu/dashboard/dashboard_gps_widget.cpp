@@ -9,7 +9,7 @@
 #include "platform/ui/gps_runtime.h"
 #include "sys/clock.h"
 #include "ui/localization.h"
-#include "ui/menu/dashboard/dashboard_state.h"
+#include "ui/menu/dashboard/dashboard_style.h"
 #include "ui/presentation_sources/runtime_gps_status_source.h"
 #include "ui_presentation/gps/gps_status_model.h"
 
@@ -22,47 +22,25 @@ namespace ui::menu::dashboard
 namespace
 {
 
-::ui::gps::GpsStatusModel& dashboard_gps_status_model()
+struct GpsWidgetUi : WidgetLifetime
 {
-    static ::ui::gps::GpsStatusModel model(
-        ::ui::presentation_sources::runtime_gps_status_source());
-    return model;
-}
-
-void logDashboardGpsFlow(bool has_snapshot, std::size_t sat_count, const ::gps::GnssStatus& gnss, bool fix)
-{
-    static bool s_last_has_snapshot = false;
-    static bool s_last_fix = false;
-    static std::size_t s_last_sat_count = static_cast<std::size_t>(-1);
-    static uint8_t s_last_sats_in_view = 0xFF;
-    static uint8_t s_last_sats_in_use = 0xFF;
-    static uint32_t s_last_log_ms = 0;
-
-    const uint32_t now_ms = sys::millis_now();
-    const bool changed = (has_snapshot != s_last_has_snapshot) || (fix != s_last_fix) || (sat_count != s_last_sat_count) ||
-                         (gnss.sats_in_view != s_last_sats_in_view) || (gnss.sats_in_use != s_last_sats_in_use);
-    const bool suspicious_full_scale =
-        has_snapshot && sat_count == ::gps::kMaxGnssSats && gnss.sats_in_view != static_cast<uint8_t>(sat_count);
-    if (!changed && !suspicious_full_scale && (now_ms - s_last_log_ms) < 2000U)
-    {
-        return;
-    }
-
-    s_last_has_snapshot = has_snapshot;
-    s_last_fix = fix;
-    s_last_sat_count = sat_count;
-    s_last_sats_in_view = gnss.sats_in_view;
-    s_last_sats_in_use = gnss.sats_in_use;
-    s_last_log_ms = now_ms;
-
-    std::printf("[ui][gps][dashboard] has=%u fix=%u count=%u used=%u view=%u hdop=%.1f\n",
-                static_cast<unsigned>(has_snapshot ? 1 : 0),
-                static_cast<unsigned>(fix ? 1 : 0),
-                static_cast<unsigned>(sat_count),
-                static_cast<unsigned>(gnss.sats_in_use),
-                static_cast<unsigned>(gnss.sats_in_view),
-                static_cast<double>(gnss.hdop));
-}
+    DashboardCardChrome chrome{};
+    lv_obj_t* radar = nullptr;
+    lv_obj_t* radar_rings[3]{};
+    lv_obj_t* radar_cross_h = nullptr;
+    lv_obj_t* radar_cross_v = nullptr;
+    lv_obj_t* sat_dots[8]{};
+    lv_obj_t* sat_labels[8]{};
+    lv_obj_t* sat_use_tags[8]{};
+    lv_obj_t* stat_tiles[3]{};
+    lv_obj_t* stat_values[3]{};
+    lv_obj_t* stat_captions[3]{};
+    lv_obj_t* footer_label = nullptr;
+    ui::gps::GpsStatusModel model{ui::presentation_sources::runtime_gps_status_source()};
+    ::gps::GnssSatInfo sats[::gps::kMaxGnssSats]{};
+    ::gps::GnssStatus gnss{};
+    std::array<::gps::GnssSatInfo, ::gps::kMaxGnssSats> ranked{};
+};
 
 void set_label_text_if_changed_raw(lv_obj_t* label, const char* text)
 {
@@ -74,20 +52,6 @@ void set_label_text_if_changed_raw(lv_obj_t* label, const char* text)
     if (current == nullptr || std::strcmp(current, text) != 0)
     {
         ::ui::i18n::set_label_text_raw(label, text);
-    }
-}
-
-void set_label_text_if_changed(lv_obj_t* label, const char* english)
-{
-    const char* localized = ::ui::i18n::tr(english);
-    if (label == nullptr || localized == nullptr)
-    {
-        return;
-    }
-    const char* current = lv_label_get_text(label);
-    if (current == nullptr || std::strcmp(current, localized) != 0)
-    {
-        ::ui::i18n::set_label_text_raw(label, localized);
     }
 }
 
@@ -154,13 +118,17 @@ void create_stat_tiles(GpsWidgetUi& gps_ui, lv_obj_t* body, lv_coord_t x, lv_coo
 
 } // namespace
 
-void create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
+void refresh_gps_widget(void* context);
+
+WidgetHandle create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
 {
-    auto& gps_ui = dashboard_state().gps;
+    auto* memory = create_widget_state<GpsWidgetUi>();
+    if (!memory) return {};
+    auto& gps_ui = *memory;
     gps_ui.chrome = create_card_chrome(parent, ::ui::i18n::tr("GPS Status"), card_w, card_h);
 
-    const lv_coord_t body_w = lv_obj_get_width(gps_ui.chrome.body);
-    const lv_coord_t body_h = lv_obj_get_height(gps_ui.chrome.body);
+    const lv_coord_t body_w = lv_obj_get_content_width(gps_ui.chrome.body);
+    const lv_coord_t body_h = lv_obj_get_content_height(gps_ui.chrome.body);
     const lv_coord_t radar_d = std::min<lv_coord_t>(body_h - 8, std::max<lv_coord_t>(74, body_w / 2));
 
     gps_ui.radar = lv_obj_create(gps_ui.chrome.body);
@@ -169,6 +137,7 @@ void create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
     lv_obj_set_style_bg_color(gps_ui.radar, lv_color_hex(0xF7ECD2), 0);
     lv_obj_set_style_bg_opa(gps_ui.radar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(gps_ui.radar, 0, 0);
+    lv_obj_set_style_pad_all(gps_ui.radar, 0, 0);
     lv_obj_set_style_radius(gps_ui.radar, LV_RADIUS_CIRCLE, 0);
     lv_obj_clear_flag(gps_ui.radar, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -232,29 +201,32 @@ void create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
     style_footer_label(gps_ui.footer_label);
     lv_obj_align(gps_ui.footer_label, LV_ALIGN_LEFT_MID, 0, 0);
     ::ui::i18n::set_label_text(gps_ui.footer_label, "searching satellites");
+    // Satellite coordinates are computed on the first refresh, before LVGL's
+    // next frame. Resolve the new radar's dimensions before exposing the handle.
+    lv_obj_update_layout(gps_ui.chrome.card);
+    return own_widget(gps_ui.chrome.card, memory, refresh_gps_widget, 2000);
 }
 
-void refresh_gps_widget()
+void refresh_gps_widget(void* context)
 {
-    auto& gps_ui = dashboard_state().gps;
+    auto& gps_ui = *static_cast<GpsWidgetUi*>(context);
     if (gps_ui.chrome.card == nullptr)
     {
         return;
     }
 
-    ::gps::GnssSatInfo sats[::gps::kMaxGnssSats];
+    auto& sats = gps_ui.sats;
     std::size_t sat_count = 0;
-    ::gps::GnssStatus gnss{};
+    auto& gnss = gps_ui.gnss;
     const bool has_snapshot =
         platform::ui::gps::get_gnss_snapshot(sats, ::gps::kMaxGnssSats, &sat_count, &gnss);
-    const auto status_snapshot = dashboard_gps_status_model().snapshot();
+    const auto status_snapshot = gps_ui.model.snapshot();
     const bool fix = status_snapshot.header.valid
                          ? status_snapshot.fix_valid
                          : (has_snapshot && gnss.fix != ::gps::GnssFix::NOFIX);
     const unsigned visible_sats = status_snapshot.header.valid
                                       ? static_cast<unsigned>(status_snapshot.satellites)
                                       : static_cast<unsigned>(has_snapshot ? sat_count : 0);
-    logDashboardGpsFlow(has_snapshot, sat_count, gnss, fix);
 
     const char* status_label = status_snapshot.header.valid
                                    ? status_snapshot.fix_label.c_str()
@@ -277,7 +249,7 @@ void refresh_gps_widget()
     std::snprintf(hdop_buf, sizeof(hdop_buf), "%.1f", has_snapshot ? gnss.hdop : 0.0f);
     set_label_text_if_changed_raw(gps_ui.stat_values[2], hdop_buf);
 
-    std::array<::gps::GnssSatInfo, ::gps::kMaxGnssSats> ranked{};
+    auto& ranked = gps_ui.ranked;
     for (size_t i = 0; i < sat_count && i < ranked.size(); ++i)
     {
         ranked[i] = sats[i];

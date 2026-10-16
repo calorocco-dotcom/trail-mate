@@ -14,6 +14,7 @@
 #include "product_composition/agenda_target.h"
 #include "ui/app_runtime.h"
 #include "ui/callback_app_screen.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/presentation_sources/runtime_gps_status_source.h"
 #include "ui/screens/agenda/agenda_page_flow.h"
 #include "ui/screens/agenda/agenda_page_runtime.h"
@@ -188,6 +189,7 @@ void initialize()
     root.updateStorage(true);
     // Keep the page available to report storage failure, never silently format.
     root.initialized = true;
+    ui::menu::dashboard::bindAgendaSource(root.page.source);
 }
 
 AppScreen* application()

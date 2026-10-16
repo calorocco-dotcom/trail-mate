@@ -16,7 +16,11 @@ class VerifiedFilePublish
         result_ = FileIntegrityResult::Invalid;
         if (!temporary || !destination || !expected || !*temporary || !*destination || !std::strcmp(temporary, destination) ||
             !bytes || bytes > 8388608 || signingSpansOverlap(expected, 32, reinterpret_cast<const uint8_t*>(this), sizeof(*this))) return FileIntegrityResult::Invalid;
-        temporary_ = temporary; destination_ = destination; expected_ = expected; bytes_ = bytes; final_ = false;
+        temporary_ = temporary;
+        destination_ = destination;
+        expected_ = expected;
+        bytes_ = bytes;
+        final_ = false;
         const auto existing = io_.open(destination, Io::Mode::Read);
         if (existing.handle)
         {
@@ -33,7 +37,10 @@ class VerifiedFilePublish
             signingSpansOverlap(scratch, capacity, expected_, 32) ||
             signingSpansOverlap(scratch, capacity, reinterpret_cast<const uint8_t*>(temporary_), std::strlen(temporary_) + 1) ||
             signingSpansOverlap(scratch, capacity, reinterpret_cast<const uint8_t*>(destination_), std::strlen(destination_) + 1))
-        { check_.cancel(); return result_ = FileIntegrityResult::Invalid; }
+        {
+            check_.cancel();
+            return result_ = FileIntegrityResult::Invalid;
+        }
         const auto checked = check_.step(scratch, capacity);
         if (checked != FileIntegrityResult::Ready) return result_ = checked;
         if (final_) return result_ = FileIntegrityResult::Ready;
@@ -41,7 +48,12 @@ class VerifiedFilePublish
         final_ = true;
         return result_ = check_.begin(destination_, bytes_, expected_);
     }
-    FileIntegrityResult cancel() { check_.cancel(); return result_ = FileIntegrityResult::Cancelled; }
+    FileIntegrityResult cancel()
+    {
+        check_.cancel();
+        return result_ = FileIntegrityResult::Cancelled;
+    }
+
   private:
     Io& io_;
     FileIntegrityCheck<Io, Hash> check_;

@@ -11,6 +11,7 @@
 #include "platform/esp/arduino_common/debug/sd_debug_log.h"
 #include "platform/esp/arduino_common/display_runtime.h"
 #include "platform/esp/arduino_common/startup_support.h"
+#include "platform/esp/arduino_common/tls_memory.h"
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/ui/screen_brightness_steps.h"
 #include "platform/ui/settings_store.h"
@@ -115,6 +116,7 @@ void run()
     }
 
     platform::esp::boards::initializeBoardDisplayHardware(waking_from_sleep);
+    (void)platform::esp::arduino_common::memory::initializeTlsMemoryPolicy();
     Serial.printf("[Setup] heap=%u psram=%u\n", ESP.getFreeHeap(), ESP.getFreePsram());
 
     Serial.println("[Setup] LVGL init begin");

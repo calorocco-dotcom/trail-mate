@@ -12,10 +12,10 @@
 
 #include "chat/infra/lxmf/lxmf_wire.h"
 #include "chat/ports/i_geocaching_transport.h"
-#include "chat/ports/i_track_transport.h"
 #include "chat/ports/i_incoming_delivery_commit_port.h"
 #include "chat/ports/i_mesh_adapter.h"
 #include "chat/ports/i_mesh_peer_directory.h"
+#include "chat/ports/i_track_transport.h"
 
 #include <memory>
 #include <new>

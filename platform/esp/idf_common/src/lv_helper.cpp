@@ -1,5 +1,9 @@
 #include "ui/LV_Helper.h"
 
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+#include "bsp/trail_mate_t_display_p4_keyboard.h"
+#endif
+
 namespace
 {
 
@@ -35,6 +39,14 @@ lv_indev_t* lv_get_touch_indev()
 
 lv_indev_t* lv_get_keyboard_indev()
 {
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    // The adapter remains registered while an optional keyboard is absent so
+    // it can retry discovery. Editors must still offer the touch keyboard.
+    if (!trail_mate_t_display_p4_keyboard_is_ready())
+    {
+        return nullptr;
+    }
+#endif
     return find_indev(LV_INDEV_TYPE_KEYPAD);
 }
 

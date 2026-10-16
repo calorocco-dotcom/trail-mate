@@ -38,7 +38,7 @@ inline Status cache_signature(const EnvelopeView& request, uint8_t* output, size
         if (metadata.kind != 5 || metadata.phase != 1 || metadata.total != total ||
             std::memcmp(metadata.id, output + 320, 16) || std::memcmp(metadata.hash, output + 336, 32)) return Status::Conflict;
         const auto queued = runtime::queueWebSignature(output + 368, request.session, output + 320, output + 336, total, output + 384, actual,
-                                                        bound ? draft : nullptr, draft_generation);
+                                                       bound ? draft : nullptr, draft_generation);
         if (queued != runtime::WebReadResult::Ready) return publication_result(queued);
         return publication_result(runtime::readWebSignature(output + 368, request.session, true, 0, 0, output, 320, written));
     }
