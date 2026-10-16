@@ -7,7 +7,6 @@
 #include "chat/infra/reticulum/reticulum_wire.h"
 #include "chat/usecase/chat_service.h"
 #include "chat/usecase/contact_service.h"
-#include "platform/ui/reticulum_contact_projection_policy.h"
 #include "platform/ui/reticulum_directory_runtime.h"
 #include "ui/app_runtime.h"
 #include "ui/screens/chat/chat_conversation_components.h"
@@ -39,11 +38,8 @@ namespace
 {
 
 using contacts::ui::shell::Host;
-namespace rtcontacts = ::platform::ui::reticulum_contacts;
-namespace rtdir = ::platform::ui::reticulum_directory;
 
 constexpr uint32_t kContactsRefreshIntervalMs = 2000;
-constexpr std::size_t kReticulumDirectoryProjectionLimit = 100;
 
 const Host* s_host = nullptr;
 
@@ -87,7 +83,8 @@ void destroy_contacts_page_runtime()
 
     // Clear every handle after the object tree is gone. Re-entering the page
     // must never let refresh_ui() observe children from the previous tree.
-    g_contacts_state = ContactsPageState{};
+    g_contacts_state.~ContactsPageState();
+    new (&g_contacts_state) ContactsPageState{};
 }
 
 static uint32_t hash_step(uint32_t hash, uint8_t byte)
@@ -178,10 +175,7 @@ static uint32_t hash_node_list(uint32_t hash,
 static uint32_t compute_contacts_data_signature()
 {
     uint32_t hash = 2166136261U;
-    hash = hash_node_list(hash, g_contacts_state.contacts_list);
-    hash = hash_node_list(hash, g_contacts_state.nearby_list);
     hash = hash_node_list(hash, g_contacts_state.reticulum_group_list);
-    hash = hash_node_list(hash, g_contacts_state.ignored_list);
     hash = hash_step(hash, g_contacts_state.reticulum_group_storage_supported ? 1U : 0U);
     hash = hash_step(hash, g_contacts_state.reticulum_group_storage_ready ? 1U : 0U);
     hash = hash_step(hash, g_contacts_state.reticulum_group_storage_loaded ? 1U : 0U);
@@ -264,261 +258,15 @@ void contacts_top_bar_back(void*)
     request_exit();
 }
 
-void contacts_refresh_timer_cb(lv_timer_t* timer)
+void contacts_refresh_timer_cb(lv_timer_t*)
 {
-    (void)timer;
-    if (g_contacts_state.exiting || g_contacts_state.root == nullptr)
-    {
-        return;
-    }
-
-    const size_t before_contacts = g_contacts_state.contacts_list.size();
-    const size_t before_nearby = g_contacts_state.nearby_list.size();
-    const size_t before_ignored = g_contacts_state.ignored_list.size();
-    const bool before_hydration_pending = g_contacts_state.contacts_data_hydration_pending;
-
-    const uint32_t before_revision = g_contacts_state.contacts_data_revision;
+    const auto& state = g_contacts_state;
+    if (state.exiting || !state.root || state.node_info_root || state.action_menu_modal ||
+        state.add_edit_modal || state.del_confirm_modal || state.search_box.overlay) return;
+    const auto revision = state.contacts_data_revision;
     refresh_contacts_data();
     g_contacts_state.contacts_data_hydration_pending = contacts_initial_hydration_pending();
-    const bool data_changed =
-        before_revision != g_contacts_state.contacts_data_revision;
-    const bool hydration_changed =
-        before_hydration_pending != g_contacts_state.contacts_data_hydration_pending;
-    if (before_contacts != g_contacts_state.contacts_list.size() ||
-        before_nearby != g_contacts_state.nearby_list.size() ||
-        before_ignored != g_contacts_state.ignored_list.size())
-    {
-        std::printf("[Contacts] refresh source=timer contacts=%u nearby=%u ignored=%u\n",
-                    static_cast<unsigned>(g_contacts_state.contacts_list.size()),
-                    static_cast<unsigned>(g_contacts_state.nearby_list.size()),
-                    static_cast<unsigned>(g_contacts_state.ignored_list.size()));
-    }
-    if (data_changed || hydration_changed ||
-        g_contacts_state.rendered_data_revision != g_contacts_state.contacts_data_revision)
-    {
-        refresh_ui();
-        std::printf("[DEBUG-contacts] refresh_applied revision=%lu mode=%u "
-                    "contacts=%u nearby=%u groups=%u ignored=%u rendered_rows=%u total_items=%u "
-                    "hydration_pending=%u root_valid=%u list_valid=%u\n",
-                    static_cast<unsigned long>(g_contacts_state.contacts_data_revision),
-                    static_cast<unsigned>(g_contacts_state.current_mode),
-                    static_cast<unsigned>(g_contacts_state.contacts_list.size()),
-                    static_cast<unsigned>(g_contacts_state.nearby_list.size()),
-                    static_cast<unsigned>(g_contacts_state.reticulum_group_list.size()),
-                    static_cast<unsigned>(g_contacts_state.ignored_list.size()),
-                    static_cast<unsigned>(g_contacts_state.list_items.size()),
-                    static_cast<unsigned>(g_contacts_state.total_items),
-                    g_contacts_state.contacts_data_hydration_pending ? 1U : 0U,
-                    g_contacts_state.root != nullptr && lv_obj_is_valid(g_contacts_state.root) ? 1U : 0U,
-                    g_contacts_state.list_panel != nullptr &&
-                            lv_obj_is_valid(g_contacts_state.list_panel)
-                        ? 1U
-                        : 0U);
-    }
-}
-
-bool node_matches_active_protocol(const chat::contacts::PeerDirectoryItem& node)
-{
-    const chat::MeshProtocol active_protocol =
-        chat::infra::normalizeMeshProtocol(
-            app::configFacade().readConfig().mesh_protocol);
-
-    if (chat::infra::isReticulumMeshProtocol(active_protocol))
-    {
-        return chat::infra::isReticulumNodeProtocol(node.protocol);
-    }
-
-    if (node.protocol == chat::contacts::NodeProtocolType::Unknown)
-    {
-        return true;
-    }
-
-    return chat::infra::meshProtocolFromNodeProtocol(
-               node.protocol,
-               active_protocol) == active_protocol;
-}
-
-void filter_to_active_protocol(std::vector<chat::contacts::PeerDirectoryItem>& nodes)
-{
-    nodes.erase(std::remove_if(nodes.begin(),
-                               nodes.end(),
-                               [](const chat::contacts::PeerDirectoryItem& node)
-                               {
-                                   return !node_matches_active_protocol(node);
-                               }),
-                nodes.end());
-}
-
-uint32_t reticulum_node_id_from_destination_hash(
-    const uint8_t destination_hash[chat::kReticulumPeerHashSize])
-{
-    return chat::reticulum::nodeIdFromDestinationHash(destination_hash);
-}
-
-void copy_node_text(char* out, std::size_t out_len, const char* text)
-{
-    if (!out || out_len == 0)
-    {
-        return;
-    }
-    std::snprintf(out, out_len, "%s", text ? text : "");
-}
-
-std::string reticulum_record_fallback_name(
-    const chat::ReticulumPeerIdentity& identity)
-{
-    (void)identity;
-    return "Anonymous Peer";
-}
-
-chat::contacts::PeerDirectoryItem node_from_lxmf_address(
-    const rtdir::LxmfAddressRecord& record,
-    bool as_contact)
-{
-    chat::contacts::PeerDirectoryItem item{};
-    item.node_id = reticulum_node_id_from_destination_hash(record.destination_hash);
-    item.last_seen = record.last_seen_s;
-    item.snr = std::numeric_limits<float>::quiet_NaN();
-    item.rssi = std::numeric_limits<float>::quiet_NaN();
-    item.hops_away = 0xFF;
-    item.channel = 0xFF;
-    item.is_contact = as_contact || record.favorite;
-    item.protocol = chat::contacts::NodeProtocolType::Reticulum;
-    item.role = chat::contacts::NodeRoleType::Unknown;
-    item.is_ignored = record.ignored;
-    item.has_public_key = true;
-    item.key_manually_verified = record.trusted;
-    item.reticulum_identity =
-        chat::makeReticulumPeerIdentity(record.destination_hash,
-                                        record.identity_hash);
-
-    std::snprintf(item.short_name,
-                  sizeof(item.short_name),
-                  "%04lX",
-                  static_cast<unsigned long>(item.node_id & 0xFFFFUL));
-    const std::string display =
-        record.display_name[0] != '\0'
-            ? std::string(record.display_name)
-            : reticulum_record_fallback_name(item.reticulum_identity);
-    copy_node_text(item.long_name, sizeof(item.long_name), display.c_str());
-    item.display_name = display;
-    return item;
-}
-
-bool same_reticulum_node(const chat::contacts::PeerDirectoryItem& lhs,
-                         const chat::contacts::PeerDirectoryItem& rhs)
-{
-    if (chat::hasReticulumDestinationIdentity(lhs.reticulum_identity) &&
-        chat::hasReticulumDestinationIdentity(rhs.reticulum_identity))
-    {
-        return chat::sameReticulumDestinationHash(lhs.reticulum_identity,
-                                                  rhs.reticulum_identity);
-    }
-    return lhs.node_id != 0 && lhs.node_id == rhs.node_id;
-}
-
-void upsert_reticulum_projection(std::vector<chat::contacts::PeerDirectoryItem>& nodes,
-                                 const chat::contacts::PeerDirectoryItem& projection,
-                                 bool force_contact)
-{
-    for (auto& existing : nodes)
-    {
-        if (!same_reticulum_node(existing, projection))
-        {
-            continue;
-        }
-        existing.protocol = chat::contacts::NodeProtocolType::Reticulum;
-        existing.reticulum_identity = projection.reticulum_identity;
-        existing.last_seen =
-            projection.last_seen != 0 ? projection.last_seen : existing.last_seen;
-        existing.is_ignored = projection.is_ignored;
-        existing.has_public_key = existing.has_public_key || projection.has_public_key;
-        existing.key_manually_verified =
-            existing.key_manually_verified || projection.key_manually_verified;
-        existing.is_contact = existing.is_contact || force_contact || projection.is_contact;
-        if (projection.long_name[0] != '\0')
-        {
-            copy_node_text(existing.long_name,
-                           sizeof(existing.long_name),
-                           projection.long_name);
-            existing.display_name = projection.display_name;
-        }
-        return;
-    }
-
-    chat::contacts::PeerDirectoryItem inserted = projection;
-    inserted.is_contact = inserted.is_contact || force_contact;
-    nodes.push_back(inserted);
-}
-
-void merge_reticulum_directory_projection()
-{
-    const chat::MeshProtocol active_protocol =
-        chat::infra::normalizeMeshProtocol(
-            app::configFacade().readConfig().mesh_protocol);
-    if (!chat::infra::isReticulumMeshProtocol(active_protocol))
-    {
-        return;
-    }
-
-    auto records = std::unique_ptr<rtdir::LxmfAddressRecord[]>(
-        new (std::nothrow) rtdir::LxmfAddressRecord[kReticulumDirectoryProjectionLimit]);
-    if (!records)
-    {
-        std::printf("[Contacts][RTDirectory] load skipped reason=oom records=%u\n",
-                    static_cast<unsigned>(kReticulumDirectoryProjectionLimit));
-        return;
-    }
-
-    std::size_t count = 0;
-    const bool search_active = g_contacts_state.search_query[0] != '\0';
-    const auto status =
-        search_active
-            ? rtdir::load_lxmf_addresses_matching(g_contacts_state.search_query,
-                                                  records.get(),
-                                                  kReticulumDirectoryProjectionLimit,
-                                                  &count)
-            : rtdir::load_lxmf_addresses(records.get(),
-                                         kReticulumDirectoryProjectionLimit,
-                                         &count);
-    if (!status.loaded)
-    {
-        if (status.sd_present)
-        {
-            std::printf("[Contacts][RTDirectory] load failed message=%s detail=%s\n",
-                        status.message,
-                        status.detail);
-        }
-        return;
-    }
-
-    for (std::size_t index = 0; index < count; ++index)
-    {
-        const auto& record = records[index];
-        const rtcontacts::ProjectionBucket bucket =
-            rtcontacts::classify(record);
-        if (bucket == rtcontacts::ProjectionBucket::Hidden)
-        {
-            continue;
-        }
-
-        const chat::contacts::PeerDirectoryItem item =
-            node_from_lxmf_address(
-                record,
-                bucket == rtcontacts::ProjectionBucket::Contact);
-        if (bucket == rtcontacts::ProjectionBucket::Contact)
-        {
-            upsert_reticulum_projection(g_contacts_state.contacts_list, item, true);
-        }
-        else if (bucket == rtcontacts::ProjectionBucket::Ignored)
-        {
-            upsert_reticulum_projection(g_contacts_state.ignored_list, item, false);
-        }
-        else
-        {
-            upsert_reticulum_projection(g_contacts_state.nearby_list, item, false);
-        }
-    }
+    if (uses_node_card() || revision != state.contacts_data_revision) refresh_ui();
 }
 
 void refresh_reticulum_groups_data()
@@ -587,39 +335,66 @@ void refresh_reticulum_groups_data()
     }
 }
 
-void sort_by_last_seen_desc(
-    std::vector<chat::contacts::PeerDirectoryItem>& nodes)
-{
-    std::stable_sort(nodes.begin(),
-                     nodes.end(),
-                     [](const chat::contacts::PeerDirectoryItem& lhs,
-                        const chat::contacts::PeerDirectoryItem& rhs)
-                     { return lhs.last_seen > rhs.last_seen; });
-}
-
 void refresh_contacts_data_impl_internal()
 {
-    chat::contacts::ContactService& contact_service = app::messagingFacade().getContactService();
-    g_contacts_state.contacts_list = contact_service.getContacts();
-    g_contacts_state.nearby_list = contact_service.getNearby();
-    g_contacts_state.ignored_list = contact_service.getIgnoredNodes();
-    refresh_reticulum_groups_data();
-    filter_to_active_protocol(g_contacts_state.contacts_list);
-    filter_to_active_protocol(g_contacts_state.nearby_list);
-    filter_to_active_protocol(g_contacts_state.ignored_list);
-    merge_reticulum_directory_projection();
-    sort_by_last_seen_desc(g_contacts_state.contacts_list);
-    sort_by_last_seen_desc(g_contacts_state.nearby_list);
-    mark_contacts_data_refreshed();
-
-    CONTACTS_LOG("[Contacts] Data refreshed: %zu contacts, %zu nearby, %zu groups, %zu ignored\n",
-                 g_contacts_state.contacts_list.size(),
-                 g_contacts_state.nearby_list.size(),
-                 g_contacts_state.reticulum_group_list.size(),
-                 g_contacts_state.ignored_list.size());
+    if (uses_node_card()) refresh_node_card_data();
+    else
+    {
+        refresh_reticulum_groups_data();
+        mark_contacts_data_refreshed();
+    }
 }
 
 } // namespace
+
+namespace contacts::ui
+{
+void hydrate_node_card()
+{
+    auto& state = g_contacts_state;
+    state.card_peer_valid = false;
+    if (!state.contact_service || state.card_index >= state.card_entries.size()) return;
+    state.card_peer_valid = state.contact_service->readPeer(state.card_entries[state.card_index], state.card_peer).succeeded();
+    state.selected_index = state.card_peer_valid ? 0 : -1;
+}
+
+void refresh_node_card_data()
+{
+    auto& state = g_contacts_state;
+    auto& service = app::messagingFacade().getContactService();
+    service.setActiveProtocol(app::configFacade().readConfig().mesh_protocol);
+    const bool same_context = state.card_context_valid && state.card_mode == state.current_mode &&
+                              std::strcmp(state.card_query, state.search_query) == 0;
+    chat::contacts::PeerBrowseEntry selected{};
+    const bool keep_selection = same_context && state.card_index < state.card_entries.size();
+    if (keep_selection) selected = state.card_entries[state.card_index];
+    std::vector<chat::contacts::PeerBrowseEntry> next;
+    const auto view = state.current_mode == ContactsMode::Contacts ? chat::MeshPeerDirectoryView::Contacts : state.current_mode == ContactsMode::Ignored ? chat::MeshPeerDirectoryView::Ignored
+                                                                                                                                                         : chat::MeshPeerDirectoryView::Nearby;
+    const auto status = service.browsePeers(view, state.search_query, next);
+    if (!status.succeeded()) return; // A busy directory must not erase the current card.
+    state.card_entries.swap(next);
+    if (!same_context) state.card_index = 0;
+    if (keep_selection)
+    {
+        for (size_t i = 0; i < state.card_entries.size(); ++i)
+            if (state.card_entries[i].samePeer(selected))
+            {
+                state.card_index = i;
+                break;
+            }
+    }
+    if (state.card_index >= state.card_entries.size()) state.card_index = 0;
+    state.card_mode = state.current_mode;
+    state.card_context_valid = true;
+    std::snprintf(state.card_query, sizeof(state.card_query), "%.*s",
+                  static_cast<int>(sizeof(state.card_query) - 1), state.search_query);
+    // Release full projections left by another mode; only one peer is hydrated.
+    state.total_items = state.card_entries.size();
+    hydrate_node_card();
+    ++state.contacts_data_revision;
+}
+} // namespace contacts::ui
 
 void refresh_contacts_data_impl()
 {
@@ -662,7 +437,6 @@ void enter(const shell::Host* host, lv_obj_t* parent)
 
     lv_obj_t* content = contacts::ui::layout::create_content(g_contacts_state.root);
     g_contacts_state.page = content;
-    contacts::ui::layout::create_footer(g_contacts_state.root);
     ui_update_top_bar_battery(g_contacts_state.top_bar);
 
     create_filter_panel(content);
@@ -687,16 +461,6 @@ void enter(const shell::Host* host, lv_obj_t* parent)
     init_contacts_input();
     refresh_contacts_data();
     g_contacts_state.contacts_data_hydration_pending = contacts_initial_hydration_pending();
-    std::printf("[Contacts] open protocol=%s contacts=%u nearby=%u groups=%u ignored=%u "
-                "hydration_pending=%u\n",
-                chat::infra::meshProtocolName(
-                    chat::infra::normalizeMeshProtocol(
-                        app::configFacade().readConfig().mesh_protocol)),
-                static_cast<unsigned>(g_contacts_state.contacts_list.size()),
-                static_cast<unsigned>(g_contacts_state.nearby_list.size()),
-                static_cast<unsigned>(g_contacts_state.reticulum_group_list.size()),
-                static_cast<unsigned>(g_contacts_state.ignored_list.size()),
-                g_contacts_state.contacts_data_hydration_pending ? 1U : 0U);
     refresh_ui();
     g_contacts_state.refresh_timer =
         lv_timer_create(contacts_refresh_timer_cb, kContactsRefreshIntervalMs, nullptr);

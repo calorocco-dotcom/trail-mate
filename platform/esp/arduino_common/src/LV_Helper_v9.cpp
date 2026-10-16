@@ -17,6 +17,8 @@
 #include "sys/clock.h"
 #include "ui/LV_Helper.h"
 #include "ui/app_runtime.h"
+#include "ui/input/pager_navigation.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/support/lvgl_fs_utils.h"
 #include "walkie/walkie_service.h"
@@ -195,14 +197,16 @@ lv_fs_res_t sd_fs_read(lv_fs_drv_t* drv, void* file_p, void* buf, uint32_t btr, 
         return LV_FS_RES_INV_PARAM;
     }
     const int result = file->read(buf, btr);
+    if (br != nullptr) *br = result > 0 ? static_cast<uint32_t>(result) : 0;
+    if (file->read_busy())
+    {
+        mark_external_font_fs_busy();
+        return LV_FS_RES_BUSY;
+    }
     if (result < 0)
     {
         mark_external_font_fs_busy();
         return sd_fs_error_to_res();
-    }
-    if (br != nullptr)
-    {
-        *br = static_cast<uint32_t>(result);
     }
     return LV_FS_RES_OK;
 }
@@ -245,9 +249,19 @@ lv_fs_res_t sd_fs_seek(lv_fs_drv_t* drv, void* file_p, uint32_t pos, lv_fs_whenc
     {
     case LV_FS_SEEK_CUR:
         target = file->position() + pos;
+        if (file->read_busy())
+        {
+            mark_external_font_fs_busy();
+            return LV_FS_RES_BUSY;
+        }
         break;
     case LV_FS_SEEK_END:
         target = file->size() + pos;
+        if (file->read_busy())
+        {
+            mark_external_font_fs_busy();
+            return LV_FS_RES_BUSY;
+        }
         break;
     case LV_FS_SEEK_SET:
     default:
@@ -258,7 +272,7 @@ lv_fs_res_t sd_fs_seek(lv_fs_drv_t* drv, void* file_p, uint32_t pos, lv_fs_whenc
     if (!file->seek(target))
     {
         mark_external_font_fs_busy();
-        return sd_fs_error_to_res();
+        return file->read_busy() ? LV_FS_RES_BUSY : sd_fs_error_to_res();
     }
     return LV_FS_RES_OK;
 }
@@ -271,7 +285,13 @@ lv_fs_res_t sd_fs_tell(lv_fs_drv_t* drv, void* file_p, uint32_t* pos_p)
     {
         return LV_FS_RES_INV_PARAM;
     }
-    *pos_p = static_cast<uint32_t>(file->position());
+    const auto position = file->position();
+    if (file->read_busy())
+    {
+        mark_external_font_fs_busy();
+        return LV_FS_RES_BUSY;
+    }
+    *pos_p = static_cast<uint32_t>(position);
     return LV_FS_RES_OK;
 }
 
@@ -1158,6 +1178,7 @@ static void lv_encoder_read(lv_indev_t* drv, lv_indev_data_t* data)
     // Screen is awake, process input normally
     if (msg.dir != ROTARY_DIR_NONE || msg.centerBtnPressed)
     {
+        ::ui::input::pager::prepare_group(lv_indev_get_group(drv));
         ::platform::ui::screen::record_activity();
     }
 
@@ -1174,6 +1195,12 @@ static void lv_encoder_read(lv_indev_t* drv, lv_indev_data_t* data)
         data->state = LV_INDEV_STATE_RELEASED;
 #endif
         break;
+    }
+    if (::ui::menu::dashboard::handleEncoder(data->enc_diff)) data->enc_diff = 0;
+    if (::ui::menu::dashboard::handleEncoderButton(msg.centerBtnPressed))
+    {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
     }
     if (msg.centerBtnPressed)
     {
@@ -1251,6 +1278,14 @@ static void keypad_read(lv_indev_t* drv, lv_indev_data_t* data)
     }
 
     // Screen is awake, process input normally
+    if (state == KEYBOARD_PRESSED) ::ui::input::pager::prepare_group(lv_indev_get_group(drv));
+    if (::ui::input::pager::handle_key(key, state == KEYBOARD_PRESSED, lv_indev_get_group(drv)))
+    {
+        ::platform::ui::screen::record_activity();
+        if (state == KEYBOARD_PRESSED) plane->feedback((void*)drv);
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
     if (!from_nav && (state == KEYBOARD_PRESSED || state == KEYBOARD_RELEASED))
     {
         AppScreen* active_app = ui_get_active_app();
@@ -1678,6 +1713,9 @@ bool lv_external_font_load_fs_was_busy()
 namespace
 {
 constexpr size_t kLvglLargeAllocThresholdBytes = 2048;
+// All PSRAM boards keep small persistent UI objects away from the radio,
+// task-stack and DMA heap. Peripheral buffers have their own explicit caps.
+constexpr bool kLvglPreferPsramForSmallAllocations = true;
 
 bool lvgl_has_psram()
 {
@@ -1700,7 +1738,7 @@ bool lvgl_external_font_load_uses_strict_psram()
 
 uint32_t lvgl_primary_caps(size_t size)
 {
-    if (lvgl_has_psram() && size >= kLvglLargeAllocThresholdBytes)
+    if (lvgl_has_psram() && (kLvglPreferPsramForSmallAllocations || size >= kLvglLargeAllocThresholdBytes))
     {
         return MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     }
@@ -1709,7 +1747,7 @@ uint32_t lvgl_primary_caps(size_t size)
 
 uint32_t lvgl_secondary_caps(size_t size)
 {
-    if (lvgl_has_psram() && size >= kLvglLargeAllocThresholdBytes)
+    if (lvgl_has_psram() && (kLvglPreferPsramForSmallAllocations || size >= kLvglLargeAllocThresholdBytes))
     {
         return MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     }

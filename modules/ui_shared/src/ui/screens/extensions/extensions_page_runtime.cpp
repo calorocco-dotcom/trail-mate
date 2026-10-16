@@ -11,6 +11,7 @@
 #include "platform/ui/pack_repository_runtime.h"
 #include "platform/ui/wifi_runtime.h"
 #include "ui/app_runtime.h"
+#include "ui/components/bottom_bar.h"
 #include "ui/components/info_card.h"
 #include "ui/components/two_pane_layout.h"
 #include "ui/components/two_pane_styles.h"
@@ -66,6 +67,7 @@ struct RuntimeState
     lv_obj_t* root = nullptr;
     lv_obj_t* content = nullptr;
     lv_obj_t* filter_panel = nullptr;
+    ::ui::components::bottom_bar::Menu menu{};
     lv_obj_t* installed_filter_btn = nullptr;
     lv_obj_t* uninstalled_filter_btn = nullptr;
     lv_obj_t* main_panel = nullptr;
@@ -525,18 +527,20 @@ void sync_focus_group(lv_obj_t* preferred_focus = nullptr)
 
     lv_group_remove_all_objs(app_g);
 
+    if (s_runtime.menu.is_open())
+    {
+        add_focusable(s_runtime.installed_filter_btn);
+        add_focusable(s_runtime.uninstalled_filter_btn);
+        lv_group_focus_obj(s_runtime.filter == PackageFilter::Installed ? s_runtime.installed_filter_btn : s_runtime.uninstalled_filter_btn);
+        set_default_group(app_g);
+        return;
+    }
+
     if (s_runtime.top_bar.back_btn != nullptr)
     {
         add_focusable(s_runtime.top_bar.back_btn);
     }
-    if (s_runtime.installed_filter_btn != nullptr)
-    {
-        add_focusable(s_runtime.installed_filter_btn);
-    }
-    if (s_runtime.uninstalled_filter_btn != nullptr)
-    {
-        add_focusable(s_runtime.uninstalled_filter_btn);
-    }
+    add_focusable(s_runtime.menu.button());
     if (s_runtime.detail_back_btn != nullptr)
     {
         add_focusable(s_runtime.detail_back_btn);
@@ -561,13 +565,14 @@ void sync_focus_group(lv_obj_t* preferred_focus = nullptr)
         add_focusable(s_runtime.connect_btn);
     }
 
-    if (preferred_focus != nullptr && lv_obj_is_valid(preferred_focus))
+    if (preferred_focus != nullptr && lv_obj_is_valid(preferred_focus) &&
+        preferred_focus != s_runtime.installed_filter_btn && preferred_focus != s_runtime.uninstalled_filter_btn)
     {
         lv_group_focus_obj(preferred_focus);
     }
-    else if (s_runtime.installed_filter_btn != nullptr)
+    else if (!s_runtime.list_buttons.empty())
     {
-        lv_group_focus_obj(s_runtime.installed_filter_btn);
+        lv_group_focus_obj(s_runtime.list_buttons.front());
     }
     else if (s_runtime.top_bar.back_btn != nullptr)
     {
@@ -814,6 +819,7 @@ void on_filter_clicked(lv_event_t* event)
     const uintptr_t raw = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
     s_runtime.filter = raw == 1U ? PackageFilter::Uninstalled : PackageFilter::Installed;
     update_filter_button_states();
+    s_runtime.menu.close();
     show_list_view();
 }
 
@@ -1409,6 +1415,11 @@ void enter(const shell::Host* host, lv_obj_t* parent)
 
     create_filter_panel(s_runtime.content);
     create_main_panel(s_runtime.content);
+    auto* bar = ::ui::components::bottom_bar::create(s_runtime.root);
+    auto* menu_button = ::ui::components::bottom_bar::add_button(bar, "Menu");
+    s_runtime.menu.init(s_runtime.root, menu_button, s_runtime.filter_panel,
+                        [](void*, bool)
+                        { sync_focus_group(); });
     refresh_catalog_and_render();
     sync_install_ui(false);
     s_runtime.install_timer = lv_timer_create(install_timer_cb, 250, nullptr);
@@ -1426,6 +1437,7 @@ void enter(const shell::Host* host, lv_obj_t* parent)
 void exit(lv_obj_t* parent)
 {
     (void)parent;
+    s_runtime.menu.reset();
     if (s_runtime.install_timer != nullptr)
     {
         lv_timer_del(s_runtime.install_timer);

@@ -1,0 +1,9 @@
+{
+  "name": "trailmate-route-png-source",
+  "version": "0.1.0",
+  "build": {
+    "includeDir": ".",
+    "srcDir": ".",
+    "srcFilter": ["-<*>"]
+  }
+}

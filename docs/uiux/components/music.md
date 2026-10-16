@@ -1,0 +1,250 @@
+# Music and device controls
+
+Music uses the existing warm palette, top bar and bottom-bar navigation. Opening
+Music with a playing, paused or interrupted session opens Now Playing. Otherwise
+it opens the SD library. Songs, artists, albums and folders are indexed on SD;
+playlists are editable M3U8 files under `/.trailmate/music/playlists`. Song files
+are never deleted by a playlist operation.
+
+## Preparing an SD card
+
+Create `Music` at the SD card root. The library scans `/Music` recursively, so
+albums and artists may have their own subfolders:
+
+```text
+/Music/Song.mp3
+/Music/Song.lrc
+/Music/Artist/Album/01 - Song.mp3
+```
+
+After adding or replacing songs, open Music's library menu and select
+**Scan for music**. Embed album artwork and other ID3 metadata in each MP3.
+Optional external lyrics use the same base name as the song with a `.lrc`
+extension, in the same folder. The firmware manages its catalog and playlists
+under `/.trailmate/music`; audio files belong under `/Music`.
+
+Song titles, artists, albums, library categories, metadata values, lyrics and
+user playlist names use the shared **content-font** scope. They are kept as raw
+UTF-8 and are never passed through UI-string translation. Buttons and other
+interface text keep the UI-language scope. This allows Chinese music in an
+English interface when a matching external content font pack is installed under
+`/trailmate/packs/fonts`. Music uses the existing lazy font-pack loader and PSRAM
+ownership; it adds no compiled-in CJK font, private font cache or worker.
+The shared registry recognizes both the LVGL 9.4 binfont header and its LVGL 9.5
+`src/font/binfont_loader/` location, so an available external loader is not
+mistakenly disabled after an LVGL update.
+
+Now Playing includes embedded artwork, title, artist, album, elapsed/total time,
+seek, previous/pause/next and repeat-all/repeat-one/shuffle. The artwork frame and
+seek knob have disjoint bounds on every supported screen. Compact screens place
+a single-line paused/interrupted status between the time labels, outside the
+slider knob and playback controls. Longer status text elides. The track-information
+view pages through six ID3 fields at a time and keeps the cover visible. Lyrics
+use three lines with synchronized LRC selection or manual scrolling.
+
+## Ownership and resource lifetime
+
+`core_music` owns storage/catalog/playback policy without LVGL or board code.
+`music_image` adapts the firmware's existing JPEG/PNG codecs. ESP storage/audio
+adapters reuse the shared SD runtime and each board's existing audio owner.
+The full page and dashboard widget have independent PSRAM state and use one
+serialized music service. Menu widgets leave before the next app attaches.
+
+An idle music widget attaches with zero library rows: it does not scan SD,
+allocate a decoder or start a playback task. Only the visible view requests
+artwork/lyrics. Hiding it drops its image reference, cancels further decoding,
+closes lyric files and releases its UI state. Exiting library browsing cancels
+an unfinished index scan. A paused, hidden session keeps a compact resume record;
+its decoder, file handles, published snapshot and worker are released. A media
+session change invalidates that record. User-requested background playback
+continues independently of widget visibility.
+
+ESP bulk allocations require `MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT` without an
+internal-RAM fallback: decoder/input/PCM workspace, indexes, scan tables,
+command slots, service snapshots, lyrics, cover pixels and UI state. Decoder
+workspace is 35,864 bytes in the host size check. Catalog scans use bounded
+tables for 512 groups per category and a fixed-depth directory stack; complete
+indexes are committed by switching CRC-protected SD manifest lanes. Song paging
+reads only the requested fixed-size records. Playlist and catalog reads pump
+audio between bounded batches instead of holding a second PCM cache.
+
+Internal RAM still holds the small service proxy, lock/atomic control words,
+RTOS task stacks and the existing hardware DMA buffers. ESP cache/flash and DMA
+constraints make these distinct from bulk PSRAM storage. The music worker is
+created only when work exists and exits while idle. It uses a 4 KiB stack;
+individual P4 SDK stack-usage reports are build evidence, not measured runtime
+high-water marks or a claim of zero internal-RAM cost. Artwork reference counts
+use an internal critical-section lock because Xtensa native CAS cannot operate
+on external-RAM objects.
+
+## Audio focus
+
+Voice messages, walkie-talkie, calls, alerts and SSTV reserve higher-priority
+focus before touching the codec. Music acknowledges only after its hardware
+lease has closed; opening and active state are published by the output port.
+Nested owners must all release before music may resume. Manual pause/stop clears
+the user's play intent. Selecting another song while paused preserves pause.
+An interruption during PCM output remains an interruption, rather than turning
+into a permanent playback error. Optional index/artwork/lyric I/O waits while a
+higher-priority owner is active. Driver teardown and SD closure do not run under
+the UI snapshot publication mutex.
+
+User media/alert gain has one cached notification path shared by settings and
+music. Queued stale volume commands cannot overwrite a newer user gain. P4 call
+gain is session-scoped: initializing a call at 100% does not overwrite the
+user's media/notification preference, and changing that preference does not
+silently change a call's independent stream gain.
+
+## Quick controls
+
+The widget projects existing runtime state and submits bounded intents. It owns
+no radio, GPS, codec, task or persistent timer. Five coalescing control words are
+consumed one at a time by the existing application service loop outside LVGL.
+Sliders commit on release or keyboard adjustment, so pointer movement does not
+write flash. A slider owns its whole drag and cannot page the dashboard.
+
+| Control | Owner and transition |
+| --- | --- |
+| Wi-Fi | Preserve saved profiles and priority. Coordinate transport clients before stopping the driver. Reject changes during OTA, calls, non-preemptible operations or external-storage suspension. Roll back a rejected preference; preserve initialization state after failed driver cleanup so retry is possible. |
+| LoRa | A shared RF-permission policy is separate from mesh-protocol TX/RX configuration and temporary exclusive sessions. Reject a switch during an exclusive session. Reject new TX while disabled, finish current work and enter checked standby before acknowledging Off. The control accepts an enable request while offline; the radio task reports transition failures instead of claiming hardware success. Preserve shared power rails. |
+| GPS | Use the existing configuration edit lease, GPS runtime enable operation and position projection. The user preference is separate from normal duty-cycle sleep and temporary power leases. |
+| Volume | Use the shared music/speaker volume. An idle adjustment updates the cached preference without creating a decoder, opening SD or starting a worker. Active playback defers flash persistence until audio is idle. |
+| Brightness | Map the percentage to the target's actual brightness range, apply through its device port and persist that native level. |
+
+Switching/failed/unavailable states are explicit. A failed switch retains its
+actual enabled value for rendering and retry; a desired value is not treated as
+a hardware acknowledgment. Hiding this widget never changes user preferences.
+The empty generic card footer is removed; an error message appears only when
+there is an error. Pager uses 1/2/3 for Wi-Fi/LoRa/GPS, +/- for volume and [/] for
+brightness. W/A/S/D and the encoder retain their navigation roles.
+
+P4 compass visibility owns a balanced heading lease. The final release stops
+sampling, powers down the private magnetometer/IMU interface, removes its I2C
+handles and ends the worker after its current bounded operation. It does not
+disable the external shared 3V3 rail.
+
+## Supported media and verification
+
+The decoder streams MPEG Layer III at native sample rates and downmixes to mono.
+ID3v1 and ID3v2.2/2.3/2.4 cover common and extended text, comments, attached
+pictures and embedded lyrics. UTF-8/Latin-1/UTF-16 and separate WXXX description/
+URL encodings are handled. Unsupported compressed/encrypted/global-unsync tag
+content is reported rather than decoded as ordinary text. The audio payload can
+still be used when an unsupported tag format can be safely skipped.
+
+JPEG decoding streams into an aspect-preserving RGB565 thumbnail with bounded
+scratch and cooperative cancellation. PNG uses a bounded transient decode with
+the strict PSRAM allocation lease. Encoded limits are 2 MiB JPEG and 256 KiB PNG;
+PNG also has a 512-pixel edge and 147,456-pixel raster limit. Progressive JPEG is
+not supported by the bundled decoder. Only the thumbnail is retained. Lyrics
+index at most 64 KiB and 512 lines. Long/unsupported fields report limits instead
+of retaining an entire tag or full-size cover.
+
+`tests/music` runs real decoding, parser, artwork codec, catalog/playlist recovery,
+focus and playback policy tests. Its device-controls target compiles the actual
+production coordinator against observable hardware/configuration ports. The
+native LVGL suites cover all five panels, seek/artwork geometry, mode cycling,
+playlist creation, widget teardown, Enter routing and slider gesture ownership.
+The production ESP service is also run with a deterministic task scheduler and
+observable PSRAM/SD/audio ports. It verifies lazy task creation, idle volume,
+hidden-pause cleanup and a UI card-change snapshot interleaved with worker
+restore. That regression fails before the saved-record ownership transfer and
+passes afterward; storage work remains outside the publication mutex.
+Restore publishes the paused session before handing the record to the worker,
+so a simultaneous entry snapshot keeps Now Playing routing. Published snapshots
+are also scoped to their SD media session. The same test checks both conditions.
+Preview screenshots use explicit deterministic fixtures; they are not evidence
+of physical audio quality, bus timing, PSRAM peaks or real-device latency.
+
+Continuous playback uses a bounded, 256 KiB single-producer/single-consumer PCM
+ring allocated strictly in PSRAM while the output is open. Its mono 16-bit
+capacity is about 2.97 seconds at 44.1 kHz or 2.73 seconds at 48 kHz. There is no
+internal-heap fallback or whole-song cache. Compressed input still uses the
+existing batched 8 KiB PSRAM window. The decoder fills the ring at priority 3;
+an independent priority-5 consumer follows the blocking I2S output clock. It
+does no SD, image, settings or UI work. The consumer and its 512-byte conversion
+scratch belong to the PSRAM Runtime. Its 4 KiB task stack and FreeRTOS task
+control block require internal memory in the current SDK configuration; the
+existing internal DMA queue is unchanged. Library-only work keeps its low
+priority and does not allocate the PCM ring or consumer task.
+
+Playback starts after a 250 ms prebuffer; optional cover/lyric/index work waits
+for 1.5 seconds of queued PCM, or EOF on a shorter track. Queue backpressure
+parks the decoder until space is available.
+Short notification waits always block for at least one RTOS tick: P4's 100 Hz
+configuration must not round a 2 ms wait to zero and starve the decoder.
+Volume is applied before hardware writes, so already queued raw PCM responds to
+new settings.
+Pause/seek/skip and focus preemption discard the queue and join the consumer
+before freeing it. Focus preemption closes the hardware independently of the
+decoder, even if the decoder is blocked on SD/image work. An interruption latch
+prevents a fast focus release from hiding the stop before Player observes it.
+Progress and resume positions subtract queued PCM time; natural EOF instead
+drains the queue and a bounded silent hardware tail before selecting a song.
+An in-stream rate change retains the first frame at the new rate until old-rate
+PCM drains; it neither decodes over that scratch nor discards the old queue.
+Asynchronous output failures, including during EOF drain, surface as playback
+errors instead of being mistaken for successful completion.
+The output diagnostic reports PSRAM capacity, queue starvation and minimum
+reserve. Deterministic production-task tests model a 600 ms producer stall,
+live volume, short-clip EOF, focus, immediate discard and failure cleanup;
+a separate native two-thread exercise checks ring order across wraparound.
+These are regression models, not measured hardware latency or audio quality.
+Playback control reads, volume observer updates, optional artwork checks and
+snapshot publication never wait on the UI mutex while output is active. A busy
+UI retains its last snapshot; queued commands/properties remain pending for the
+next admitted frame. Ordinary progress publication is limited to 10 Hz, with
+prompt publication for commands, track/artwork changes and playback transitions.
+Track commands publish catalog ID3 and remove old artwork before codec opening
+or optional decoding. Music's visible widget checks that cache every 100 ms;
+unchanged labels and styles do not trigger repeated updates. The dashboard's
+parent timer follows its currently visible widgets' periods and returns to the
+appropriate slower period after Music leaves. Active playback does
+not take the idle-cleanup lock. An additional regression reproduces starvation
+from a 30 ms snapshot owner even after raising priority, then verifies skipped
+publication/control admission without losing Pause or visibility changes.
+On L2 the same worker is pinned to core 0, separate from the board's core-1
+Arduino UI loop. Both the generic ESP and L2 paths run the runtime regression.
+
+Pager's `audioWrite` delegates to `EspCodec::write`/`esp_codec_dev_write` and
+returns a codec status: zero is success, not a PCM byte count. The Music adapter
+uses that contract, matching Pager's existing notification and voice paths.
+Its regression compiles the production adapter and checks success, nonzero
+errors, session rollback and focus rejection.
+
+On L2, a music rate transition silences the amplifier and clears the DMA queue,
+sets the I2S clock, then configures and reads back ES8311 slave/16-bit/I2S/MCLK
+settings before enabling the amplifier. Start diagnostics include the requested
+and driver-reported rate. Closing playback reports the maximum producer gap and
+the number of gaps exceeding the entire DMA queue (11.6 ms at 44.1 kHz).
+Those counters diagnose definite starvation, but a zero count does not establish
+gap-free output or analog sound quality. Physical MP3 listening remains required.
+
+L2 fixes the ES8311 DAC volume register (0x32) at 0xBF, exactly 0 dB, and verifies
+the write on initialization and after codec reconfiguration. User volume scales
+PCM once. The installed audio-driver's logarithmic `setVolume(75)` maps to 0xE2
+(+17.5 dB), which clipped ordinary music despite a moderate user volume. It is
+not a neutral 75% stage. See the [ES8311 User Guide, section 11.3](https://files.waveshare.com/wiki/common/ES8311.user.Guide.pdf).
+The same unity stage applies when returning to notification/received-voice audio.
+
+The bundled LVGL TJpgDec fork emits BGR888 for `JD_FORMAT=0`. Music converts that
+order into native RGB565 once; display transport swapping is independent. JPEG
+and PNG color-bar fixtures now check actual channel values, in addition to the
+existing geometry, cancellation and allocation checks.
+
+## Actual LVGL captures
+
+The following captures use the production page/widget code and deterministic
+preview services. Top-bar memory values and media metadata are fixture data.
+
+![Pager Now Playing with cover, seek and playback modes](../../images/music/pager-now-playing.png)
+
+![Pager paused status clear of the progress knob](../../images/music/pager-paused.png)
+
+![T-Deck interrupted status stays on one line above the controls](../../images/music/tdeck-interrupted.png)
+
+![Pager Quick controls without the empty footer](../../images/music/pager-quick-controls.png)
+
+![P4 Music widget in the right dashboard](../../images/music/p4-music-widget.png)
+
+![P4 Quick controls in the right dashboard](../../images/music/p4-quick-controls.png)

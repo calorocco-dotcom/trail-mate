@@ -27,6 +27,35 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len)
     return crc;
 }
 
+bool encode_frame_into(uint8_t type, uint16_t seq, const uint8_t* payload, size_t len,
+                       uint8_t* out, size_t capacity, size_t& written)
+{
+    written = 0;
+    if (!out || len > kMaxFrameLen || (len && !payload) ||
+        capacity < kHeaderSize + len + kCrcSize)
+    {
+        return false;
+    }
+    // memmove permits a payload staged inside this same output arena.
+    if (len)
+    {
+        std::memmove(out + kHeaderSize, payload, len);
+    }
+    out[0] = kMagic0;
+    out[1] = kMagic1;
+    out[2] = kProtocolVersion;
+    out[3] = type;
+    out[4] = static_cast<uint8_t>(seq);
+    out[5] = static_cast<uint8_t>(seq >> 8);
+    out[6] = static_cast<uint8_t>(len);
+    out[7] = static_cast<uint8_t>(len >> 8);
+    const uint16_t crc = crc16_ccitt(out, kHeaderSize + len);
+    out[kHeaderSize + len] = static_cast<uint8_t>(crc);
+    out[kHeaderSize + len + 1] = static_cast<uint8_t>(crc >> 8);
+    written = kHeaderSize + len + kCrcSize;
+    return true;
+}
+
 bool encode_frame(uint8_t type, uint16_t seq, const uint8_t* payload, size_t len,
                   std::vector<uint8_t>& out)
 {

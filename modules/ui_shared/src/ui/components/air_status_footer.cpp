@@ -91,4 +91,19 @@ void refresh(Footer& footer)
     ::ui::i18n::set_label_text_raw(footer.detail_label, detail);
 }
 
+void populate_info(lv_obj_t* parent)
+{
+    const auto snapshot = deviceStatusModel().snapshot();
+    for (const auto* text : {snapshot.header.valid ? snapshot.status_line.c_str() : "-",
+                             snapshot.header.valid ? snapshot.modem_preset.c_str() : "-"})
+    {
+        auto* label = lv_label_create(parent);
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+        ::ui::components::two_pane_styles::apply_label_primary(label);
+        ::ui::fonts::apply_font(label, ::ui::page_profile::resolve_body_font());
+        ::ui::i18n::set_label_text_raw(label, text);
+    }
+}
+
 } // namespace ui::components::air_status_footer

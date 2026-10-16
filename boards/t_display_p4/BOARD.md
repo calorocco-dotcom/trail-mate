@@ -26,7 +26,7 @@ This record describes hardware facts only.
 - LoRa present: yes
 - keyboard module: optional T-Display-P4 Keyboard accessory
 - keyboard default state: absent unless runtime TCA8418 probe succeeds
-- keyboard module software I2C: `SDA=46`, `SCL=45`, `INT=48`, `BL=47`
+- keyboard module HP I2C0: `SDA=46`, `SCL=45`, `INT=48`, `BL=47`; SYS uses LP I2C0 on GPIO7/8
 - keyboard controller: TCA8418 at `0x34`, 10 x 7 scan window
 - ESP32-C6 companion present: yes
 - ESP32-C6 SDIO link: CLK=18, CMD=19, D0=14, D1=15, D2=16, D3=17

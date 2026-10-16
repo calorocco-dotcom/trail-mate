@@ -3,6 +3,7 @@
 #include "board/LoraBoard.h"
 #include "platform/esp/arduino_common/app_tasks.h"
 #include "platform/esp/boards/board_runtime.h"
+#include "platform/radio/radio_power.h"
 
 namespace platform::esp::arduino_common::exclusive_lora_runtime
 {
@@ -25,6 +26,7 @@ bool tryAcquire(Session* out_session)
     }
 
     *out_session = {};
+    if (!platform::radio::power_policy().enabled()) return false;
     out_session->lora = resolveLoraBoard();
     if (!out_session->lora)
     {
@@ -41,6 +43,11 @@ bool tryAcquire(Session* out_session)
         out_session->paused_radio_tasks = true;
     }
 
+    if (!platform::radio::power_policy().enabled())
+    {
+        release(out_session);
+        return false;
+    }
     return true;
 }
 

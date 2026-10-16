@@ -30,7 +30,7 @@ class SdIndexedAuthorReservation
     bool beginReserve(const ::geocaching::storage::IndexRootView& root, unsigned copy, ::geocaching::ByteView encoded,
                       const ::geocaching::storage::StoredTime& issued, uint8_t* workspace, size_t workspace_capacity,
                       uint8_t* frame, size_t capacity, ::geocaching::storage::IndexRootBytes& candidate,
-                      ::geocaching::ByteView draft = {}, uint64_t generation = 0)
+                      ::geocaching::ByteView draft = {}, uint64_t generation = 0, bool web_author = false)
     {
         using namespace ::geocaching;
         RecordView record;
@@ -46,10 +46,17 @@ class SdIndexedAuthorReservation
         for (unsigned i = 0; i < 4; ++i) key_[32 + i] = static_cast<uint8_t>(record.revision >> ((3 - i) * 8));
         std::memcpy(author_.data(), record.author_public_key.data, author_.size());
         has_draft_ = draft.size != 0;
+        web_author_ = web_author;
+        if (web_author_ && !has_draft_) return false;
         if (has_draft_)
         {
-            if (!issued.has_utc || issued.utc_seconds != record.updated_at ||
+            if ((!web_author_ && (!issued.has_utc || issued.utc_seconds != record.updated_at)) ||
                 (record.revision == 1 && record.created_at != record.updated_at)) return false;
+            if (web_author_)
+            {
+                issued_.has_utc = true;
+                issued_.utc_seconds = record.updated_at;
+            }
             std::memcpy(draft_.data(), draft.data, draft_.size());
             if (!io_.emplace<SdIndexGet>(volume_).begin(root_, 4, {draft_.data(), draft_.size()}, frame_, capacity_)) return false;
             phase_ = Phase::Draft;
@@ -104,7 +111,16 @@ class SdIndexedAuthorReservation
         }
         DraftView draft;
         const ByteView draft_key{draft_.data(), draft_.size()};
-        if (!decodeDraft(draft_key, get.value(), draft) || draft.generation != generation_) return fail(IndexedCommitStep::Invalid);
+        if (!decodeDraft(draft_key, get.value(), draft)) return fail(IndexedCommitStep::Invalid);
+        if (draft.generation != generation_)
+        {
+            // A lost signature reply may follow a completed reservation. Only
+            // that exact retained version can replay the prior draft generation.
+            if (!web_author_ || phase_ != Phase::Draft || generation_ == UINT64_MAX || draft.generation != generation_ + 1 ||
+                draft.author.size != 64 || std::memcmp(draft.author.data, author_.data(), 64) || draft.base_hash.size != 32 ||
+                std::memcmp(draft.base_hash.data, hash_.bytes.data(), 32)) return fail(IndexedCommitStep::Invalid);
+            generation_ = draft.generation;
+        }
         if (phase_ == Phase::Bind)
         {
             if (draft.author.size)
@@ -118,6 +134,11 @@ class SdIndexedAuthorReservation
             return result_;
         }
         RecordView record;
+        if (web_author_ && !draft.author.size)
+        {
+            if (!protocol::decodeGeocacheRecord(encoded_, record) || record.revision != 1 || draft.base_hash.size) return fail(IndexedCommitStep::Invalid);
+            draft.author = {author_.data(), author_.size()};
+        }
         if (!protocol::decodeGeocacheRecord(encoded_, record) || draft.author.size != 64 || !draft.has_coordinates ||
             std::memcmp(draft.author.data, author_.data(), 64) || std::memcmp(record.creation_nonce.data, draft_.data(), 16) ||
             record.state != static_cast<CacheState>(draft.state) || record.latitude_e7 != draft.latitude_e7 || record.longitude_e7 != draft.longitude_e7 ||
@@ -191,6 +212,11 @@ class SdIndexedAuthorReservation
         {
             if (std::memcmp(issued.author_public_key.data, author_.data(), 64)) return fail(IndexedCommitStep::Invalid);
             if (issued.revision > highest_) highest_ = issued.revision;
+            if (issued.has_recovered_creation)
+            {
+                if (issued.recovered_created_at != record.created_at) return fail(IndexedCommitStep::Invalid);
+                first_valid_ = true;
+            }
             if (issued.revision == record.revision)
             {
                 if (std::memcmp(issued.revision_hash.data, hash_.bytes.data(), 32)) return fail(IndexedCommitStep::Invalid);
@@ -251,7 +277,7 @@ class SdIndexedAuthorReservation
     uint64_t generation_ = 0;
     uint32_t highest_ = 0;
     unsigned copy_ = 0;
-    bool has_draft_ = false, existed_ = false, base_matches_ = false, parent_valid_ = false, first_valid_ = false, duplicate_ = false;
+    bool has_draft_ = false, existed_ = false, base_matches_ = false, parent_valid_ = false, first_valid_ = false, duplicate_ = false, web_author_ = false;
     Phase phase_ = Phase::Issued;
     IndexedCommitStep result_ = IndexedCommitStep::Idle;
     std::variant<std::monostate, SdIndexGet, SdIndexScan, SdIndexedCommit, SdIndexedDraftSave> io_;

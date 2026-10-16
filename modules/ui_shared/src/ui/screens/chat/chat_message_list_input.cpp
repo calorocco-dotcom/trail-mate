@@ -1,5 +1,6 @@
 #if !defined(ARDUINO_T_WATCH_S3)
 #include "ui/screens/chat/chat_message_list_input.h"
+#include "ui/components/air_status_footer.h"
 
 #include "ui/screens/chat/chat_message_list_components.h"
 
@@ -109,6 +110,8 @@ static Adapter make_adapter(ChatMessageListScreen* screen)
 {
     Adapter adapter{};
     adapter.ctx = screen;
+    adapter.filter_panel = screen && screen->getDirectButton() ? lv_obj_get_parent(screen->getDirectButton()) : nullptr;
+    adapter.build_info = ::ui::components::air_status_footer::populate_info;
     adapter.is_alive = screen_alive;
     adapter.get_key_target = get_key_target;
     adapter.get_top_back_button = get_top_back_button;

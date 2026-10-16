@@ -2,6 +2,7 @@
 
 #include "hostlink/c6/c6_frame_codec.h"
 #include "hostlink/c6/c6_protocol.h"
+#include "platform/memory/psram_ptr.h"
 #include "platform/ui/settings_store.h"
 #include "platform/ui/wifi_runtime.h"
 
@@ -13,6 +14,7 @@
 #include <ctime>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -444,6 +446,16 @@ class C6Transport
 class SdioC6Transport final : public C6Transport
 {
   public:
+    static void* operator new(size_t bytes, const std::nothrow_t&) noexcept
+    {
+        // This owner embeds both the SDIO DMA scratch and its mutex. Default
+        // new may spill into PSRAM under internal-heap pressure.
+        return heap_caps_aligned_alloc(alignof(SdioC6Transport), bytes,
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    }
+    static void operator delete(void* memory) noexcept { heap_caps_free(memory); }
+    static void operator delete(void* memory, const std::nothrow_t&) noexcept { heap_caps_free(memory); }
+
     ~SdioC6Transport() override
     {
         reset();
@@ -1175,6 +1187,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     bool openTcp(const char* host, uint16_t port) override
     {
+        std::lock_guard<std::recursive_mutex> receive_owner(receive_owner_mutex_);
         if (!host || host[0] == '\0' || std::strlen(host) >= TM_C6_WIFI_TCP_HOST_LEN || port == 0)
         {
             set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_INTERNAL, "invalid_endpoint");
@@ -1192,12 +1205,11 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         }
 
         reset_tcp_state(WifiTcpState::Disconnected, "opening_reset");
-        tcp_status_.connection_id = next_tcp_connection_id_++;
-        if (next_tcp_connection_id_ == 0)
+        if (!prepare_tcp_rx())
         {
-            next_tcp_connection_id_ = 1;
+            set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_INTERNAL, "rx_memory_unavailable");
+            return false;
         }
-
         tm_c6_wifi_tcp_header_t header{};
         header.operation = TM_C6_WIFI_TCP_OPEN;
         header.connection_id = tcp_status_.connection_id;
@@ -1214,6 +1226,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     bool writeTcp(const uint8_t* data, size_t len) override
     {
+        std::lock_guard<std::recursive_mutex> receive_owner(receive_owner_mutex_);
         if (tcp_status_.state != WifiTcpState::Connected || (data == nullptr && len != 0) ||
             len == 0)
         {
@@ -1235,7 +1248,10 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
             }
             offset += chunk;
         }
-        tcp_status_.transmitted_bytes += static_cast<uint32_t>(len);
+        {
+            std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+            tcp_status_.transmitted_bytes += static_cast<uint32_t>(len);
+        }
         return true;
     }
 
@@ -1251,16 +1267,27 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         const size_t read_len = std::min(max_len, tcp_rx_size_);
         for (size_t i = 0; i < read_len; ++i)
         {
-            out[i] = tcp_rx_buffer_[tcp_rx_tail_];
-            tcp_rx_tail_ = (tcp_rx_tail_ + 1) % tcp_rx_buffer_.size();
+            out[i] = (*tcp_rx_buffer_)[tcp_rx_tail_];
+            tcp_rx_tail_ = (tcp_rx_tail_ + 1) % kWifiTcpRxBufferSize;
         }
         tcp_rx_size_ -= read_len;
         tcp_status_.buffered_bytes = tcp_rx_size_;
+        // A remote EOF may follow the final payload in the same poll. Keep
+        // those bytes readable, then return the session's PSRAM after draining.
+        if (tcp_rx_size_ == 0 &&
+            (tcp_status_.state == WifiTcpState::Disconnected || tcp_status_.state == WifiTcpState::Error))
+        {
+            tcp_rx_buffer_.reset();
+        }
         return read_len;
     }
 
     void closeTcp() override
     {
+        std::lock_guard<std::recursive_mutex> receive_owner(receive_owner_mutex_);
+        // An explicit close abandons the response immediately. Remote EOF,
+        // handled separately below, still preserves unread response bytes.
+        reset_tcp_rx();
         if (tcp_status_.state == WifiTcpState::Disconnected ||
             tcp_status_.state == WifiTcpState::Unsupported)
         {
@@ -1280,6 +1307,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
 
     WifiTcpStatus tcpStatus() const override
     {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         return tcp_status_;
     }
 
@@ -1633,43 +1661,74 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
                                  sizeof(header) + len);
     }
 
-    void reset_tcp_rx()
+    bool prepare_tcp_rx()
     {
         std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+        if (!tcp_rx_buffer_)
+        {
+            tcp_rx_buffer_.reset(::platform::memory::createPsram<TcpRxBuffer>());
+        }
+        if (!tcp_rx_buffer_) return false;
+        // Publish the allocation, generation and nonterminal state together.
+        // A read can run while OPEN is being sent, before openTcp returns.
+        tcp_status_.connection_id = next_tcp_connection_id_++;
+        if (next_tcp_connection_id_ == 0) next_tcp_connection_id_ = 1;
+        tcp_status_.state = WifiTcpState::Opening;
+        tcp_status_.detail = "opening";
+        return true;
+    }
+
+    // Caller holds tcp_rx_mutex_: metadata and storage publish atomically to
+    // readers and status snapshots, including EOF and Wi-Fi reset paths.
+    void clear_tcp_rx_locked()
+    {
         tcp_rx_head_ = 0;
         tcp_rx_tail_ = 0;
         tcp_rx_size_ = 0;
         tcp_status_.buffered_bytes = 0;
+        tcp_rx_buffer_.reset();
+    }
+
+    void reset_tcp_rx()
+    {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+        clear_tcp_rx_locked();
     }
 
     void set_tcp_state(WifiTcpState state, uint16_t error_code, const char* detail)
     {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         tcp_status_.state = state;
         tcp_status_.error_code = error_code;
         tcp_status_.detail = detail;
+        if (tcp_rx_size_ == 0 && (state == WifiTcpState::Disconnected || state == WifiTcpState::Error))
+        {
+            tcp_rx_buffer_.reset();
+        }
     }
 
     void reset_tcp_state(WifiTcpState state, const char* detail)
     {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         const uint8_t connection_id = tcp_status_.connection_id;
         tcp_status_ = WifiTcpStatus{};
         tcp_status_.state = state;
         tcp_status_.connection_id = connection_id;
         tcp_status_.detail = detail;
-        reset_tcp_rx();
+        clear_tcp_rx_locked();
     }
 
     bool append_tcp_rx(const uint8_t* data, size_t len)
     {
         std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
-        if ((!data && len != 0) || len > tcp_rx_buffer_.size() - tcp_rx_size_)
+        if ((!data && len != 0) || !tcp_rx_buffer_ || len > kWifiTcpRxBufferSize - tcp_rx_size_)
         {
             return false;
         }
         for (size_t i = 0; i < len; ++i)
         {
-            tcp_rx_buffer_[tcp_rx_head_] = data[i];
-            tcp_rx_head_ = (tcp_rx_head_ + 1) % tcp_rx_buffer_.size();
+            (*tcp_rx_buffer_)[tcp_rx_head_] = data[i];
+            tcp_rx_head_ = (tcp_rx_head_ + 1) % kWifiTcpRxBufferSize;
         }
         tcp_rx_size_ += len;
         tcp_status_.buffered_bytes = tcp_rx_size_;
@@ -2024,9 +2083,16 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
             switch (header.operation)
             {
             case TM_C6_WIFI_TCP_OPENED:
-                set_tcp_state(WifiTcpState::Connected, TM_C6_OK, "connected");
+                if (tcp_status_.state == WifiTcpState::Opening)
+                {
+                    set_tcp_state(WifiTcpState::Connected, TM_C6_OK, "connected");
+                }
                 break;
             case TM_C6_WIFI_TCP_DATA:
+                if (tcp_status_.state != WifiTcpState::Connected && tcp_status_.state != WifiTcpState::Opening)
+                {
+                    break;
+                }
                 if (!append_tcp_rx(frame.payload.data() + sizeof(header), data_len))
                 {
                     set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_QUEUE_FULL, "rx_overflow");
@@ -2133,7 +2199,13 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
     bool try_handshake()
     {
 #if defined(ESP_PLATFORM)
-        transport_ = std::make_unique<SdioC6Transport>();
+        transport_.reset(new (std::nothrow) SdioC6Transport());
+        if (!transport_)
+        {
+            status_.started = false; // An explicit begin/open may retry after heap recovery.
+            set_detail(status_, CompanionState::Missing, "sdio_internal_memory_unavailable");
+            return false;
+        }
         if (!transport_->begin())
         {
             set_detail(status_, CompanionState::Missing, transport_->last_error());
@@ -2222,12 +2294,15 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
     uint8_t next_tcp_connection_id_ = 1;
     std::recursive_mutex receive_owner_mutex_{};
     std::mutex send_mutex_{};
-    std::mutex tcp_rx_mutex_{};
+    mutable std::mutex tcp_rx_mutex_{};
     std::array<uint8_t, kC6RxStreamCapacity> frame_rx_stream_{};
     size_t frame_rx_stream_size_ = 0;
     uint32_t frame_rx_resync_count_ = 0;
     std::array<uint8_t, TM_C6_MAX_PAYLOAD> wifi_tcp_tx_buffer_{};
-    std::array<uint8_t, kWifiTcpRxBufferSize> tcp_rx_buffer_{};
+    // The SDIO transport stages bytes through its separate internal DMA
+    // scratch. TCP data has no DMA requirement and belongs to an open session.
+    using TcpRxBuffer = std::array<uint8_t, kWifiTcpRxBufferSize>;
+    ::platform::memory::PsramPtr<TcpRxBuffer> tcp_rx_buffer_{};
     size_t tcp_rx_head_ = 0;
     size_t tcp_rx_tail_ = 0;
     size_t tcp_rx_size_ = 0;

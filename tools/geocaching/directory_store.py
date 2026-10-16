@@ -113,10 +113,13 @@ def verify_cache(signed):
 class DirectoryStore:
     def __init__(self, path, destination, name="Trail Mate public directory", *, clock=time.time,
                  max_objects=100000, max_results=1000000, max_snapshots=256,
-                 max_snapshot_items=100000, requests_per_minute=120):
+                 max_snapshot_items=100000, requests_per_minute=120, receipt_identity=None):
         if not binary(destination, 16) or not text_valid(name, 40, nonempty=True):
             raise ValueError("invalid directory identity/name")
         self.clock, self.destination, self.name = clock, destination, name
+        self.receipt_identity = receipt_identity
+        if receipt_identity is not None and RNS.Destination.hash_from_name_and_identity("lxmf.delivery", receipt_identity) != destination:
+            raise ValueError("receipt signer differs from directory delivery identity")
         self.max_objects, self.max_results = max_objects, max_results
         self.max_snapshots, self.max_snapshot_items = max_snapshots, max_snapshot_items
         self.requests_per_minute = requests_per_minute
@@ -160,6 +163,11 @@ class DirectoryStore:
             operation INTEGER NOT NULL, binding BLOB NOT NULL, snapshot BLOB,
             position INTEGER NOT NULL, expires INTEGER NOT NULL, body BLOB);
           CREATE INDEX IF NOT EXISTS cursor_age ON cursors(expires);
+          CREATE INDEX IF NOT EXISTS cursor_pending_snapshot ON cursors(snapshot)
+            WHERE body IS NULL AND snapshot IS NOT NULL;
+          CREATE TABLE IF NOT EXISTS query_releases (
+            id BLOB PRIMARY KEY, source BLOB NOT NULL, expires INTEGER NOT NULL);
+          CREATE INDEX IF NOT EXISTS query_release_age ON query_releases(expires);
           CREATE TABLE IF NOT EXISTS peers (destination BLOB PRIMARY KEY, public_key BLOB NOT NULL,
             state BLOB NOT NULL, due INTEGER NOT NULL, scheduled INTEGER NOT NULL);
           PRAGMA user_version=1;
@@ -177,8 +185,8 @@ class DirectoryStore:
     def sequence(self):
         return self.db.execute("SELECT COALESCE(MAX(sequence),0) FROM log").fetchone()[0]
 
-    def capabilities(self):
-        return [[1], [1], [0, 1, 2, 3, 4], 8192, 4096, 64, CURSOR_TTL, DEDUP_TTL, 2, self.name, 1, DEDUP_TTL]
+    def capabilities(self, extended=False):
+        return [[1], [1], [0, 1, 2, 3, 4] + ([5] if self.receipt_identity is not None else []) + ([6] if extended else []), 8192, 4096, 64, CURSOR_TTL, DEDUP_TTL, 2, self.name, 1, DEDUP_TTL]
 
     def handle(self, source, raw):
         """Return durable response bytes, or None for an unaccepted request.
@@ -209,6 +217,9 @@ class DirectoryStore:
                         if operation == 2:
                             cached = unpacked(prior["response"])
                             if cached[4] == 200:
+                                if self.db.execute("SELECT 1 FROM query_releases WHERE id=? AND source=? AND expires>?",
+                                                   (cached[5][0], source, now)).fetchone():
+                                    return packed([1, 1, operation, request_id, 410, ["query_released", None, None]])
                                 cached[5][1] = self._visible_items(cached[5][1])
                             return packed(cached)
                         return prior["response"]
@@ -242,13 +253,45 @@ class DirectoryStore:
 
     def _dispatch(self, source, operation, body, budget, request_id, now):
         if operation == 0:
-            if body:
+            if body not in ([], [2]):
                 raise ProtocolError(400, "malformed_request")
-            return 200, self.capabilities()
+            return 200, self.capabilities(extended=body == [2])
         if operation == 1:
             if len(body) != 1:
                 raise ProtocolError(400, "malformed_request")
             return self._accept(verify_cache(body[0]), now, False)
+        if operation == 6:
+            if len(body) != 1 or not binary(body[0], 16):
+                raise ProtocolError(400, "malformed_request")
+            snapshot = self.db.execute("SELECT source,operation FROM snapshots WHERE id=?", (body[0],)).fetchone()
+            if snapshot is None:
+                return 200, [body[0], 0]
+            # The transport has authenticated source. Browsing can only revoke
+            # its own query lease; replication checkpoints are never released.
+            if snapshot["source"] != source or snapshot["operation"] != 2:
+                raise ProtocolError(404, "query_not_found")
+            self.db.execute("INSERT INTO query_releases VALUES(?,?,?)", (body[0], source, now + DEDUP_TTL))
+            self.db.execute("DELETE FROM cursors WHERE snapshot=? AND source=? AND operation=2", (body[0], source))
+            self.db.execute("DELETE FROM snapshots WHERE id=?", (body[0],))
+            return 200, [body[0], 1]
+        if operation == 5:
+            if self.receipt_identity is None:
+                raise ProtocolError(501, "unsupported_operation")
+            if len(body) != 3 or not binary(body[0], 32) or not binary(body[1], 32) or not binary(body[2], 64):
+                raise ProtocolError(400, "malformed_request")
+            head = self._head(body[0])
+            if head is None:
+                raise ProtocolError(404, "not_found")
+            if head["conflict"] or head["hash"] != body[1]:
+                raise ProtocolError(409, "head_changed")
+            record = unpacked(head["raw"], 4096)
+            if record[1] != body[2]:
+                raise ProtocolError(409, "author_changed")
+            raw = packed([1, self.destination, self.epoch, body[0], head["revision"], head["hash"], head["state"], now])
+            signature = self.receipt_identity.sign(b"trailmate.geocache/receipt/v1\0" + raw)
+            if not binary(signature, 64):
+                raise ProtocolError(503, "receipt_unavailable")
+            return 200, [raw, signature]
         if operation == 2:
             self._query_parameters(body)
             binding = packed(body[:4] + [budget])
@@ -390,7 +433,17 @@ class DirectoryStore:
         row = self.db.execute("SELECT cache,revision,hash,state FROM objects WHERE hash=?", (reference[2],)).fetchone()
         return row is not None and list(row) == reference
 
+    def _reclaim_completed_snapshots(self):
+        # Processed cursors retain their exact page bodies for the promised TTL.
+        # Only an unprocessed continuation still needs the frozen item list.
+        # The lock/transaction ensures this never races snapshot -> first cursor.
+        self.db.execute("""DELETE FROM snapshots WHERE NOT EXISTS (
+            SELECT 1 FROM cursors WHERE snapshot=snapshots.id AND body IS NULL)""")
+
     def _snapshot(self, source, operation, binding, phase, now):
+        # Also recover completed snapshots left by an earlier service version.
+        # Never evict a live continuation just to admit another request.
+        self._reclaim_completed_snapshots()
         if self.db.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] >= self.max_snapshots:
             raise ProtocolError(503, "temporarily_unavailable")
         token = os.urandom(16)
@@ -465,6 +518,8 @@ class DirectoryStore:
         result[2 if operation == 2 else 3] = next_token
         if cursor["snapshot"] is not None:
             self.db.execute("UPDATE cursors SET body=? WHERE token=?", (packed(result), token))
+        if not more:
+            self._reclaim_completed_snapshots()
         return result
 
     def maintenance(self):
@@ -473,3 +528,5 @@ class DirectoryStore:
             self.db.execute("DELETE FROM requests WHERE created<=?", (now - DEDUP_TTL,))
             self.db.execute("DELETE FROM cursors WHERE expires<=?", (now,))
             self.db.execute("DELETE FROM snapshots WHERE expires<=?", (now,))
+            self.db.execute("DELETE FROM query_releases WHERE expires<=?", (now,))
+            self._reclaim_completed_snapshots()

@@ -828,3 +828,59 @@ No saved waypoints	Brak zapisanych punktów
 Saved waypoint	Zapisany punkt
 Waypoint unavailable	Punkt niedostępny
 Reticulum	Reticulum
+Image memory unavailable	Za mało pamięci na obrazy
+Image cache needs checking. Download again.	Pamięć podręczna obrazów wymaga sprawdzenia. Pobierz je ponownie.
+Off route %.0fm	Poza trasą %.0fm
+Route position unavailable	Pozycja na trasie niedostępna
+Route storage unavailable	Pamięć trasy niedostępna
+Route: waiting for GPS	Trasa: oczekiwanie na GPS
+Route position ambiguous	Pozycja na trasie niejednoznaczna
+Route end (estimated)	Koniec trasy (szacowany)
+Route %u%% | %s left	Trasa %u%% | zostało %s
+Matching route...	Dopasowywanie trasy…
+Distance %.0f m	Odległość %.0f m
+Distance %.1f km	Odległość %.1f km
+Position unknown	Pozycja nieznana
+Region unknown	Region administracyjny nieznany
+Location loading...	Wyszukiwanie lokalizacji…
+Distance unknown	Odległość nieznana
+My position unknown	Moja pozycja jest nieznana
+No nodes	Brak węzłów
+Old position	Nieaktualna pozycja
+Contacts unavailable	Kontakty niedostępne
+Map Help	Pomoc mapy
+Map layer: %s	Warstwa mapy: %s
+Show contours	Pokaż poziomice
+Hide contours	Ukryj poziomice
+Search POI	Szukaj miejsc
+Load navigation	Wczytaj nawigację
+Load track	Wczytaj ślad
+No saved navigation	Brak zapisanej nawigacji
+Help	Pomoc
+Menu	Menu
+Navigation	Nawigacja
+Nav	Naw.
+New navigation	Nowa nawigacja
+Current location	Bieżąca lokalizacja
+Use current location	Użyj bieżącej lokalizacji
+Choose destination	Wybierz cel
+Calculate route	Oblicz trasę
+Save and preview	Zapisz i wyświetl
+Calculating route...	Obliczanie trasy...
+Route ready: %.1f km	Trasa gotowa: %.1f km
+No TMAP routing data	Brak danych nawigacyjnych TMAP
+No path found	Nie znaleziono drogi
+Outside routing coverage	Poza zasięgiem sieci dróg
+Navigation memory limit	Osiągnięto limit pamięci nawigacji
+Navigation unavailable	Nawigacja niedostępna
+Origin	Początek
+Destination	Cel
+Tap the origin to search for a place	Dotknij początku, aby wyszukać miejsce
+Search unavailable	Wyszukiwanie niedostępne
+Cancelled	Anulowano
+No team	Brak członków zespołu
+View	Przeglądaj
+Current	Bieżące
+Contours	Warstwice
+Load	Wczytaj
+Unload	Wyładuj

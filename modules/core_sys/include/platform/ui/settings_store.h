@@ -44,6 +44,40 @@ bool get_string_into(const char* ns,
                      char* out,
                      std::size_t capacity,
                      std::size_t* out_len);
+enum class ScalarReadResult : uint8_t
+{
+    Ok,
+    Missing,
+    Invalid,
+    Unavailable
+};
+// ESP strict projection reads; failed reads reset output and never use defaults.
+ScalarReadResult read_int_into(const char* ns, const char* key, int32_t* out);
+ScalarReadResult read_uint_into(const char* ns, const char* key, uint32_t* out);
+ScalarReadResult read_u8_into(const char* ns, const char* key, uint8_t* out);
+ScalarReadResult read_bool_into(const char* ns, const char* key, bool* out);
+
+enum class StringReadResult : uint8_t
+{
+    Ok,
+    Missing,
+    Invalid,
+    Unavailable
+};
+// ESP strict projection API: fallback is safe only for Missing.
+StringReadResult read_string_into(const char* ns, const char* key, char* out,
+                                  std::size_t capacity, std::size_t* out_len);
+enum class BlobReadResult : uint8_t
+{
+    Ok,
+    Missing,
+    Invalid,
+    Unavailable
+};
+// ESP strict counterpart: empty is valid; only Missing permits a default.
+// Uses the caller's buffer and reports zero output length on every failure.
+BlobReadResult read_blob_into(const char* ns, const char* key, void* out,
+                              std::size_t capacity, std::size_t* out_len);
 bool get_blob(const char* ns, const char* key, std::vector<uint8_t>& out);
 bool get_blob_into(const char* ns,
                    const char* key,

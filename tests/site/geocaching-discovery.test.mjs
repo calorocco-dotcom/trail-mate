@@ -64,7 +64,8 @@ test('failed reconnect validation permits rediscovery and a fresh capability che
     packet:{getHash:async()=>new Uint8Array(32)}};
   let fail=false,checks=0;
   client.router={recoverDirectLink:async()=>{}};
-  client.request=async()=>{
+  client.request=async(_entry,_operation,body)=>{
+    if(body.length)throw Object.assign(Error('Legacy capabilities selector'),{status:400,reason:'malformed_request'});
     checks++;
     if(fail)throw Error('Reconnect timeout');
     return [[1],[1],[0,1,2,3,4],8192,4096,20,0,0,2,0,1,0];
@@ -102,7 +103,8 @@ test('discovery paths retry while online after failed capabilities and stop afte
     const fire=async()=>{const [key,timer]=[...timers][0];timers.delete(key);await timer.callback();};
     client.pending={}; await fire(); assert.equal(paths,1); assert.equal([...timers.values()][0].delay,5000);
     client.pending=null; await fire(); assert.equal(paths,2); assert.equal([...timers.values()][0].delay,60000);
-    const entry={ready:false};
+    const entry={key:'verified',ready:false,destination:new Uint8Array(16)};client.directories.set(entry.key,entry);
+    client.router.recoverDirectLink=async()=>{};
     client.request=async()=>[[1],[1],[0,1,2,3,4],8192,4096,20,0,0,2,0,1,0];
     await client.checkDirectory(entry); assert.equal(entry.ready,true); assert.equal(timers.size,0);
     client.interface.dispatchEvent(new Event('connected')); await client.tail;

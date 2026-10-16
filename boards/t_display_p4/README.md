@@ -38,7 +38,7 @@ Primary source reference:
 - Expander interrupt: `5`
 - Backlight: `51`
 - Optional keyboard module:
-  - software I2C: `SDA=46`, `SCL=45`
+  - hardware HP I2C0: `SDA=46`, `SCL=45` (SYS uses LP I2C0 on GPIO7/8)
   - TCA8418: `0x34`, 10 x 7 scan window, interrupt `48`
   - keyboard backlight: `47`
 
@@ -72,6 +72,30 @@ change does not alter the touch IME's physical-input availability check.
 
 LDO4 powers VDDPST_5 (GPIO39-48), including keyboard signals and SD signals.
 The keyboard connector's ESP_3V3 supply is a separate electrical domain.
+
+The adapter preserves TCA8418 press/release edges in an LVGL keypad device.
+It explicitly selects the active menu/app focus group and uses a private proxy
+for text input, page-container key handlers, menu shortcuts and application
+exit. Native LVGL processing provides Enter activation, Tab focus traversal
+and held-key repetition. Page/focus replacement and FIFO overflow cancel any
+incomplete key state to prevent clicks or repeats reaching a replacement view.
+
+Probe the controllers before display startup, then attach the keypad under the
+LVGL display lock even if the initial probe failed. Optional accessory probes
+retry every five seconds on the LVGL task. Three consecutive communication
+failures clear readiness and restart that same attach sequence.
+
+## SDMMC Transfer Policy
+
+P4 uses four-bit SDMMC at a requested maximum of 40 MHz. Wio Tracker L2 uses
+one-bit SDMMC at 20 MHz; their wiring and host ownership remain board-specific.
+The IDF and L2 paths share the SDMMC transfer sizes: 16 KiB file slices, up to
+32 sectors per direct-DMA batch, and a 4 KiB bounce buffer for other buffers.
+The P4 bounce buffer is static internal RAM with 64-byte alignment, protected
+by the SD runtime mutex. Direct transfers use the host's alignment callback.
+Routine builds retain rate-limited slow/error logs instead of tracing every
+SD operation. The IDF adapter is shared with Tab5, so its batching improvements
+also apply there.
 
 ## Power Runtime Policy
 

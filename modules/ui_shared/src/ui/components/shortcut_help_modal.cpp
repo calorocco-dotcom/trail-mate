@@ -1,6 +1,10 @@
 #include "ui/components/shortcut_help_modal.h"
 
 #include "ui/app_runtime.h"
+#if defined(ARDUINO_T_LORA_PAGER)
+#include "platform/ui/psram_ui_lease.h"
+#include "ui/components/dialog_frame.h"
+#endif
 
 #if defined(ARDUINO_T_DECK_PRO)
 #include "ui/assets/fonts/font_utils.h"
@@ -28,8 +32,6 @@ constexpr uint32_t kKeycap = 0xF8E6C3;
 constexpr uint32_t kBorder = 0x8A6E43;
 constexpr uint32_t kText = 0x25170D;
 constexpr uint32_t kTextDim = 0x3E2B18;
-constexpr uint32_t kPagerRotateUpKey = 19;
-constexpr uint32_t kPagerRotateDownKey = 20;
 
 bool close_key(uint32_t key)
 {
@@ -42,12 +44,12 @@ bool close_key(uint32_t key)
 
 bool up_key(uint32_t key)
 {
-    return key == LV_KEY_UP || key == kPagerRotateUpKey || key == 'w' || key == 'W';
+    return key == LV_KEY_UP || key == LV_KEY_LEFT || key == 'w' || key == 'W';
 }
 
 bool down_key(uint32_t key)
 {
-    return key == LV_KEY_DOWN || key == kPagerRotateDownKey || key == 's' || key == 'S';
+    return key == LV_KEY_DOWN || key == LV_KEY_RIGHT || key == 's' || key == 'S';
 }
 
 void consume(lv_event_t* event)
@@ -79,7 +81,7 @@ lv_coord_t keycap_width(const char* text, bool compact)
     const std::size_t len = text ? std::strlen(text) : 0;
     if (compact)
     {
-        return len > 4 ? 48 : (len > 2 ? 34 : 22);
+        return len > 4 ? 36 : (len > 2 ? 34 : 22);
     }
     return 72;
 }
@@ -216,7 +218,12 @@ void on_key(lv_event_t* event)
 
     if ((up_key(key) || down_key(key)) && state->body && lv_obj_is_valid(state->body))
     {
-        lv_obj_scroll_by(state->body, 0, up_key(key) ? 18 : -18, LV_ANIM_OFF);
+        const lv_coord_t current = lv_obj_get_scroll_y(state->body);
+        const lv_coord_t maximum = current + lv_obj_get_scroll_bottom(state->body);
+        lv_coord_t target = current + (up_key(key) ? -18 : 18);
+        if (target > maximum) target = maximum;
+        if (target < 0) target = 0;
+        lv_obj_scroll_to_y(state->body, target, LV_ANIM_OFF);
         consume(event);
         return;
     }
@@ -245,6 +252,9 @@ void focus(State& state)
 
 bool open(State& state, lv_obj_t* parent, const Config& config)
 {
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
     if (is_open(state))
     {
         focus(state);
@@ -275,6 +285,18 @@ bool open(State& state, lv_obj_t* parent, const Config& config)
         set_default_group(state.group);
     }
 
+#if defined(ARDUINO_T_LORA_PAGER)
+    // Use the same titled, closable frame as Preview and other app dialogs.
+    const auto frame = dialog_frame::create(host, {config.title ? config.title : "Help", panel_w, panel_h,
+                                                   [](lv_event_t* event)
+                                                   { close(*static_cast<State*>(lv_event_get_user_data(event))); },
+                                                   on_key, &state});
+    state.overlay = frame.overlay;
+    state.panel = frame.panel;
+    state.body = frame.body;
+    lv_obj_add_flag(state.panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(state.panel, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+#else
     state.overlay = lv_obj_create(host);
     lv_obj_set_size(state.overlay, LV_PCT(100), LV_PCT(100));
     lv_obj_align(state.overlay, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -368,6 +390,7 @@ bool open(State& state, lv_obj_t* parent, const Config& config)
     lv_obj_set_scroll_dir(state.body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(state.body, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_add_event_cb(state.body, on_key, LV_EVENT_KEY, &state);
+#endif
 
     for (std::size_t index = 0; index < config.row_count; ++index)
     {
@@ -378,6 +401,10 @@ bool open(State& state, lv_obj_t* parent, const Config& config)
     if (state.group)
     {
         lv_group_add_obj(state.group, state.panel);
+#if defined(ARDUINO_T_LORA_PAGER)
+        lv_group_add_obj(state.group, frame.close);
+        dialog_frame::bind_close_shortcuts(frame, state.group);
+#endif
         lv_group_focus_obj(state.panel);
         lv_group_set_editing(state.group, true);
     }
@@ -393,9 +420,16 @@ void close(State& state)
     state.overlay = nullptr;
     state.panel = nullptr;
     state.body = nullptr;
-    if (state.previous_group)
+    bool restore_valid = false;
+    for (uint32_t i = 0; i < lv_group_get_count(); ++i)
+        if (lv_group_by_index(i) == state.previous_group) restore_valid = true;
+    if (restore_valid)
     {
         set_default_group(state.previous_group);
+    }
+    else if (state.group && lv_group_get_default() == state.group)
+    {
+        set_default_group(nullptr);
     }
     if (state.group)
     {

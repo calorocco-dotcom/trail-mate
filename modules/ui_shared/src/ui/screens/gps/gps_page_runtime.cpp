@@ -8,13 +8,18 @@ using Projection = gps::ui::shell::Projection;
 #include "app/app_facade_access.h"
 #include "gps/domain/gps_diagnostics.h"
 #include "gps/gpx/attribute_reader.h"
+#include "gps/kml/image_sources.h"
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/gps_runtime.h"
+#include "platform/ui/navigation_runtime.h"
 #include "platform/ui/route_storage.h"
 #include "platform/ui/team_ui_store_runtime.h"
 #include "platform/ui/tracker_runtime.h"
 #include "sys/clock.h"
+#include "track_sharing/installed_package_path.h"
 #include "ui/app_runtime.h"
+#include "ui/components/bottom_bar.h"
+#include "ui/components/dialog_frame.h"
 #include "ui/components/map_poi_search.h"
 #include "ui/formatters.h"
 #include "ui/localization.h"
@@ -24,7 +29,16 @@ using Projection = gps::ui::shell::Projection;
 #include "ui/presentation_sources/team_map_overlay_source.h"
 #include "ui/runtime/ui_feedback.h"
 #include "ui/screens/gps/gps_constants.h"
+#include "ui/support/kml_navigation_match.h"
+#include "ui/support/kml_route_projection.h"
 #include "ui/support/lvgl_fs_utils.h"
+#include "ui/support/native_navigation_controls.h"
+#include "ui/support/native_navigation_session.h"
+#include "ui/support/route_image_kml_reader.h"
+#include "ui/support/route_image_memory.h"
+#include "ui/support/route_image_source_state.h"
+#include "ui/support/route_segment_sampling.h"
+#include "ui/support/tmroute_map.h"
 #include "ui/team_presentation/team_member_label.h"
 #include "ui/ui_common.h"
 #include "ui/widgets/map/map_viewport.h"
@@ -86,8 +100,8 @@ namespace
 {
 
 constexpr int kCardputerZeroMapDefaultZoom = gps_ui::kDefaultZoom;
-constexpr lv_coord_t kMapControlBarHeight = 24;
-constexpr lv_coord_t kMapControlButtonHeight = 20;
+constexpr lv_coord_t kMapControlBarHeight = ::ui::components::bottom_bar::kHeight;
+constexpr lv_coord_t kMapControlButtonHeight = ::ui::components::bottom_bar::kButtonHeight;
 constexpr lv_coord_t kMapControlButtonSmallWidth = 26;
 constexpr lv_coord_t kMapControlButtonMediumWidth = 36;
 constexpr lv_coord_t kMapControlButtonWideWidth = 44;
@@ -117,7 +131,11 @@ struct TrackOverlayPoint
     double lon = 0.0;
     double altitude_m = 0.0;
     bool has_altitude = false;
+    bool break_before = false;
 };
+static_assert(sizeof(TrackOverlayPoint) <= 32, "Route segment flag uses existing point padding");
+using TrackPointBuffer = ::ui::support::RouteImageVector<TrackOverlayPoint, kMaxTrackOverlayPoints>;
+using ElevationSampleBuffer = ::ui::support::RouteImageVector<::ui::widgets::route_elevation_profile::Sample, kMaxTrackOverlayPoints>;
 
 struct TrackElevationMetrics
 {
@@ -132,6 +150,8 @@ struct TrackElevationMetrics
 
 struct RouteImagePoint
 {
+    uint8_t source_hash[32]{};
+    bool source_hash_valid = false;
     double lat = 0.0;
     double lon = 0.0;
     bool has_position = false;
@@ -163,6 +183,13 @@ enum class MapControlAction : uint8_t
     PickLocation,
     CancelLocation,
     Search,
+    Menu,
+    Navigation,
+    Team,
+    LayerBack,
+    LayerOsm,
+    LayerTerrain,
+    LayerSatellite,
 };
 
 const Host* s_host = nullptr;
@@ -204,6 +231,15 @@ lv_obj_t* s_map_layer_btn = nullptr;
 lv_obj_t* s_map_contour_btn = nullptr;
 lv_obj_t* s_map_help_btn = nullptr;
 lv_obj_t* s_map_tracker_btn = nullptr;
+lv_obj_t* s_map_menu_btn = nullptr;
+lv_obj_t* s_map_menu = nullptr;
+::ui::components::bottom_bar::Menu s_map_popup{};
+lv_obj_t* s_map_navigation_btn = nullptr;
+bool s_select_navigation = false;
+bool s_team_panel_visible = false;
+bool s_layer_menu_visible = false;
+lv_obj_t* s_map_menu_panel = nullptr;
+lv_obj_t* s_map_team_btn = nullptr;
 lv_obj_t* s_map_altitude_panel = nullptr;
 lv_obj_t* s_map_altitude_label = nullptr;
 ::ui::widgets::route_elevation_profile::Widget s_route_elevation_profile;
@@ -213,6 +249,7 @@ lv_obj_t* s_map_notice_label = nullptr;
 lv_obj_t* s_map_context_rail = nullptr;
 lv_obj_t* s_map_route_btn = nullptr;
 lv_obj_t* s_map_help_modal = nullptr;
+lv_obj_t* s_map_help_previous_focus = nullptr;
 lv_obj_t* s_tracker_modal = nullptr;
 bool s_map_help_open_pending = false;
 bool s_map_refresh_pending = false;
@@ -223,11 +260,11 @@ char s_map_notice_text[64]{};
 uint32_t s_map_notice_until_ms = 0;
 int s_map_drag_start_pan_x = 0;
 int s_map_drag_start_pan_y = 0;
-std::vector<TrackOverlayPoint> s_track_points;
-std::vector<RouteImagePoint> s_route_images;
+TrackPointBuffer s_track_points;
+::ui::support::RouteImageVector<RouteImagePoint> s_route_images;
 std::vector<::ui::widgets::route_image_strip::Item> s_route_image_strip_items;
-std::vector<::ui::widgets::route_elevation_profile::Sample> s_route_elevation_samples;
-std::vector<::ui::widgets::route_elevation_profile::Sample> s_route_elevation_work_samples;
+ElevationSampleBuffer s_route_elevation_samples;
+ElevationSampleBuffer s_route_elevation_work_samples;
 TrackElevationMetrics s_track_elevation_metrics;
 std::vector<std::string> s_track_modal_names;
 std::string s_track_file;
@@ -241,6 +278,14 @@ bool s_route_image_cache_state_known = false;
 bool s_route_image_cache_build_running = false;
 bool s_route_deviation_active = false;
 double s_route_deviation_distance_m = 0.0;
+::ui::support::KmlNavigationMatch* s_route_navigation = nullptr;
+::ui::support::TmRouteMap* s_native_route = nullptr;
+::ui::support::TmRouteMap* s_native_candidate = nullptr;
+::ui::support::NativeNavigationSession* s_native_session = nullptr;
+std::string s_native_candidate_path;
+uint32_t s_native_candidate_started = 0;
+::ui::support::NativeNavigationControls s_native_controls;
+bool s_native_center_pending = false;
 std::size_t s_route_selected_image = 0;
 uint32_t s_route_image_strip_items_hash = 0;
 std::vector<lv_obj_t*> s_member_buttons;
@@ -252,7 +297,12 @@ uint32_t s_member_panel_last_ms = 0;
 void refresh_view();
 void root_key_event_cb(lv_event_t* e);
 void open_map_help_modal();
-void open_tracker_modal();
+void open_tracker_modal(bool navigation = false);
+void open_map_management(MapControlAction action);
+void close_map_menu();
+void open_map_menu(bool team = false, bool layers = false);
+void refresh_map_menu_labels();
+void on_map_control_clicked(lv_event_t* event);
 void add_map_controls_to_group(lv_group_t* group);
 void request_refresh_view();
 void consume_key_event(lv_event_t* e);
@@ -260,6 +310,32 @@ void sync_map_tile_loader_pause();
 void sync_map_chrome_visibility();
 void rebuild_map_control_group();
 bool load_map_track_file_impl(const char* path, bool show_fail_toast);
+void clear_map_track_overlay();
+
+void clear_native_session()
+{
+    ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+    ::ui::support::RouteUiMemory::destroy(s_native_session);
+    s_native_candidate_path.clear();
+}
+
+void sync_native_controls()
+{
+    using Session = ::ui::support::NativeNavigationSession;
+    ::ui::support::NativeNavigationControls::View view;
+    const auto& config = app::appFacade().readConfig();
+    const auto phase = s_native_session ? s_native_session->phase() : Session::Phase::Stopped;
+    view.active = config.route_enabled && s_track_file == config.route_path;
+    view.ready = s_native_route && s_native_route->ready();
+    view.session = s_native_session != nullptr;
+    view.replanning = phase == Session::Phase::Replanning || phase == Session::Phase::Applying;
+    view.failed = phase == Session::Phase::Failed;
+    view.arrived = phase == Session::Phase::Arrived;
+    view.automatic = !s_native_session || s_native_session->automatic();
+    view.storage = platform::ui::device::sd_ready();
+    view.planning_supported = platform::ui::navigation::supported();
+    s_native_controls.update(view, s_track_file.c_str());
+}
 
 ::ui::map::MapOverlaySnapshot* allocate_overlay_snapshot()
 {
@@ -312,20 +388,20 @@ void release_overlay_snapshot()
     s_overlay_snapshot = nullptr;
 }
 
-void downsample_track_points(std::vector<TrackOverlayPoint>& points);
-void append_track_point_raw(std::vector<TrackOverlayPoint>& out,
+void downsample_track_points(TrackPointBuffer& points);
+void append_track_point_raw(TrackPointBuffer& out,
                             double lat,
                             double lon,
                             double altitude_m = 0.0,
                             bool has_altitude = false);
-void append_track_point(std::vector<TrackOverlayPoint>& out,
+void append_track_point(TrackPointBuffer& out,
                         double lat,
                         double lon,
                         double altitude_m = 0.0,
                         bool has_altitude = false);
 void build_route_elevation_samples(
-    const std::vector<TrackOverlayPoint>& points,
-    std::vector<::ui::widgets::route_elevation_profile::Sample>& out);
+    const TrackPointBuffer& points,
+    ElevationSampleBuffer& out);
 ::ui::presentation_sources::TeamMapOverlaySource& team_map_overlay_source();
 void apply_map_drag_preview();
 lv_obj_t* create_map_control_button(lv_obj_t* parent,
@@ -621,6 +697,14 @@ void set_button_label(lv_obj_t* btn, const char* text)
 
 void clear_map_controls()
 {
+    clear_native_session();
+    s_map_popup.reset();
+    if (s_route_navigation) s_route_navigation->cancel();
+    if (s_native_route)
+    {
+        ::ui::support::RouteUiMemory::destroy(s_native_route);
+        s_track_overlay_active = false;
+    }
     ::ui::components::map_poi_search::close();
     s_map_search_btn = nullptr;
     s_map_pick_btn = s_map_cancel_btn = nullptr;
@@ -634,6 +718,12 @@ void clear_map_controls()
     s_map_contour_btn = nullptr;
     s_map_help_btn = nullptr;
     s_map_tracker_btn = nullptr;
+    s_map_menu_btn = s_map_menu = s_map_navigation_btn = nullptr;
+    s_select_navigation = false;
+    s_team_panel_visible = false;
+    s_layer_menu_visible = false;
+    s_map_menu_panel = nullptr;
+    s_map_team_btn = nullptr;
     s_map_altitude_panel = nullptr;
     s_map_altitude_label = nullptr;
     ::ui::widgets::route_elevation_profile::reset(s_route_elevation_profile);
@@ -887,6 +977,7 @@ std::string route_path_basename(const std::string& path)
 
 std::string route_asset_id_for_path(const std::string& path)
 {
+    if (track_sharing::isInstalledPackageRoute(path)) return path.substr(8, 66);
     const std::string name = route_path_basename(path);
     std::uint32_t hash = 2166136261U;
     for (unsigned char ch : name)
@@ -1006,7 +1097,116 @@ bool route_deviation_mode_active()
 {
     return s_track_overlay_active &&
            s_track_overlay_kind == TrackOverlayFileKind::Route &&
-           !s_track_points.empty();
+           (!s_track_points.empty() || s_native_route);
+}
+
+bool project_native_route(void*, tmap::GeoPoint point, tmap::ScreenPoint& output)
+{
+    lv_point_t screen;
+    if (!::ui::widgets::map::project_point(s_map_runtime, {true, point.latitude / 1e7, point.longitude / 1e7}, screen)) return false;
+    output.x = static_cast<float>(screen.x);
+    output.y = static_cast<float>(screen.y);
+    return true;
+}
+
+void sync_native_viewport()
+{
+    if (!s_native_route || !s_map_viewport || !lv_obj_is_valid(s_map_viewport)) return;
+    ::ui::widgets::map::GeoPoint center;
+    if (!::ui::widgets::map::screen_center(s_map_runtime, center)) return;
+    tmap::MapViewport viewport;
+    viewport.center = {static_cast<int32_t>(std::llround(center.lat * 1e7)), static_cast<int32_t>(std::llround(center.lon * 1e7))};
+    viewport.zoom = static_cast<uint8_t>(current_map_zoom());
+    viewport.width = static_cast<float>(lv_obj_get_content_width(s_map_viewport));
+    viewport.height = static_cast<float>(lv_obj_get_content_height(s_map_viewport));
+    if (viewport.width <= 0 || viewport.height <= 0 || viewport.width > 32000 || viewport.height > 32000) return;
+    // In China the renderer can transform WGS coordinates. Expand only the
+    // index query; projection/clipping uses the exact existing renderer.
+    const auto padding = app::configFacade().readConfig().map_coord_system ? 200000 : 0;
+    s_native_route->setViewport(viewport, project_native_route, nullptr, padding);
+    s_native_route->attach(::ui::widgets::map::widgets(s_map_runtime).overlay_layer);
+}
+
+void advance_native_session(tmap::GeoPoint point, bool valid, uint32_t age, uint32_t now, bool following)
+{
+    using Session = ::ui::support::NativeNavigationSession;
+    if (!s_native_route || !s_native_route->ready()) return;
+    if (!following)
+    {
+        if (s_native_session && s_native_session->phase() != Session::Phase::Arrived) clear_native_session();
+        return;
+    }
+    if (!s_native_session)
+    {
+        s_native_session = ::ui::support::RouteUiMemory::create<Session>();
+        if (!s_native_session)
+        {
+            set_map_notice("Not enough PSRAM for navigation", 3000);
+            return;
+        }
+        s_native_session->destination(s_native_route->destination());
+    }
+    const auto action = s_native_session->tick(s_native_route->guidance(now), point, valid, age, now);
+    if (action == Session::Action::ApplyCandidate)
+    {
+        s_native_candidate_path = s_native_session->candidatePath();
+        s_native_candidate = ::ui::support::RouteUiMemory::create<::ui::support::TmRouteMap>();
+        s_native_candidate_started = now;
+        if (!s_native_candidate || !s_native_candidate->begin(s_native_candidate_path.c_str()))
+        {
+            ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+            s_native_session->applied(false);
+        }
+    }
+    if (s_native_candidate)
+    {
+        s_native_candidate->poll(false, {}, now, 6000, false, sys::millis_now);
+        if (s_native_candidate->ready())
+        {
+            auto edit = app::appFacade().beginConfigEdit();
+            if (edit && s_native_candidate_path.size() < sizeof(edit.config().route_path))
+            {
+                edit.config().route_enabled = true;
+                std::strcpy(edit.config().route_path, s_native_candidate_path.c_str());
+                auto* previous = s_native_route;
+                s_native_route = s_native_candidate;
+                s_native_candidate = nullptr;
+                s_track_file = s_native_candidate_path;
+                s_native_candidate_path.clear();
+                s_native_session->destination(s_native_route->destination());
+                s_native_session->applied(true);
+                ::ui::support::RouteUiMemory::destroy(previous);
+                edit.commit(app::AppConfigChangeSet::route());
+                set_map_notice("New route active", 1500);
+                request_refresh_view();
+                return;
+            }
+        }
+        if (now - s_native_candidate_started > 15000 ||
+            (s_native_candidate->error() != tmap::Result::More && s_native_candidate->error() != tmap::Result::Ok))
+        {
+            ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+            s_native_candidate_path.clear();
+            s_native_session->applied(false);
+            request_refresh_view();
+        }
+    }
+    // Arrival is latched. Retry a temporarily busy config edit without
+    // recalculating or replaying arrival, then retain the completed summary.
+    if (s_native_session->phase() == Session::Phase::Arrived)
+    {
+        ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+        s_native_candidate_path.clear();
+        auto edit = app::appFacade().beginConfigEdit();
+        if (edit)
+        {
+            edit.config().route_enabled = false;
+            edit.config().route_path[0] = 0;
+            edit.commit(app::AppConfigChangeSet::route());
+            set_map_notice("Arrived at destination", 2000);
+            request_refresh_view();
+        }
+    }
 }
 
 void project_route_point_to_local_m(double ref_lat,
@@ -1016,7 +1216,7 @@ void project_route_point_to_local_m(double ref_lat,
                                     double& y_m)
 {
     const double ref_lat_rad = degrees_to_radians(ref_lat);
-    x_m = degrees_to_radians(point.lon - ref_lon) *
+    x_m = degrees_to_radians(std::remainder(point.lon - ref_lon, 360.0)) *
           kEarthRadiusM *
           std::cos(ref_lat_rad);
     y_m = degrees_to_radians(point.lat - ref_lat) * kEarthRadiusM;
@@ -1067,7 +1267,7 @@ bool nearest_route_distance_m(double self_lat,
         double next_x = 0.0;
         double next_y = 0.0;
         project_route_point_to_local_m(self_lat, self_lon, s_track_points[index], next_x, next_y);
-        const double distance = distance_to_segment_m(prev_x, prev_y, next_x, next_y);
+        const double distance = s_track_points[index].break_before ? std::hypot(next_x, next_y) : distance_to_segment_m(prev_x, prev_y, next_x, next_y);
         if (std::isfinite(distance))
         {
             out_distance_m = std::min(out_distance_m, distance);
@@ -1078,9 +1278,56 @@ bool nearest_route_distance_m(double self_lat,
     return std::isfinite(out_distance_m);
 }
 
+void advance_route_navigation()
+{
+    if (s_native_route && s_root && s_projection == Projection::Map)
+    {
+        if (!platform::ui::device::sd_ready())
+        {
+            clear_native_session();
+            s_native_route->storageLost();
+            request_refresh_view();
+            return;
+        }
+        sync_native_viewport();
+        const auto fix = platform::ui::gps::get_data();
+        const bool valid = fix.valid && std::isfinite(fix.lat) && std::isfinite(fix.lng) && std::abs(fix.lat) <= 90 && std::abs(fix.lng) <= 180;
+        const auto& config = app::configFacade().readConfig();
+        const bool following = config.route_enabled && s_track_file == config.route_path && !s_location_request && !s_map_target;
+        const tmap::GeoPoint point{valid ? static_cast<int32_t>(std::llround(fix.lat * 1e7)) : 0,
+                                   valid ? static_cast<int32_t>(std::llround(fix.lng * 1e7)) : 0};
+        const bool changed = s_native_route->poll(valid, point, sys::millis_now(), fix.age, following, sys::millis_now);
+        if (s_native_center_pending && s_native_route->ready())
+        {
+            auto viewport = map_workspace_model().viewport();
+            const auto center = valid && following ? point : s_native_route->destination();
+            viewport.center_lat = center.latitude / 1e7;
+            viewport.center_lon = center.longitude / 1e7;
+            viewport.zoom = kDefaultTrackerZoom;
+            (void)map_workspace_model().setViewport(viewport);
+            s_map_zoom = kDefaultTrackerZoom;
+            s_map_pan_x = s_map_pan_y = 0;
+            s_native_center_pending = false;
+            request_refresh_view();
+        }
+        if (changed) request_refresh_view();
+        advance_native_session(point, valid, fix.age, sys::millis_now(), following);
+        return;
+    }
+    if (!s_route_navigation) return;
+    double lat = 0, lon = 0;
+    if (!s_root || s_projection != Projection::Map || s_location_request || s_map_target ||
+        !route_deviation_mode_active() || !platform::ui::device::sd_ready() || !current_fix_lat_lon(lat, lon))
+    {
+        s_route_navigation->cancel();
+        return;
+    }
+    s_route_navigation->poll(s_track_file.c_str(), lat, lon, sys::millis_now(), sys::millis_now);
+}
+
 void update_route_deviation_state()
 {
-    if (!route_deviation_mode_active())
+    if (!route_deviation_mode_active() || !s_route_navigation || !platform::ui::device::sd_ready())
     {
         s_route_deviation_active = false;
         s_route_deviation_distance_m = 0.0;
@@ -1089,23 +1336,25 @@ void update_route_deviation_state()
 
     double self_lat = 0.0;
     double self_lon = 0.0;
-    double distance_m = 0.0;
+    double lower = 0.0, upper = 0.0;
     if (!current_fix_lat_lon(self_lat, self_lon) ||
-        !nearest_route_distance_m(self_lat, self_lon, distance_m))
+        !s_route_navigation->bounds(self_lat, self_lon, sys::millis_now(), lower, upper))
     {
         s_route_deviation_active = false;
         s_route_deviation_distance_m = 0.0;
         return;
     }
 
-    s_route_deviation_distance_m = distance_m;
+    // Conservative distance at the current fix; movement while reading must
+    // neither invent an off-route alert nor prematurely clear one.
+    s_route_deviation_distance_m = lower > kRouteDeviationClearThresholdM ? lower : NAN;
     if (s_route_deviation_active)
     {
-        s_route_deviation_active = distance_m > kRouteDeviationClearThresholdM;
+        if (upper <= kRouteDeviationClearThresholdM) s_route_deviation_active = false;
     }
     else
     {
-        s_route_deviation_active = distance_m > kRouteDeviationThresholdM;
+        s_route_deviation_active = lower > kRouteDeviationThresholdM;
     }
 }
 
@@ -1115,6 +1364,7 @@ void update_track_elevation_metrics(TrackElevationMetrics& metrics,
 {
     if (!has_altitude || !std::isfinite(altitude_m))
     {
+        metrics.has_previous_altitude = false;
         return;
     }
 
@@ -1375,11 +1625,14 @@ void ensure_map_route_image_cache_build()
         return;
     }
 
+    const bool package = track_sharing::isInstalledPackageRoute(s_track_file);
+    if (package && status.asset_id == s_route_asset_id && status.phase == platform::ui::route_storage::RouteImageDownloadPhase::Failed) return;
+
     std::vector<platform::ui::route_storage::RouteImageCacheItem> items;
     items.reserve(s_route_images.size());
     for (const auto& image : s_route_images)
     {
-        if (!image.downloaded || (image.preview_ready && image.view_ready))
+        if ((!image.downloaded && !package) || (image.preview_ready && image.view_ready))
         {
             continue;
         }
@@ -1387,6 +1640,8 @@ void ensure_map_route_image_cache_build()
         item.source_path = image.local_path;
         item.preview_path = image.preview_path;
         item.view_path = image.view_path;
+        std::memcpy(item.source_hash, image.source_hash, 32);
+        item.source_hash_valid = image.source_hash_valid;
         items.push_back(std::move(item));
     }
     if (items.empty())
@@ -1397,9 +1652,10 @@ void ensure_map_route_image_cache_build()
     std::string error;
     if (platform::ui::route_storage::start_route_image_cache_build(
             s_route_asset_id,
-            items,
+            std::move(items),
             error,
-            platform::ui::route_storage::RouteImageTaskPresentation::PageOnly))
+            platform::ui::route_storage::RouteImageTaskPresentation::PageOnly,
+            package ? s_track_file : std::string{}))
     {
         s_route_image_cache_build_running = true;
     }
@@ -1468,7 +1724,7 @@ void toggle_map_route_image_strip()
     }
     if (s_route_images.empty())
     {
-        set_map_notice("No route images", 1200);
+        set_map_notice(s_route_images.failed() ? ::ui::i18n::tr("Image memory unavailable") : "No route images", 1200);
         s_route_image_strip_visible = false;
         sync_map_route_image_strip();
         request_refresh_view();
@@ -1481,7 +1737,11 @@ void toggle_map_route_image_strip()
         refresh_route_image_storage_state(true);
         ensure_map_route_image_cache_build();
     }
-    set_map_notice(s_route_image_strip_visible ? "Images shown" : "Images hidden", 900);
+    set_map_notice(s_route_image_strip_visible && ::ui::support::routeImagesNeedSourceReview(s_route_images)
+                       ? ::ui::i18n::tr("Image cache needs checking. Download again.")
+                   : s_route_image_strip_visible ? "Images shown"
+                                                 : "Images hidden",
+                   1800);
     sync_map_route_image_strip();
     request_refresh_view();
 }
@@ -1640,21 +1900,24 @@ void member_button_event_cb(lv_event_t* e)
     const uint32_t member_id = static_cast<uint32_t>(
         reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
     select_member(member_id);
+    close_map_menu();
 }
 
-lv_obj_t* create_member_button(const ::team::ui::TeamMemberUi& member)
+lv_obj_t* create_member_button(const ::team::ui::TeamMemberUi& member, lv_obj_t* parent = nullptr)
 {
-    if (!s_map_context_rail || !lv_obj_is_valid(s_map_context_rail))
+    if (!parent) parent = s_map_context_rail;
+    if (!parent || !lv_obj_is_valid(parent))
     {
         return nullptr;
     }
 
     const uint32_t member_id = member_id_for_button(member);
-    lv_obj_t* btn = create_map_control_button(s_map_context_rail,
+    lv_obj_t* btn = create_map_control_button(parent,
                                               kMapSideRailWidth - 10,
                                               "",
                                               MapControlAction::TeamMember);
     lv_obj_set_height(btn, kMapControlButtonHeight);
+    if (parent != s_map_context_rail) lv_obj_remove_event_cb(btn, on_map_control_clicked);
     lv_obj_set_style_pad_left(btn, 3, LV_PART_MAIN);
     lv_obj_set_style_pad_right(btn, 3, LV_PART_MAIN);
     lv_obj_add_event_cb(btn,
@@ -1715,14 +1978,66 @@ void sync_map_notice_overlay()
 
     s_map_notice_text[0] = '\0';
     s_map_notice_until_ms = 0;
+    if (s_native_route)
+    {
+        char text[128]{};
+        const char* message = ::ui::i18n::tr("Loading saved route...");
+        const auto& config = app::configFacade().readConfig();
+        const auto guide = s_native_route->guidance(now);
+        using Session = ::ui::support::NativeNavigationSession;
+        if (!platform::ui::device::sd_ready()) message = ::ui::i18n::tr("Route storage unavailable");
+        else if (s_native_route->error() != tmap::Result::Ok && s_native_route->error() != tmap::Result::More)
+            message = ::ui::i18n::tr("Route file unavailable or damaged; reload route");
+        else if (!s_native_route->ready())
+        {
+        }
+        else if (s_native_session && (s_native_session->phase() == Session::Phase::Replanning || s_native_session->phase() == Session::Phase::Applying))
+            message = ::ui::i18n::tr("Replanning route... | Menu to cancel");
+        else if (s_native_session && s_native_session->phase() == Session::Phase::Failed)
+            message = ::ui::i18n::tr("Replan failed; original route kept | Menu to retry");
+        else if (s_native_session && s_native_session->phase() == Session::Phase::Arrived)
+            message = ::ui::i18n::tr("Arrived | Navigation finished");
+        else if (s_native_route->dense()) message = ::ui::i18n::tr("Zoom in to show route detail");
+        else if (!config.route_enabled || s_track_file != config.route_path)
+        {
+            std::snprintf(text, sizeof(text), ::ui::i18n::tr("Route preview | %.1f km"), s_native_route->lengthM() / 1000.0);
+            message = text;
+        }
+        else if (guide.status == ::navigation::GuidanceStatus::OffRoute)
+        {
+            std::snprintf(text, sizeof(text), ::ui::i18n::tr("Off route %.0fm"), guide.deviation_m);
+            message = text;
+        }
+        else if (guide.status == ::navigation::GuidanceStatus::Arrived) message = ::ui::i18n::tr("Arrived at destination");
+        else if (guide.status == ::navigation::GuidanceStatus::Ambiguous) message = ::ui::i18n::tr("Route position ambiguous");
+        else if (guide.status == ::navigation::GuidanceStatus::NoFix) message = ::ui::i18n::tr("Route: waiting for GPS");
+        else if (guide.status == ::navigation::GuidanceStatus::Following)
+        {
+            char remaining[20]{}, turn[20]{};
+            ::ui::menu::dashboard::format_distance(guide.remaining_m, remaining, sizeof(remaining));
+            ::ui::menu::dashboard::format_distance(guide.turn_m, turn, sizeof(turn));
+            const char* pattern = guide.turn == ::navigation::Turn::Left ? "Left in %s | %s left" : guide.turn == ::navigation::Turn::Right ? "Right in %s | %s left"
+                                                                                                : guide.turn == ::navigation::Turn::UTurn   ? "U-turn in %s | %s left"
+                                                                                                                                            : nullptr;
+            if (pattern) std::snprintf(text, sizeof(text), ::ui::i18n::tr(pattern), turn, remaining);
+            else std::snprintf(text, sizeof(text), ::ui::i18n::tr("Continue | %s left"), remaining);
+            message = text;
+        }
+        else message = ::ui::i18n::tr("Matching route...");
+        ::ui::i18n::set_content_label_text_raw(s_map_notice_label, message);
+        lv_obj_set_style_bg_color(s_map_notice_panel, lv_color_hex(guide.status == ::navigation::GuidanceStatus::OffRoute ? 0x8F2E1D : 0x25170D), 0);
+        lv_obj_clear_flag(s_map_notice_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_map_notice_panel);
+        return;
+    }
     if (s_route_deviation_active && std::isfinite(s_route_deviation_distance_m))
     {
         char notice[40]{};
         std::snprintf(notice,
                       sizeof(notice),
-                      "Off route %.0fm",
+                      ::ui::i18n::tr("Off route %.0fm"),
                       s_route_deviation_distance_m);
-        set_compact_label(s_map_notice_label, notice);
+        ::ui::i18n::set_content_label_text_raw(s_map_notice_label, notice);
         lv_obj_set_style_bg_color(s_map_notice_panel, lv_color_hex(0x8F2E1D), 0);
         lv_obj_clear_flag(s_map_notice_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(s_map_notice_panel);
@@ -1751,6 +2066,33 @@ void sync_map_notice_overlay()
         lv_obj_move_foreground(s_map_notice_panel);
         return;
     }
+    if (route_deviation_mode_active() && s_route_navigation)
+    {
+        char notice[96]{};
+        double lat = 0, lon = 0;
+        const char* message = ::ui::i18n::tr("Route position unavailable");
+        if (!platform::ui::device::sd_ready()) message = ::ui::i18n::tr("Route storage unavailable");
+        else if (!current_fix_lat_lon(lat, lon)) message = ::ui::i18n::tr("Route: waiting for GPS");
+        else
+        {
+            const auto view = s_route_navigation->navigation(lat, lon, now);
+            if (view.status == track_sharing::RouteNavigationStatus::Ambiguous) message = ::ui::i18n::tr("Route position ambiguous");
+            else if (view.status == track_sharing::RouteNavigationStatus::Arrived) message = ::ui::i18n::tr("Route end (estimated)");
+            else if (view.status == track_sharing::RouteNavigationStatus::Position)
+            {
+                char distance[20]{};
+                ::ui::menu::dashboard::format_distance(view.remaining_m, distance, sizeof(distance));
+                std::snprintf(notice, sizeof(notice), ::ui::i18n::tr("Route %u%% | %s left"), view.percent, distance);
+                message = notice;
+            }
+            else if (s_route_navigation->pending()) message = ::ui::i18n::tr("Matching route...");
+        }
+        ::ui::i18n::set_content_label_text_raw(s_map_notice_label, message);
+        lv_obj_set_style_bg_color(s_map_notice_panel, lv_color_hex(0x25170D), 0);
+        lv_obj_clear_flag(s_map_notice_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_map_notice_panel);
+        return;
+    }
     lv_obj_set_style_bg_color(s_map_notice_panel, lv_color_hex(0x25170D), 0);
     lv_obj_add_flag(s_map_notice_panel, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1767,58 +2109,17 @@ void sync_map_context_buttons(const ::ui::map::MapWorkspaceSnapshot& snapshot)
     }
 
     const bool show_route = route_context_available();
-    ::team::ui::TeamUiSnapshot team_snapshot;
-    const bool has_team_members = load_team_snapshot(team_snapshot) && !team_snapshot.members.empty();
-    const uint8_t next_mask = static_cast<uint8_t>((show_route ? 0x01 : 0x00) |
-                                                   (has_team_members ? 0x02 : 0x00));
-    const uint32_t now_ms = sys::millis_now();
+    const uint8_t next_mask = show_route ? 0x01 : 0x00;
     bool group_dirty = next_mask != s_map_context_mask;
 
     set_hidden(s_map_route_btn, !show_route);
     set_hidden(s_map_context_rail, next_mask == 0);
 
-    if (has_team_members)
-    {
-        const uint32_t hash = hash_member_list(team_snapshot);
-        const bool refresh_due = (now_ms - s_member_panel_last_ms) >= 2000U;
-        if (hash != s_member_list_hash ||
-            team_snapshot.members.size() != s_member_buttons.size() ||
-            refresh_due)
-        {
-            s_member_panel_last_ms = now_ms;
-            if (hash != s_member_list_hash ||
-                team_snapshot.members.size() != s_member_buttons.size())
-            {
-                clear_member_buttons();
-                s_member_buttons.reserve(team_snapshot.members.size());
-                s_member_button_ids.reserve(team_snapshot.members.size());
-                for (const auto& member : team_snapshot.members)
-                {
-                    const uint32_t member_id = member_id_for_button(member);
-                    lv_obj_t* btn = create_member_button(member);
-                    if (!btn)
-                    {
-                        continue;
-                    }
-                    s_member_buttons.push_back(btn);
-                    s_member_button_ids.push_back(member_id);
-                }
-                s_member_list_hash = hash;
-                group_dirty = true;
-            }
-        }
-
-        if (!member_exists(team_snapshot, s_selected_member_id))
-        {
-            s_selected_member_id = kInvalidMemberId;
-        }
-        update_member_button_states();
-    }
-    else if (!s_member_buttons.empty() || s_member_list_hash != 0)
+    // Team controls are built only when its taskbar menu is opened.
+    if (!s_member_buttons.empty() || s_member_list_hash != 0)
     {
         clear_member_buttons();
         s_member_list_hash = 0;
-        s_selected_member_id = kInvalidMemberId;
         group_dirty = true;
     }
 
@@ -1856,12 +2157,16 @@ void sync_map_control_labels(const ::ui::map::MapWorkspaceSnapshot& snapshot)
     }
 
     set_hidden(s_map_control_bar, false);
+    const bool team_was_visible = map_control_visible(s_map_team_btn);
+    set_hidden(s_map_team_btn, !snapshot.team.available);
+    if (!snapshot.team.available && s_team_panel_visible) close_map_menu();
+    else if (team_was_visible != snapshot.team.available) rebuild_map_control_group();
     sync_route_elevation_profile();
     sync_map_altitude_overlay();
 
     const auto layers = ::ui::widgets::map::current_layer_state();
-    set_button_label(s_map_layer_btn, compact_map_source_label(layers.map_source));
-    set_button_label(s_map_contour_btn, layers.contour_enabled ? "Ctr*" : "Ctr");
+    (void)layers;
+    refresh_map_menu_labels();
     sync_map_context_buttons(snapshot);
 
     char zoom_buf[8]{};
@@ -2223,82 +2528,13 @@ std::size_t find_case_insensitive(const std::string& text,
     return std::string::npos;
 }
 
-std::string html_decode_attr(std::string value)
-{
-    auto replace_all = [&value](const char* from, const char* to)
-    {
-        std::size_t pos = 0;
-        const std::size_t from_len = std::strlen(from);
-        while ((pos = value.find(from, pos)) != std::string::npos)
-        {
-            value.replace(pos, from_len, to);
-            pos += std::strlen(to);
-        }
-    };
-    replace_all("&amp;", "&");
-    replace_all("&quot;", "\"");
-    replace_all("&#34;", "\"");
-    replace_all("&#38;", "&");
-    return value;
-}
-
 void extract_img_srcs(const std::string& text, std::vector<std::string>& out_urls)
 {
-    std::size_t pos = 0;
-    while (out_urls.size() < kMaxRouteImagePoints)
-    {
-        const std::size_t img_pos = find_case_insensitive(text, "<img", pos);
-        if (img_pos == std::string::npos)
-        {
-            break;
-        }
-        const std::size_t tag_end = text.find('>', img_pos);
-        const std::size_t tag_len =
-            tag_end == std::string::npos ? text.size() - img_pos : tag_end - img_pos + 1;
-        const std::string tag = text.substr(img_pos, tag_len);
-        const std::size_t src_pos = find_case_insensitive(tag, "src");
-        if (src_pos != std::string::npos)
-        {
-            std::size_t eq_pos = tag.find('=', src_pos + 3);
-            if (eq_pos != std::string::npos)
-            {
-                ++eq_pos;
-                while (eq_pos < tag.size() &&
-                       std::isspace(static_cast<unsigned char>(tag[eq_pos])))
-                {
-                    ++eq_pos;
-                }
-                if (eq_pos < tag.size())
-                {
-                    const char quote =
-                        tag[eq_pos] == '\'' || tag[eq_pos] == '"' ? tag[eq_pos] : '\0';
-                    const std::size_t value_start = quote ? eq_pos + 1 : eq_pos;
-                    std::size_t value_end = value_start;
-                    while (value_end < tag.size())
-                    {
-                        const char ch = tag[value_end];
-                        if ((quote && ch == quote) ||
-                            (!quote &&
-                             (std::isspace(static_cast<unsigned char>(ch)) || ch == '>')))
-                        {
-                            break;
-                        }
-                        ++value_end;
-                    }
-                    if (value_end > value_start)
-                    {
-                        out_urls.push_back(
-                            html_decode_attr(tag.substr(value_start, value_end - value_start)));
-                    }
-                }
-            }
-        }
-        if (tag_end == std::string::npos)
-        {
-            break;
-        }
-        pos = tag_end + 1;
-    }
+    if (out_urls.size() >= kMaxRouteImagePoints) return;
+    gps::kml::forEachImageSource(text, [&](std::string_view source)
+                                 {
+                                   out_urls.push_back(gps::kml::decodeImageSource(source));
+                                   return out_urls.size() < kMaxRouteImagePoints; });
 }
 
 bool extract_tag_text(const std::string& line, const char* tag, std::string& out_text)
@@ -2328,27 +2564,19 @@ bool extract_tag_text(const std::string& line, const char* tag, std::string& out
     return true;
 }
 
-void append_route_images(const std::vector<std::string>& urls,
+bool append_route_images(std::string_view url,
                          double lat,
                          double lon,
                          bool has_position)
 {
-    for (const auto& url : urls)
-    {
-        if (s_route_images.size() >= kMaxRouteImagePoints)
-        {
-            return;
-        }
-        if (url.empty())
-        {
-            continue;
-        }
-        RouteImagePoint image{};
-        image.lat = lat;
-        image.lon = lon;
-        image.has_position = has_position && std::isfinite(lat) && std::isfinite(lon);
-        s_route_images.push_back(std::move(image));
-    }
+    if (s_route_images.size() >= kMaxRouteImagePoints) return false;
+    if (url.empty()) return true;
+    RouteImagePoint image{};
+    image.source_hash_valid = platform::ui::route_storage::route_image_reference_hash(url, image.source_hash);
+    image.lat = lat;
+    image.lon = lon;
+    image.has_position = has_position && std::isfinite(lat) && std::isfinite(lon);
+    return s_route_images.push_back(std::move(image));
 }
 
 void assign_route_image_paths()
@@ -2378,16 +2606,7 @@ void refresh_route_image_storage_state(bool include_cache_state)
     assign_route_image_paths();
     for (RouteImagePoint& image : s_route_images)
     {
-        image.downloaded =
-            platform::ui::route_storage::route_asset_file_exists(image.local_path);
-        image.preview_ready =
-            include_cache_state &&
-            image.downloaded &&
-            platform::ui::route_storage::route_asset_file_exists(image.preview_path);
-        image.view_ready =
-            include_cache_state &&
-            image.downloaded &&
-            platform::ui::route_storage::route_asset_file_exists(image.view_path);
+        ::ui::support::refreshRouteImageSourceState(image, include_cache_state);
     }
     s_route_image_saved_state_known = true;
     s_route_image_cache_state_known = include_cache_state;
@@ -2488,100 +2707,48 @@ bool load_kml_route_images(const char* path)
     s_route_image_saved_state_known = false;
     s_route_image_cache_state_known = false;
     s_route_image_cache_build_running = false;
-    if (!path || path[0] == '\0' || !platform::ui::device::sd_ready())
+    if (!path || path[0] == '\0' || !platform::ui::device::sd_ready()) return false;
+
+    size_t feature_start = 0;
+    const track_sharing::KmlImageCallbacks callbacks{
+        &feature_start,
+        [](void* context)
+        { *static_cast<size_t*>(context) = s_route_images.size(); },
+        [](void*, std::string_view source)
+        {
+            if (s_route_images.size() >= kMaxRouteImagePoints || s_route_images.failed()) return false;
+            return append_route_images(gps::kml::decodeImageSource(source), 0, 0, false);
+        },
+        [](void* context, bool located, double lat, double lon)
+        {
+            for (size_t i = *static_cast<size_t*>(context); i < s_route_images.size(); ++i)
+            {
+                s_route_images[i].has_position = located;
+                s_route_images[i].lat = lat;
+                s_route_images[i].lon = lon;
+            }
+        }};
+    const bool read_ok = ::ui::support::readRouteImageKml(path, callbacks);
+    if (!read_ok)
     {
+        s_route_images.clear(); // incomplete XML cannot expose a partial list
         return false;
     }
-
-    std::vector<std::string> pending_image_urls;
-    const bool read_ok = read_track_file_lines(
-        path,
-        [&](const std::string& line)
-        {
-            if (find_case_insensitive(line, "<Placemark") != std::string::npos)
-            {
-                pending_image_urls.clear();
-            }
-
-            extract_img_srcs(line, pending_image_urls);
-
-            std::string text;
-            if (!pending_image_urls.empty() && extract_tag_text(line, "coordinates", text))
-            {
-                std::size_t token_start = 0;
-                while (token_start < text.size())
-                {
-                    while (token_start < text.size() &&
-                           std::isspace(static_cast<unsigned char>(text[token_start])))
-                    {
-                        ++token_start;
-                    }
-                    if (token_start >= text.size())
-                    {
-                        break;
-                    }
-                    std::size_t token_end = token_start;
-                    while (token_end < text.size() &&
-                           !std::isspace(static_cast<unsigned char>(text[token_end])))
-                    {
-                        ++token_end;
-                    }
-
-                    double lat = 0.0;
-                    double lon = 0.0;
-                    double altitude_m = 0.0;
-                    bool has_altitude = false;
-                    if (parse_kml_coordinate_token(
-                            text.substr(token_start, token_end - token_start),
-                            lat,
-                            lon,
-                            altitude_m,
-                            has_altitude))
-                    {
-                        append_route_images(pending_image_urls, lat, lon, true);
-                        pending_image_urls.clear();
-                        break;
-                    }
-                    token_start = token_end;
-                }
-            }
-            if (!pending_image_urls.empty() && extract_tag_text(line, "gx:coord", text))
-            {
-                double lat = 0.0;
-                double lon = 0.0;
-                double altitude_m = 0.0;
-                bool has_altitude = false;
-                if (parse_kml_gx_coord_token(text, lat, lon, altitude_m, has_altitude))
-                {
-                    append_route_images(pending_image_urls, lat, lon, true);
-                    pending_image_urls.clear();
-                }
-            }
-
-            if (find_case_insensitive(line, "</Placemark") != std::string::npos)
-            {
-                if (!pending_image_urls.empty())
-                {
-                    append_route_images(pending_image_urls, 0.0, 0.0, false);
-                    pending_image_urls.clear();
-                }
-            }
-        });
-
     assign_route_image_paths();
-    return read_ok;
+    return true;
 }
 
 void build_route_elevation_samples(
-    const std::vector<TrackOverlayPoint>& points,
-    std::vector<::ui::widgets::route_elevation_profile::Sample>& out)
+    const TrackPointBuffer& points,
+    ElevationSampleBuffer& out)
 {
     out.clear();
-    out.reserve(points.size());
+    if (!out.reserve(points.size())) return;
     double distance_m = 0.0;
     const TrackOverlayPoint* previous = nullptr;
     for (const auto& point : points)
     {
+        if (point.break_before) previous = nullptr;
         if (previous)
         {
             const double step = route_point_distance_m(*previous, point);
@@ -2595,222 +2762,12 @@ void build_route_elevation_samples(
         sample.altitude_m = point.altitude_m;
         sample.distance_m = distance_m;
         sample.has_altitude = point.has_altitude;
+        sample.break_before = point.break_before;
         out.push_back(sample);
     }
 }
 
-enum class KmlCoordinateMode : uint8_t
-{
-    None,
-    Coordinates,
-    GxCoord,
-};
-
-struct KmlCoordinateStreamParser
-{
-    std::vector<TrackOverlayPoint> coordinate_points;
-    std::vector<TrackOverlayPoint> gx_points;
-    TrackElevationMetrics coordinate_metrics;
-    TrackElevationMetrics gx_metrics;
-    bool in_tag = false;
-    bool tag_truncated = false;
-    KmlCoordinateMode mode = KmlCoordinateMode::None;
-    bool discard_token = false;
-    std::string tag;
-    std::string token;
-
-    KmlCoordinateStreamParser()
-    {
-        coordinate_points.reserve(kMaxTrackOverlayPoints);
-        gx_points.reserve(kMaxTrackOverlayPoints);
-        tag.reserve(kMaxKmlTagBytes);
-        token.reserve(kMaxKmlCoordinateTokenBytes);
-    }
-
-    std::vector<TrackOverlayPoint>& active_points()
-    {
-        return mode == KmlCoordinateMode::GxCoord ? gx_points : coordinate_points;
-    }
-
-    TrackElevationMetrics& active_metrics()
-    {
-        return mode == KmlCoordinateMode::GxCoord ? gx_metrics : coordinate_metrics;
-    }
-
-    void flush_token()
-    {
-        if (discard_token)
-        {
-            token.clear();
-            discard_token = false;
-            return;
-        }
-        if (token.empty())
-        {
-            return;
-        }
-
-        double lat = 0.0;
-        double lon = 0.0;
-        double altitude_m = 0.0;
-        bool has_altitude = false;
-        const bool parsed = mode == KmlCoordinateMode::GxCoord
-                                ? parse_kml_gx_coord_token(token, lat, lon, altitude_m, has_altitude)
-                                : parse_kml_coordinate_token(token, lat, lon, altitude_m, has_altitude);
-        if (parsed)
-        {
-            update_track_elevation_metrics(active_metrics(), altitude_m, has_altitude);
-            append_track_point_raw(active_points(), lat, lon, altitude_m, has_altitude);
-        }
-        token.clear();
-    }
-
-    void begin_mode(KmlCoordinateMode next_mode)
-    {
-        mode = next_mode;
-        token.clear();
-        discard_token = false;
-    }
-
-    void end_mode(KmlCoordinateMode closing_mode)
-    {
-        if (mode == closing_mode)
-        {
-            flush_token();
-            mode = KmlCoordinateMode::None;
-        }
-    }
-
-    void handle_tag()
-    {
-        if (tag_truncated)
-        {
-            tag.clear();
-            tag_truncated = false;
-            return;
-        }
-
-        bool closing = false;
-        if (kml_tag_name_matches(tag, "coordinates", closing))
-        {
-            if (closing)
-            {
-                end_mode(KmlCoordinateMode::Coordinates);
-            }
-            else
-            {
-                begin_mode(KmlCoordinateMode::Coordinates);
-            }
-        }
-        else if (kml_tag_name_matches(tag, "coord", closing))
-        {
-            if (closing)
-            {
-                end_mode(KmlCoordinateMode::GxCoord);
-            }
-            else
-            {
-                begin_mode(KmlCoordinateMode::GxCoord);
-            }
-        }
-        tag.clear();
-    }
-
-    void consume_char(char ch)
-    {
-        if (in_tag)
-        {
-            if (ch == '>')
-            {
-                in_tag = false;
-                handle_tag();
-                return;
-            }
-            if (tag.size() < kMaxKmlTagBytes)
-            {
-                tag.push_back(ch);
-            }
-            else
-            {
-                tag_truncated = true;
-            }
-            return;
-        }
-
-        if (ch == '<')
-        {
-            if (mode != KmlCoordinateMode::None)
-            {
-                flush_token();
-            }
-            in_tag = true;
-            tag.clear();
-            tag_truncated = false;
-            return;
-        }
-
-        if (mode == KmlCoordinateMode::None)
-        {
-            return;
-        }
-        if (mode == KmlCoordinateMode::Coordinates &&
-            std::isspace(static_cast<unsigned char>(ch)))
-        {
-            flush_token();
-            return;
-        }
-        if (discard_token)
-        {
-            return;
-        }
-        if (token.size() >= kMaxKmlCoordinateTokenBytes)
-        {
-            token.clear();
-            discard_token = true;
-            return;
-        }
-        token.push_back(ch);
-    }
-
-    void consume(const char* data, uint32_t size)
-    {
-        if (!data)
-        {
-            return;
-        }
-        for (uint32_t index = 0; index < size; ++index)
-        {
-            consume_char(data[index]);
-        }
-    }
-
-    void finish()
-    {
-        if (mode != KmlCoordinateMode::None)
-        {
-            flush_token();
-        }
-    }
-
-    void take_points(
-        std::vector<TrackOverlayPoint>& out,
-        TrackElevationMetrics& metrics,
-        std::vector<::ui::widgets::route_elevation_profile::Sample>& profile_samples)
-    {
-        if (!gx_points.empty())
-        {
-            build_route_elevation_samples(gx_points, profile_samples);
-            metrics = gx_metrics;
-            out = std::move(gx_points);
-            return;
-        }
-        build_route_elevation_samples(coordinate_points, profile_samples);
-        metrics = coordinate_metrics;
-        out = std::move(coordinate_points);
-    }
-};
-
-void downsample_track_points(std::vector<TrackOverlayPoint>& points)
+void downsample_track_points(TrackPointBuffer& points)
 {
     if (points.size() <= kMaxTrackOverlayPoints)
     {
@@ -2826,7 +2783,7 @@ void downsample_track_points(std::vector<TrackOverlayPoint>& points)
     points.resize(kMaxTrackOverlayPoints);
 }
 
-void append_track_point_raw(std::vector<TrackOverlayPoint>& out,
+void append_track_point_raw(TrackPointBuffer& out,
                             double lat,
                             double lon,
                             double altitude_m,
@@ -2840,17 +2797,24 @@ void append_track_point_raw(std::vector<TrackOverlayPoint>& out,
     out.push_back(point);
 }
 
-void append_track_point(std::vector<TrackOverlayPoint>& out,
+void append_track_point(TrackPointBuffer& out,
                         double lat,
                         double lon,
                         double altitude_m,
                         bool has_altitude)
 {
+    if (out.size() == kMaxTrackOverlayPoints)
+    {
+        // Legacy GPX/CSV readers also remain bounded, retaining both endpoints.
+        for (size_t i = 1; i < kMaxTrackOverlayPoints / 2; ++i) out[i] = out[i * 2];
+        out[kMaxTrackOverlayPoints / 2] = out.back();
+        out.resize(kMaxTrackOverlayPoints / 2 + 1);
+    }
     append_track_point_raw(out, lat, lon, altitude_m, has_altitude);
     downsample_track_points(out);
 }
 
-bool load_gpx_track_points(const char* path, std::vector<TrackOverlayPoint>& out)
+bool load_gpx_track_points(const char* path, TrackPointBuffer& out)
 {
     out.clear();
     if (!platform::ui::device::sd_ready())
@@ -2858,7 +2822,7 @@ bool load_gpx_track_points(const char* path, std::vector<TrackOverlayPoint>& out
         return false;
     }
 
-    out.reserve(kMaxTrackOverlayPoints);
+    if (!out.reserve(kMaxTrackOverlayPoints)) return false;
     const bool read_ok = read_track_file_lines(path, [&out](const std::string& line)
                                                {
         if (line.find("<trkpt") != std::string::npos)
@@ -2873,7 +2837,7 @@ bool load_gpx_track_points(const char* path, std::vector<TrackOverlayPoint>& out
     return read_ok && !out.empty();
 }
 
-bool load_csv_track_points(const char* path, std::vector<TrackOverlayPoint>& out)
+bool load_csv_track_points(const char* path, TrackPointBuffer& out)
 {
     out.clear();
     if (!platform::ui::device::sd_ready())
@@ -2881,7 +2845,7 @@ bool load_csv_track_points(const char* path, std::vector<TrackOverlayPoint>& out
         return false;
     }
 
-    out.reserve(kMaxTrackOverlayPoints);
+    if (!out.reserve(kMaxTrackOverlayPoints)) return false;
     const bool read_ok = read_track_file_lines(path, [&out](std::string line)
                                                {
         line = trim_copy(std::move(line));
@@ -2912,9 +2876,9 @@ bool load_csv_track_points(const char* path, std::vector<TrackOverlayPoint>& out
 }
 
 bool load_kml_track_points(const char* path,
-                           std::vector<TrackOverlayPoint>& out,
+                           TrackPointBuffer& out,
                            TrackElevationMetrics& metrics,
-                           std::vector<::ui::widgets::route_elevation_profile::Sample>& profile_samples)
+                           ElevationSampleBuffer& profile_samples)
 {
     out.clear();
     metrics = TrackElevationMetrics{};
@@ -2924,14 +2888,7 @@ bool load_kml_track_points(const char* path,
         return false;
     }
 
-    out.reserve(kMaxTrackOverlayPoints);
-    KmlCoordinateStreamParser parser;
-    const bool read_ok = read_track_file_chunks(path, [&](const char* data, uint32_t size)
-                                                { parser.consume(data, size); });
-    parser.finish();
-    parser.take_points(out, metrics, profile_samples);
-    downsample_track_points(out);
-    return read_ok && !out.empty();
+    return ::ui::support::projectKmlRoute(path, out, profile_samples, metrics, kMaxTrackOverlayPoints) && !out.empty();
 }
 
 void append_route_image_overlay(::ui::map::MapOverlaySnapshot& snapshot)
@@ -2998,25 +2955,27 @@ void append_track_overlay(::ui::map::MapOverlaySnapshot& snapshot)
     }
 
     const std::size_t total = s_track_points.size();
-    const std::size_t count = std::min<std::size_t>(available, total);
-    for (std::size_t index = 0; index < count; ++index)
-    {
-        const std::size_t src = count == total
-                                    ? index
-                                    : (index * (total - 1)) / (count - 1 == 0 ? 1 : count - 1);
-        const auto& point = s_track_points[src];
-        auto& item = snapshot.items[snapshot.item_count++];
-        const bool is_route = s_track_overlay_kind == TrackOverlayFileKind::Route;
-        item.kind = is_route ? ::ui::map::MapOverlayKind::RoutePoint
-                             : ::ui::map::MapOverlayKind::TrackPoint;
-        item.style = is_route ? ::ui::map::MapOverlayStyle::Route
-                              : ::ui::map::MapOverlayStyle::Track;
-        item.point.valid = true;
-        item.point.lat = point.lat;
-        item.point.lon = point.lon;
-        item.stable_id = static_cast<uint32_t>((is_route ? 0x52540000U : 0x54520000U) + index);
-        item.visible = true;
-    }
+    const auto count = ::ui::support::sampleRouteSegments(
+        s_track_points.data(), total, available,
+        [](const TrackOverlayPoint& p)
+        { return std::isfinite(p.lat) && std::isfinite(p.lon); },
+        [&](const TrackOverlayPoint& point, bool connected)
+        {
+            auto& item = snapshot.items[snapshot.item_count++];
+            item = ::ui::map::MapOverlayItem{};
+            const bool is_route = s_track_overlay_kind == TrackOverlayFileKind::Route;
+            item.kind = is_route ? ::ui::map::MapOverlayKind::RoutePoint
+                                 : ::ui::map::MapOverlayKind::TrackPoint;
+            item.style = is_route ? ::ui::map::MapOverlayStyle::Route
+                                  : ::ui::map::MapOverlayStyle::Track;
+            item.point.valid = true;
+            item.point.lat = point.lat;
+            item.point.lon = point.lon;
+            item.stable_id = static_cast<uint32_t>((is_route ? 0x52540000U : 0x54520000U) + snapshot.item_count);
+            item.visible = true;
+            item.path_flags = uint8_t(1 | (connected ? 0 : 2));
+            return true;
+        });
 
     if (count < total)
     {
@@ -3059,6 +3018,34 @@ void keep_only_current_position_overlay(::ui::map::MapOverlaySnapshot& snapshot)
     snapshot.truncated = false;
 }
 
+void clear_map_track_overlay()
+{
+    clear_native_session();
+    ::ui::support::RouteUiMemory::destroy(s_native_route);
+    s_native_center_pending = false;
+    ::ui::support::KmlNavigationMatch::destroy(s_route_navigation);
+    s_track_overlay_active = false;
+    s_track_points.clear();
+    s_track_file.clear();
+    s_track_overlay_kind = TrackOverlayFileKind::Track;
+    s_track_elevation_metrics = TrackElevationMetrics{};
+    s_route_elevation_samples.clear();
+    s_route_elevation_work_samples.clear();
+    s_route_images.clear();
+    s_route_image_strip_items.clear();
+    s_route_asset_id.clear();
+    s_route_elevation_profile_visible = false;
+    s_route_image_strip_visible = false;
+    s_route_image_saved_state_known = false;
+    s_route_image_cache_state_known = false;
+    s_route_image_cache_build_running = false;
+    s_route_deviation_active = false;
+    s_route_deviation_distance_m = 0.0;
+    s_route_selected_image = 0;
+    s_route_image_strip_items_hash = 0;
+    ::ui::widgets::route_image_strip::destroy(s_route_image_strip);
+}
+
 bool load_map_track_file_impl(const char* path, bool show_fail_toast)
 {
     if (!path || path[0] == '\0')
@@ -3066,19 +3053,34 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
         return false;
     }
 
-    std::vector<TrackOverlayPoint> points;
+    TrackPointBuffer points;
     TrackElevationMetrics elevation_metrics;
-    std::vector<::ui::widgets::route_elevation_profile::Sample> elevation_samples;
+    ElevationSampleBuffer elevation_samples;
     const std::string normalized = ::ui::fs::normalize_path(path);
     TrackOverlayFileKind file_kind = TrackOverlayFileKind::Track;
+    clear_native_session();
+    ::ui::support::RouteUiMemory::destroy(s_native_route);
+    ::ui::support::KmlNavigationMatch::destroy(s_route_navigation);
+    ::ui::support::KmlNavigationMatch* navigation = nullptr;
+    const char* native_error = nullptr;
     bool loaded = false;
-    if (ends_with_ignore_case(normalized, ".csv"))
+    if (ends_with_ignore_case(normalized, ".tmroute"))
+    {
+        s_native_route = ::ui::support::RouteUiMemory::create<::ui::support::TmRouteMap>();
+        loaded = s_native_route && s_native_route->begin(path);
+        if (!loaded) native_error = s_native_route ? "Invalid route path" : "Not enough PSRAM for navigation";
+        s_native_center_pending = loaded;
+        file_kind = TrackOverlayFileKind::Route;
+    }
+    else if (ends_with_ignore_case(normalized, ".csv"))
     {
         loaded = load_csv_track_points(path, points);
     }
     else if (ends_with_ignore_case(normalized, ".kml"))
     {
-        loaded = load_kml_track_points(path, points, elevation_metrics, elevation_samples);
+        navigation = ::ui::support::KmlNavigationMatch::create();
+        loaded = navigation && platform::ui::device::sd_ready() &&
+                 ::ui::support::projectKmlRoute(path, points, elevation_samples, elevation_metrics, kMaxTrackOverlayPoints, &navigation->expected) && !points.empty();
         file_kind = TrackOverlayFileKind::Route;
     }
     else
@@ -3087,35 +3089,18 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
     }
     if (!loaded)
     {
+        ::ui::support::KmlNavigationMatch::destroy(navigation);
         if (show_fail_toast)
         {
-            set_map_notice("No track yet", 1500);
+            set_map_notice(native_error ? native_error : "No track yet", 1500);
             request_refresh_view();
         }
-        s_track_overlay_active = false;
-        s_track_points.clear();
-        s_track_file.clear();
-        s_track_overlay_kind = TrackOverlayFileKind::Track;
-        s_track_elevation_metrics = TrackElevationMetrics{};
-        s_route_elevation_samples.clear();
-        s_route_elevation_work_samples.clear();
-        s_route_images.clear();
-        s_route_image_strip_items.clear();
-        s_route_asset_id.clear();
-        s_route_elevation_profile_visible = false;
-        s_route_image_strip_visible = false;
-        s_route_image_saved_state_known = false;
-        s_route_image_cache_state_known = false;
-        s_route_image_cache_build_running = false;
-        s_route_deviation_active = false;
-        s_route_deviation_distance_m = 0.0;
-        s_route_selected_image = 0;
-        s_route_image_strip_items_hash = 0;
-        ::ui::widgets::route_image_strip::destroy(s_route_image_strip);
+        clear_map_track_overlay();
         return false;
     }
 
     s_track_file = path;
+    s_route_navigation = navigation;
     s_track_points = std::move(points);
     s_track_overlay_active = true;
     s_track_overlay_kind = file_kind;
@@ -3125,7 +3110,8 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
     {
         s_route_elevation_samples = std::move(elevation_samples);
         s_route_asset_id = route_asset_id_for_path(path);
-        (void)load_kml_route_images(path);
+        if (navigation) (void)load_kml_route_images(path);
+        else s_route_images.clear();
         if (s_route_images.empty())
         {
             s_route_image_strip_visible = false;
@@ -3256,6 +3242,7 @@ void apply_map_drag_preview()
     ::ui::widgets::map::apply_model_lightweight(
         s_map_runtime,
         build_map_model(snapshot));
+    sync_native_viewport();
 }
 
 void sync_map_tile_loader_pause()
@@ -3355,6 +3342,8 @@ void refresh_view()
         ::ui::widgets::map::clear(s_map_runtime);
     }
     sync_map_control_labels(snapshot);
+    sync_native_viewport();
+    sync_native_controls();
     sync_map_route_image_strip();
 }
 
@@ -3424,6 +3413,7 @@ void refresh_timer_cb(lv_timer_t* timer)
 {
     (void)timer;
     gps_runtime_pump().update(sys::millis_now());
+    advance_route_navigation();
     if (s_root && s_projection == Projection::Map && !s_map_target)
     {
         const auto snapshot = map_workspace_model().snapshot();
@@ -3517,10 +3507,8 @@ void center_map_on_self()
     request_refresh_view();
 }
 
-void cycle_map_layer()
+void select_map_layer(uint8_t next_source)
 {
-    const auto layer_state = ::ui::widgets::map::current_layer_state();
-    const uint8_t next_source = static_cast<uint8_t>((layer_state.map_source + 1U) % 3U);
     ::ui::widgets::map::LayerNotice notice{};
     (void)::ui::widgets::map::set_layer_map_source(next_source, &notice);
     if (notice.has_message)
@@ -3538,6 +3526,11 @@ void cycle_map_layer()
     }
     sync_workspace_layers_from_renderer();
     request_refresh_view();
+}
+
+void cycle_map_layer()
+{
+    select_map_layer(static_cast<uint8_t>((::ui::widgets::map::current_layer_state().map_source + 1U) % 3U));
 }
 
 void toggle_map_contour()
@@ -3575,11 +3568,17 @@ void close_map_help_modal()
             lv_group_add_obj(app_g, s_top_bar.back_btn);
         }
         add_map_controls_to_group(app_g);
-        if (s_map_help_btn)
+        if (s_map_help_previous_focus && lv_obj_is_valid(s_map_help_previous_focus) &&
+            lv_obj_get_group(s_map_help_previous_focus) == app_g)
+        {
+            lv_group_focus_obj(s_map_help_previous_focus);
+        }
+        else if (s_map_help_btn)
         {
             lv_group_focus_obj(s_map_help_btn);
         }
     }
+    s_map_help_previous_focus = nullptr;
 }
 
 void on_map_help_modal_key(lv_event_t* e)
@@ -3595,7 +3594,8 @@ void on_map_help_modal_key(lv_event_t* e)
 
     if (key == LV_KEY_UP || key == 'w' || key == 'W')
     {
-        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        lv_obj_t* panel = s_map_help_modal ? lv_obj_get_child(s_map_help_modal, 0) : nullptr;
+        lv_obj_t* target = panel ? lv_obj_get_child(panel, 1) : nullptr;
         if (target && lv_obj_is_valid(target))
         {
             lv_obj_scroll_by(target, 0, 18, LV_ANIM_OFF);
@@ -3605,7 +3605,8 @@ void on_map_help_modal_key(lv_event_t* e)
     }
     if (key == LV_KEY_DOWN || key == 's' || key == 'S')
     {
-        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        lv_obj_t* panel = s_map_help_modal ? lv_obj_get_child(s_map_help_modal, 0) : nullptr;
+        lv_obj_t* target = panel ? lv_obj_get_child(panel, 1) : nullptr;
         if (target && lv_obj_is_valid(target))
         {
             lv_obj_scroll_by(target, 0, -18, LV_ANIM_OFF);
@@ -3629,42 +3630,15 @@ void open_map_help_modal()
         return;
     }
 
-    s_map_help_modal = lv_obj_create(s_root);
-    lv_obj_set_size(s_map_help_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_align(s_map_help_modal, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_add_flag(s_map_help_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_style_bg_color(s_map_help_modal, lv_color_hex(0x1C1812), 0);
-    lv_obj_set_style_bg_opa(s_map_help_modal, LV_OPA_70, 0);
-    lv_obj_set_style_border_width(s_map_help_modal, 0, 0);
-    lv_obj_set_style_pad_all(s_map_help_modal, 4, 0);
-    lv_obj_clear_flag(s_map_help_modal, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_map_help_modal, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* panel = lv_obj_create(s_map_help_modal);
-    lv_obj_set_size(panel, 304, 176);
-    lv_obj_center(panel);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF3DF), 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0x8A6E43), 0);
-    lv_obj_set_style_radius(panel, 4, 0);
-    lv_obj_set_style_pad_left(panel, 7, 0);
-    lv_obj_set_style_pad_right(panel, 7, 0);
-    lv_obj_set_style_pad_top(panel, 5, 0);
-    lv_obj_set_style_pad_bottom(panel, 5, 0);
-    lv_obj_set_style_pad_row(panel, 2, 0);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(panel, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(panel, on_map_help_modal_key, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, "Map Help");
-    lv_obj_set_width(title, LV_PCT(100));
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), 0);
+    s_map_help_previous_focus = app_g ? lv_group_get_focused(app_g) : nullptr;
+    const auto frame = ::ui::components::dialog_frame::create(s_root,
+                                                              {"Map Help", 304, 216, [](lv_event_t*)
+                                                               { close_map_help_modal(); },
+                                                               on_map_help_modal_key});
+    s_map_help_modal = frame.overlay;
+    auto* body = frame.body;
+    auto* close = frame.close;
+    lv_obj_set_style_pad_row(body, 2, 0);
 
     auto add_keycap = [](lv_obj_t* parent, const char* text, lv_coord_t width)
     {
@@ -3687,7 +3661,7 @@ void open_map_help_modal()
                             const char* secondary,
                             const char* description)
     {
-        lv_obj_t* row = lv_obj_create(panel);
+        lv_obj_t* row = lv_obj_create(body);
         lv_obj_set_size(row, LV_PCT(100), 15);
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row,
@@ -3746,19 +3720,22 @@ void open_map_help_modal()
     add_help_row("I", nullptr, "Hide info, keep route");
     add_help_row("Route", nullptr, "Shown when route active");
     add_help_row("Members", nullptr, "Shown when team active");
-    add_help_row(help_key_label(), "Back", "Close help");
+    add_help_row("X/H", "Back", "Close help");
 
     lv_obj_move_foreground(s_map_help_modal);
     if (app_g)
     {
         lv_group_remove_all_objs(app_g);
-        lv_group_add_obj(app_g, panel);
-        lv_group_focus_obj(panel);
+        lv_group_add_obj(app_g, body);
+        lv_group_add_obj(app_g, close);
+        ::ui::components::dialog_frame::bind_close_shortcuts(frame, app_g);
+        lv_group_focus_obj(body);
     }
 }
 
 void close_tracker_modal()
 {
+    s_native_controls.reset();
     if (!s_tracker_modal || !lv_obj_is_valid(s_tracker_modal))
     {
         s_tracker_modal = nullptr;
@@ -3768,9 +3745,9 @@ void close_tracker_modal()
     lv_obj_del(s_tracker_modal);
     s_tracker_modal = nullptr;
     rebuild_map_control_group();
-    if (app_g && s_map_tracker_btn && lv_obj_is_valid(s_map_tracker_btn))
+    if (app_g && s_map_menu_btn && lv_obj_is_valid(s_map_menu_btn))
     {
-        lv_group_focus_obj(s_map_tracker_btn);
+        lv_group_focus_obj(s_map_menu_btn);
     }
 }
 
@@ -3823,8 +3800,18 @@ void tracker_track_button_event_cb(lv_event_t* e)
     }
 
     const std::string path =
-        std::string(::platform::ui::tracker::track_dir()) + "/" + s_track_modal_names[index];
-    (void)load_map_track_file_impl(path.c_str(), true);
+        std::string(s_select_navigation ? ::platform::ui::navigation::directory() : ::platform::ui::tracker::track_dir()) + "/" + s_track_modal_names[index];
+    if (load_map_track_file_impl(path.c_str(), true))
+    {
+        auto edit = app::appFacade().beginConfigEdit();
+        if (edit && path.size() < sizeof(edit.config().route_path))
+        {
+            edit.config().route_enabled = s_select_navigation;
+            if (s_select_navigation) std::strcpy(edit.config().route_path, path.c_str());
+            else edit.config().route_path[0] = '\0';
+            edit.commit(app::AppConfigChangeSet::route());
+        }
+    }
     close_tracker_modal();
 }
 
@@ -3858,7 +3845,7 @@ lv_obj_t* create_tracker_modal_button(lv_obj_t* parent,
     return btn;
 }
 
-void open_tracker_modal()
+void open_tracker_modal(bool navigation)
 {
     if (s_tracker_modal && lv_obj_is_valid(s_tracker_modal))
     {
@@ -3875,57 +3862,23 @@ void open_tracker_modal()
         request_refresh_view();
         return;
     }
-
-    s_tracker_modal = lv_obj_create(s_root);
-    lv_obj_set_size(s_tracker_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_align(s_tracker_modal, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_add_flag(s_tracker_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_add_flag(s_tracker_modal, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(s_tracker_modal, lv_color_hex(0x1C1812), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_tracker_modal, LV_OPA_70, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_tracker_modal, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_tracker_modal, 4, LV_PART_MAIN);
-    lv_obj_clear_flag(s_tracker_modal, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+    s_select_navigation = navigation;
 
     const bool touch_layout = ::ui::page_profile::current().large_touch_hitbox;
     const auto size = ::ui::page_profile::resolve_modal_size(touch_layout ? 520 : 300,
                                                              touch_layout ? 520 : 178);
-    lv_obj_t* panel = lv_obj_create(s_tracker_modal);
-    lv_obj_set_size(panel, size.width, size.height);
-    lv_obj_center(panel);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFF3DF), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(panel, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0x8A6E43), LV_PART_MAIN);
-    lv_obj_set_style_radius(panel, 4, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(panel, touch_layout ? 12 : 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(panel, touch_layout ? 8 : 3, LV_PART_MAIN);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(panel, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* title = lv_label_create(panel);
-    lv_label_set_text(title, "Select Track");
-    lv_obj_set_width(title, LV_PCT(100));
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), LV_PART_MAIN);
-
-    lv_obj_t* list = lv_obj_create(panel);
-    lv_obj_set_width(list, LV_PCT(100));
-    lv_obj_set_height(list, 0);
-    lv_obj_set_flex_grow(list, 1);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
+    const auto frame = ::ui::components::dialog_frame::create(s_root,
+                                                              {navigation ? "Load navigation" : "Load track", size.width, size.height,
+                                                               tracker_modal_close_event_cb, tracker_modal_key_event_cb});
+    s_tracker_modal = frame.overlay;
+    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
+    auto* list = frame.body;
     lv_obj_set_style_pad_row(list, touch_layout ? 6 : 2, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
     s_track_modal_names.clear();
-    ::platform::ui::tracker::list_tracks(s_track_modal_names, 64);
+    if (navigation) ::platform::ui::navigation::list(s_track_modal_names, 64);
+    else ::platform::ui::tracker::list_tracks(s_track_modal_names, 64);
     std::sort(s_track_modal_names.begin(), s_track_modal_names.end());
 
     lv_obj_t* first_focus = nullptr;
@@ -3933,7 +3886,7 @@ void open_tracker_modal()
     if (s_track_modal_names.empty())
     {
         lv_obj_t* empty = lv_label_create(list);
-        lv_label_set_text(empty, "No track files");
+        ::ui::i18n::set_label_text(empty, navigation ? "No saved navigation" : "No track files");
         lv_obj_set_width(empty, LV_PCT(100));
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_font(empty, &lv_font_montserrat_12, LV_PART_MAIN);
@@ -3956,8 +3909,7 @@ void open_tracker_modal()
         }
     }
 
-    lv_obj_t* close_btn =
-        create_tracker_modal_button(panel, "Close", tracker_modal_close_event_cb, nullptr);
+    auto* close_btn = frame.close;
     if (!first_focus)
     {
         first_focus = close_btn;
@@ -3975,11 +3927,203 @@ void open_tracker_modal()
                 lv_group_add_obj(app_g, obj);
             }
         }
+        ::ui::components::dialog_frame::bind_close_shortcuts(frame, app_g);
         if (first_focus)
         {
             lv_group_focus_obj(first_focus);
         }
     }
+}
+
+void map_management_action(lv_event_t* event)
+{
+    const auto value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+    const auto action = static_cast<MapControlAction>(value & 0xFF);
+    const bool unload = (value & 0x100) != 0;
+    close_tracker_modal();
+    if (!unload)
+    {
+        open_tracker_modal(action == MapControlAction::Navigation);
+        return;
+    }
+    const auto& cfg = app::appFacade().readConfig();
+    if (action == MapControlAction::Navigation)
+    {
+        const bool clear = s_track_file == cfg.route_path;
+        auto edit = app::appFacade().beginConfigEdit();
+        if (edit)
+        {
+            edit.config().route_enabled = false;
+            edit.config().route_path[0] = '\0';
+            edit.commit(app::AppConfigChangeSet::route());
+            if (clear) clear_map_track_overlay();
+        }
+    }
+    else if (!cfg.route_enabled || s_track_file != cfg.route_path) clear_map_track_overlay();
+    request_refresh_view();
+    open_map_management(action);
+}
+
+void native_navigation_action(lv_event_t* event)
+{
+    using Session = ::ui::support::NativeNavigationSession;
+    const auto action = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+    close_tracker_modal();
+    if (!s_native_route) return;
+    if (action == 0) // Replan or cancel the in-flight candidate.
+    {
+        if (!s_native_session)
+        {
+            set_map_notice("Navigation is not active", 1500);
+            return;
+        }
+        const auto phase = s_native_session->phase();
+        if (phase == Session::Phase::Replanning || phase == Session::Phase::Applying)
+        {
+            ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+            s_native_candidate_path.clear();
+            s_native_session->cancelReplan();
+            set_map_notice("Replan cancelled; original route kept", 1500);
+        }
+        else
+        {
+            const auto fix = platform::ui::gps::get_data();
+            const bool valid = fix.valid && std::isfinite(fix.lat) && std::isfinite(fix.lng) && std::abs(fix.lat) <= 90 && std::abs(fix.lng) <= 180;
+            const tmap::GeoPoint point{valid ? static_cast<int32_t>(std::llround(fix.lat * 1e7)) : 0,
+                                       valid ? static_cast<int32_t>(std::llround(fix.lng * 1e7)) : 0};
+            if (!valid || fix.age > 5000) set_map_notice("No GPS fix", 1500);
+            else if (!s_native_session->replan(point, valid, fix.age, sys::millis_now())) set_map_notice("Replan unavailable; retry", 1500);
+        }
+    }
+    else if (action == 1) // Reload after a transient storage/parse failure.
+    {
+        const std::string path = s_track_file;
+        (void)load_map_track_file_impl(path.c_str(), true);
+    }
+    else // Stop, acknowledge arrival, or close an inactive preview.
+    {
+        const auto& cfg = app::appFacade().readConfig();
+        const bool restore = cfg.route_enabled && s_track_file != cfg.route_path;
+        if (!restore)
+        {
+            auto edit = app::appFacade().beginConfigEdit();
+            if (!edit)
+            {
+                set_map_notice("Navigation settings busy; retry", 1500);
+                return;
+            }
+            edit.config().route_enabled = false;
+            edit.config().route_path[0] = 0;
+            edit.commit(app::AppConfigChangeSet::route());
+        }
+        clear_map_track_overlay();
+        if (restore) (void)load_configured_route_overlay(true);
+        set_map_notice("Navigation finished", 1500);
+    }
+    request_refresh_view();
+}
+
+void open_map_management(MapControlAction action)
+{
+    close_tracker_modal();
+    const bool contours = action == MapControlAction::Contour;
+    const bool navigation = action == MapControlAction::Navigation;
+    const auto frame = ::ui::components::dialog_frame::create(s_root,
+                                                              {contours ? "Contours" : navigation ? "Navigation"
+                                                                                                  : "Tracks",
+                                                               304, contours ? 116 : navigation && s_native_route ? 224
+                                                                                                                  : 180,
+                                                               tracker_modal_close_event_cb, tracker_modal_key_event_cb});
+    s_tracker_modal = frame.overlay;
+    lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
+    if (app_g) lv_group_remove_all_objs(app_g);
+    lv_obj_t* first = frame.close;
+    if (contours)
+    {
+        auto* toggle = lv_checkbox_create(frame.body);
+        lv_checkbox_set_text(toggle, ::ui::i18n::tr("Show contours"));
+        if (::ui::widgets::map::current_layer_state().contour_enabled) lv_obj_add_state(toggle, LV_STATE_CHECKED);
+        lv_obj_add_event_cb(
+            toggle, [](lv_event_t* event)
+            {
+                auto* toggle = static_cast<lv_obj_t*>(lv_event_get_target(event));
+                if (lv_obj_has_state(toggle, LV_STATE_CHECKED) != ::ui::widgets::map::current_layer_state().contour_enabled) toggle_map_contour();
+                if (::ui::widgets::map::current_layer_state().contour_enabled) lv_obj_add_state(toggle, LV_STATE_CHECKED);
+                else lv_obj_clear_state(toggle, LV_STATE_CHECKED); },
+            LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(toggle, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+        if (app_g) lv_group_add_obj(app_g, toggle);
+        first = toggle;
+    }
+    else
+    {
+        const auto& cfg = app::appFacade().readConfig();
+        const bool active = navigation ? cfg.route_enabled && cfg.route_path[0] : s_track_overlay_active && (!cfg.route_enabled || s_track_file != cfg.route_path);
+        const std::string path = navigation ? cfg.route_path : s_track_file;
+        const auto last = path.find_last_of("/\\");
+        const auto status = std::string(::ui::i18n::tr("Current")) + ": " +
+                            (active ? path.substr(last == std::string::npos ? 0 : last + 1) : ::ui::i18n::tr(navigation ? "No route" : "No track yet"));
+        auto* label = lv_label_create(frame.body);
+        ::ui::i18n::set_content_label_text_raw(label, status.c_str());
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+        for (const bool unload : {false, true})
+        {
+            auto* button = create_tracker_modal_button(frame.body, ::ui::i18n::tr(unload ? "Unload" : "Load"), map_management_action,
+                                                       reinterpret_cast<void*>(static_cast<uintptr_t>(action) | (unload ? 0x100 : 0)));
+            lv_obj_set_height(button, ::ui::page_profile::current().filter_button_height);
+            if (unload && !active) lv_obj_add_state(button, LV_STATE_DISABLED);
+            else if (app_g) lv_group_add_obj(app_g, button);
+            if (!unload) first = button;
+        }
+        if (navigation && s_native_route)
+        {
+            s_native_controls.status = label;
+            s_native_controls.close = frame.close;
+            using Session = ::ui::support::NativeNavigationSession;
+            const auto phase = s_native_session ? s_native_session->phase() : Session::Phase::Stopped;
+            const bool replanning = phase == Session::Phase::Replanning || phase == Session::Phase::Applying;
+            const bool arrived = phase == Session::Phase::Arrived;
+            auto* replan = create_tracker_modal_button(frame.body, ::ui::i18n::tr(replanning ? "Cancel replan" : phase == Session::Phase::Failed ? "Retry replan"
+                                                                                                                                                 : "Replan from here"),
+                                                       native_navigation_action, nullptr);
+            s_native_controls.replan = replan;
+            if (!s_native_session || arrived) lv_obj_add_state(replan, LV_STATE_DISABLED);
+            else if (app_g) lv_group_add_obj(app_g, replan);
+            auto* reload = create_tracker_modal_button(frame.body, ::ui::i18n::tr("Reload route"), native_navigation_action, reinterpret_cast<void*>(1));
+            s_native_controls.reload = reload;
+            if (app_g) lv_group_add_obj(app_g, reload);
+            if (s_native_session && !arrived)
+            {
+                auto* automatic = lv_checkbox_create(frame.body);
+                s_native_controls.automatic = automatic;
+                lv_checkbox_set_text(automatic, ::ui::i18n::tr("Automatic replan"));
+                if (s_native_session->automatic()) lv_obj_add_state(automatic, LV_STATE_CHECKED);
+                lv_obj_add_event_cb(
+                    automatic, [](lv_event_t* event)
+                    {
+                    if (s_native_session) s_native_session->setAutomatic(lv_obj_has_state(static_cast<lv_obj_t*>(lv_event_get_target(event)), LV_STATE_CHECKED)); },
+                    LV_EVENT_VALUE_CHANGED, nullptr);
+                lv_obj_add_event_cb(automatic, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+                if (app_g) lv_group_add_obj(app_g, automatic);
+            }
+            // Session stop remains reachable without scrolling the action list.
+            auto* stop = s_native_controls.createStop(frame.panel,
+                                                      ::ui::i18n::tr(arrived ? "Finish navigation" : active ? "Stop navigation"
+                                                                                                            : "Close preview"),
+                                                      native_navigation_action, reinterpret_cast<void*>(2), ::ui::page_profile::current().large_touch_hitbox);
+            lv_obj_add_event_cb(stop, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+            if (app_g) lv_group_add_obj(app_g, stop);
+            sync_native_controls();
+        }
+    }
+    if (app_g)
+    {
+        lv_group_add_obj(app_g, frame.close);
+        ::ui::components::dialog_frame::bind_close_shortcuts(frame, app_g);
+        lv_group_focus_obj(first);
+    }
+    lv_obj_move_foreground(s_tracker_modal);
 }
 
 void show_route_context_notice()
@@ -4056,6 +4200,22 @@ void on_map_control_clicked(lv_event_t* e)
 
     const auto action = static_cast<MapControlAction>(
         reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (action == MapControlAction::Menu || action == MapControlAction::Team)
+    {
+        const bool team = action == MapControlAction::Team;
+        const bool was_same = s_map_menu && s_team_panel_visible == team;
+        close_map_menu();
+        if (!was_same) open_map_menu(team);
+        return;
+    }
+    if (action == MapControlAction::Layer || action == MapControlAction::LayerBack)
+    {
+        close_map_menu();
+        open_map_menu(false, action == MapControlAction::Layer);
+        if (action == MapControlAction::LayerBack && app_g && s_map_layer_btn) lv_group_focus_obj(s_map_layer_btn);
+        return;
+    }
+    close_map_menu();
     switch (action)
     {
     case MapControlAction::ZoomOut:
@@ -4080,13 +4240,21 @@ void on_map_control_clicked(lv_event_t* e)
         break;
     }
     case MapControlAction::Layer:
-        cycle_map_layer();
+    case MapControlAction::LayerBack:
+        break;
+    case MapControlAction::LayerOsm:
+    case MapControlAction::LayerTerrain:
+    case MapControlAction::LayerSatellite:
+        select_map_layer(static_cast<uint8_t>(action) - static_cast<uint8_t>(MapControlAction::LayerOsm));
         break;
     case MapControlAction::Contour:
-        toggle_map_contour();
-        break;
     case MapControlAction::Tracker:
-        open_tracker_modal();
+    case MapControlAction::Navigation:
+        open_map_management(action);
+        break;
+    case MapControlAction::Team:
+        break;
+    case MapControlAction::Menu:
         break;
     case MapControlAction::Help:
         request_open_map_help_modal();
@@ -4113,6 +4281,43 @@ void on_map_control_clicked(lv_event_t* e)
 
 bool handle_map_key(uint32_t key, lv_event_t* e)
 {
+    if (s_map_menu)
+    {
+        if (key == LV_KEY_RIGHT && app_g && lv_group_get_focused(app_g) == s_map_layer_btn)
+        {
+            consume_key_event(e);
+            close_map_menu();
+            open_map_menu(false, true);
+            return true;
+        }
+        if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE || key == 'm' || key == 'M')
+        {
+            const bool back = s_layer_menu_visible && key != 'm' && key != 'M';
+            consume_key_event(e);
+            close_map_menu();
+            if (back)
+            {
+                open_map_menu();
+                if (app_g && s_map_layer_btn) lv_group_focus_obj(s_map_layer_btn);
+            }
+            return true;
+        }
+        if (key == LV_KEY_LEFT && s_layer_menu_visible)
+        {
+            consume_key_event(e);
+            close_map_menu();
+            open_map_menu();
+            if (app_g && s_map_layer_btn) lv_group_focus_obj(s_map_layer_btn);
+            return true;
+        }
+        return false;
+    }
+    if (!s_location_request && (key == 'm' || key == 'M'))
+    {
+        consume_key_event(e);
+        open_map_menu();
+        return true;
+    }
     if (!s_location_request && (key == 'f' || key == 'F'))
     {
         const auto viewport = map_workspace_model().viewport();
@@ -4293,14 +4498,7 @@ lv_obj_t* create_map_control_button(lv_obj_t* parent,
 {
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_set_size(btn, width, kMapControlButtonHeight);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xF8E6C3), 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0x8A6E43), 0);
-    lv_obj_set_style_radius(btn, 4, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_set_style_text_color(btn, lv_color_hex(0x25170D), 0);
-    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    ::ui::components::bottom_bar::style_button(btn);
     lv_obj_add_event_cb(btn,
                         on_map_control_clicked,
                         LV_EVENT_CLICKED,
@@ -4323,6 +4521,18 @@ void add_map_controls_to_group(lv_group_t* group)
     {
         return;
     }
+    if (s_map_menu)
+    {
+        if (s_map_menu_panel)
+            for (uint32_t index = 0; index < lv_obj_get_child_count(s_map_menu_panel); ++index)
+            {
+                auto* child = lv_obj_get_child(s_map_menu_panel, index);
+                if (lv_obj_has_flag(child, LV_OBJ_FLAG_CLICKABLE)) lv_group_add_obj(group, child);
+            }
+        if (map_control_visible(s_map_team_btn)) lv_group_add_obj(group, s_map_team_btn);
+        if (s_map_menu_btn) lv_group_add_obj(group, s_map_menu_btn);
+        return;
+    }
     if (s_map_pick_btn) lv_group_add_obj(group, s_map_pick_btn);
     if (s_map_cancel_btn) lv_group_add_obj(group, s_map_cancel_btn);
     if (s_map_zoom_out_btn) lv_group_add_obj(group, s_map_zoom_out_btn);
@@ -4333,6 +4543,9 @@ void add_map_controls_to_group(lv_group_t* group)
     if (s_map_contour_btn) lv_group_add_obj(group, s_map_contour_btn);
     if (s_map_tracker_btn) lv_group_add_obj(group, s_map_tracker_btn);
     if (s_map_help_btn) lv_group_add_obj(group, s_map_help_btn);
+    if (map_control_visible(s_map_team_btn)) lv_group_add_obj(group, s_map_team_btn);
+    if (s_map_menu_btn) lv_group_add_obj(group, s_map_menu_btn);
+    if (s_map_navigation_btn) lv_group_add_obj(group, s_map_navigation_btn);
     if (map_control_visible(s_map_route_btn)) lv_group_add_obj(group, s_map_route_btn);
     for (lv_obj_t* member_btn : s_member_buttons)
     {
@@ -4343,9 +4556,112 @@ void add_map_controls_to_group(lv_group_t* group)
     }
 }
 
+void close_map_menu()
+{
+    if (!s_map_menu) return;
+    auto* menu = s_map_menu;
+    s_map_menu = nullptr;
+    const bool team = s_team_panel_visible;
+    s_team_panel_visible = false;
+    s_layer_menu_visible = false;
+    s_map_menu_panel = nullptr;
+    s_map_search_btn = s_map_layer_btn = s_map_contour_btn = s_map_tracker_btn = s_map_navigation_btn = nullptr;
+    s_map_popup.reset();
+    if (lv_obj_is_valid(menu)) lv_obj_del(menu);
+    rebuild_map_control_group();
+    if (app_g && map_control_visible(team ? s_map_team_btn : s_map_menu_btn)) lv_group_focus_obj(team ? s_map_team_btn : s_map_menu_btn);
+}
+
+void refresh_map_menu_labels()
+{
+    if (!s_map_menu) return;
+    const auto label = std::string(::ui::i18n::tr("Map Layer")) + " " LV_SYMBOL_RIGHT;
+    set_button_label(s_map_layer_btn, label.c_str());
+    set_button_label(s_map_contour_btn, ::ui::i18n::tr("Contours"));
+}
+
+void open_map_menu(bool team, bool layers)
+{
+    if (s_map_menu || s_location_request || !s_map_viewport || !lv_obj_is_valid(s_map_viewport)) return;
+    if (team && !map_workspace_model().snapshot().team.available) return;
+    auto* panel = s_map_menu = s_map_menu_panel = lv_obj_create(s_map_viewport);
+    s_team_panel_visible = team;
+    s_layer_menu_visible = layers;
+    const auto width = lv_obj_get_width(s_map_viewport) - 8;
+    auto item = [&](const char* text, MapControlAction action)
+    {
+        auto* button = create_map_control_button(panel, width - 10, ::ui::i18n::tr(text), action);
+        lv_obj_set_height(button, ::ui::page_profile::current().large_touch_hitbox ? 44 : 28);
+        return button;
+    };
+    lv_obj_t* first = nullptr;
+    if (team)
+    {
+        ::team::ui::TeamUiSnapshot snapshot;
+        if (load_team_snapshot(snapshot))
+            for (const auto& member : snapshot.members)
+            {
+                auto* button = create_member_button(member, panel);
+                if (!button) continue;
+                lv_obj_set_width(button, width - 10);
+                lv_obj_set_height(button, ::ui::page_profile::current().large_touch_hitbox ? 44 : 28);
+                style_member_button_selected(button, member_id_for_button(member) == s_selected_member_id);
+                if (!first) first = button;
+            }
+        if (!first)
+        {
+            auto* empty = lv_label_create(panel);
+            ::ui::i18n::set_label_text(empty, "No team");
+        }
+    }
+    else if (layers)
+    {
+        auto* back = item("Map Layer", MapControlAction::LayerBack);
+        set_button_label(back, (std::string(LV_SYMBOL_LEFT " ") + ::ui::i18n::tr("Map Layer")).c_str());
+        const auto selected = ::ui::widgets::map::current_layer_state().map_source;
+        for (uint8_t source = 0; source < 3; ++source)
+        {
+            auto* button = item(source == 0 ? "OSM" : source == 1 ? "Terrain"
+                                                                  : "Satellite",
+                                static_cast<MapControlAction>(static_cast<uint8_t>(MapControlAction::LayerOsm) + source));
+            if (source == selected)
+            {
+                lv_obj_add_state(button, LV_STATE_CHECKED);
+                auto* label = lv_obj_get_child(button, 0);
+                set_button_label(button, (std::string(LV_SYMBOL_OK " ") + lv_label_get_text(label)).c_str());
+                first = button;
+            }
+        }
+    }
+    else
+    {
+        s_map_contour_btn = item("Contours", MapControlAction::Contour);
+        s_map_layer_btn = item("Map Layer", MapControlAction::Layer);
+        s_map_search_btn = item("Search", MapControlAction::Search);
+        s_map_navigation_btn = item("Navigation", MapControlAction::Navigation);
+        s_map_tracker_btn = item("Tracks", MapControlAction::Tracker);
+        first = s_map_contour_btn;
+    }
+    refresh_map_menu_labels();
+    s_map_popup.init(s_map_viewport, team ? s_map_team_btn : s_map_menu_btn, panel,
+                     [](void*, bool open)
+                     { if (!open) close_map_menu(); },
+                     nullptr, {false, false});
+    s_map_popup.open();
+    // Keep the taskbar above the transparent dismiss surface so Menu can
+    // toggle the popup and Pos/Help remain directly accessible.
+    lv_obj_move_foreground(s_map_control_bar);
+    rebuild_map_control_group();
+    if (app_g && first) lv_group_focus_obj(first);
+}
+
 void create_map_control_bar(lv_obj_t* viewport)
 {
-    s_map_control_bar = lv_obj_create(viewport);
+    const bool narrow = lv_obj_get_width(viewport) < 300;
+    const lv_coord_t small = narrow ? 20 : kMapControlButtonSmallWidth;
+    const lv_coord_t medium = narrow ? 28 : kMapControlButtonMediumWidth;
+    const lv_coord_t wide = narrow ? 34 : kMapControlButtonWideWidth;
+    s_map_control_bar = ::ui::components::bottom_bar::create(viewport);
     lv_obj_set_size(s_map_control_bar, LV_PCT(100), kMapControlBarHeight);
     lv_obj_align(s_map_control_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_flex_flow(s_map_control_bar, LV_FLEX_FLOW_ROW);
@@ -4353,30 +4669,19 @@ void create_map_control_bar(lv_obj_t* viewport)
                           LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_bg_color(s_map_control_bar, lv_color_hex(0xFFF3DF), 0);
     lv_obj_set_style_bg_opa(s_map_control_bar, LV_OPA_90, 0);
-    lv_obj_set_style_border_width(s_map_control_bar, 1, 0);
-    lv_obj_set_style_border_color(s_map_control_bar, lv_color_hex(0xB3915D), 0);
-    lv_obj_set_style_radius(s_map_control_bar, 0, 0);
-    lv_obj_set_style_pad_left(s_map_control_bar, 3, 0);
-    lv_obj_set_style_pad_right(s_map_control_bar, 3, 0);
     lv_obj_set_style_pad_top(s_map_control_bar, 2, 0);
     lv_obj_set_style_pad_bottom(s_map_control_bar, 2, 0);
-    lv_obj_set_style_pad_column(s_map_control_bar, 3, 0);
-    // Fixed controls fit a 320px screen; route/team controls may extend it.
-    lv_obj_add_flag(s_map_control_bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(s_map_control_bar, LV_DIR_HOR);
-    lv_obj_set_scrollbar_mode(s_map_control_bar, LV_SCROLLBAR_MODE_OFF);
     bind_map_key_handler(s_map_control_bar);
 
     s_map_zoom_out_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonSmallWidth,
+        small,
         "-",
         MapControlAction::ZoomOut);
     s_map_zoom_label = lv_label_create(s_map_control_bar);
     lv_label_set_text(s_map_zoom_label, "Z7");
-    lv_obj_set_width(s_map_zoom_label, 24);
+    lv_obj_set_width(s_map_zoom_label, narrow ? 20 : 24);
     lv_obj_set_style_text_font(s_map_zoom_label, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_map_zoom_label, lv_color_hex(0x3E2B18), 0);
     lv_obj_set_style_text_align(s_map_zoom_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -4384,43 +4689,37 @@ void create_map_control_bar(lv_obj_t* viewport)
 
     s_map_zoom_in_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonSmallWidth,
+        small,
         "+",
         MapControlAction::ZoomIn);
+    auto* spacer = lv_obj_create(s_map_control_bar);
+    lv_obj_remove_style_all(spacer);
+    lv_obj_set_size(spacer, 0, 1);
+    lv_obj_set_flex_grow(spacer, 1);
+    lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE);
     s_map_center_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonMediumWidth,
+        medium,
         "Pos",
         MapControlAction::Center);
     if (s_location_request)
     {
-        s_map_pick_btn = create_map_control_button(s_map_control_bar, 66, ::ui::i18n::tr("Pick"), MapControlAction::PickLocation);
-        s_map_cancel_btn = create_map_control_button(s_map_control_bar, 66, ::ui::i18n::tr("Cancel"), MapControlAction::CancelLocation);
+        s_map_pick_btn = create_map_control_button(s_map_control_bar, narrow ? 54 : 66, ::ui::i18n::tr("Pick"), MapControlAction::PickLocation);
+        s_map_cancel_btn = create_map_control_button(s_map_control_bar, narrow ? 54 : 66, ::ui::i18n::tr("Cancel"), MapControlAction::CancelLocation);
         lv_obj_move_foreground(s_map_control_bar);
         return;
     }
-    s_map_layer_btn = create_map_control_button(
-        s_map_control_bar,
-        kMapControlButtonMediumWidth,
-        "OSM",
-        MapControlAction::Layer);
-    s_map_search_btn = create_map_control_button(
-        s_map_control_bar, kMapControlButtonSmallWidth, "F", MapControlAction::Search);
-    s_map_contour_btn = create_map_control_button(
-        s_map_control_bar,
-        kMapControlButtonContourWidth,
-        "Ctr",
-        MapControlAction::Contour);
-    s_map_tracker_btn = create_map_control_button(
-        s_map_control_bar,
-        tracker_button_width(),
-        tracker_button_label(),
-        MapControlAction::Tracker);
     s_map_help_btn = create_map_control_button(
         s_map_control_bar,
-        kMapControlButtonSmallWidth,
-        help_key_label(),
+        wide,
+        ::ui::i18n::tr("Help"),
         MapControlAction::Help);
+    s_map_team_btn = create_map_control_button(
+        s_map_control_bar, wide, ::ui::i18n::tr("Team"), MapControlAction::Team);
+    set_hidden(s_map_team_btn, !map_workspace_model().snapshot().team.available);
+    s_map_menu_btn = create_map_control_button(
+        s_map_control_bar, wide, ::ui::i18n::tr("Menu"), MapControlAction::Menu);
     lv_obj_move_foreground(s_map_control_bar);
 }
 

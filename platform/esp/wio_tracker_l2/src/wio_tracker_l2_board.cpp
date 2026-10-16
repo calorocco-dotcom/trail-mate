@@ -1,8 +1,11 @@
 #if defined(ARDUINO_WIO_TRACKER_L2)
 
 #include "platform/esp/wio_tracker_l2/wio_tracker_l2_board.h"
+#include "platform/audio/audio_focus.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/common/memory_budget.h"
+#include "platform/esp/wio_tracker_l2/es8311_output_gain.h"
+#include "platform/radio/radio_power.h"
 #include "platform/ui/screen_runtime.h"
 
 // Keep the codec library's GPIO class out of the global ESP/Lovyan namespace.
@@ -51,6 +54,9 @@ audio_driver::DriverDeviceInfo s_codec_pins;
 audio_driver::AudioDriverES8311Class s_codec;
 constexpr uint32_t kAudioSampleRate = 16000;
 int16_t s_tone_pcm[256];
+bool s_music_active = false; // Protected by the existing audio mutex.
+uint32_t s_music_rate = 0, s_music_last_write_us = 0, s_music_max_gap_us = 0;
+uint32_t s_music_writes = 0, s_music_late_writes = 0;
 
 class BusLock
 {
@@ -91,6 +97,15 @@ bool readBytes(uint8_t address, uint8_t reg, uint8_t* data, size_t size)
     }
     for (size_t index = 0; index < size; ++index) data[index] = Wire.read();
     return true;
+}
+
+bool setCodecUnityGain()
+{
+    return audio::configure_unity_gain(
+        [](uint8_t reg, uint8_t value)
+        { return writeByte(0x18, reg, value); },
+        [](uint8_t reg, uint8_t& value)
+        { return readBytes(0x18, reg, &value, 1); });
 }
 
 bool writeExpanderWord(uint8_t reg, uint16_t value)
@@ -601,11 +616,13 @@ bool WioTrackerL2Board::syncTimeFromGPS(uint32_t)
 
 int WioTrackerL2Board::transmitRadio(const uint8_t* data, size_t len)
 {
+    if (!platform::radio::power_policy().enabled()) return RADIOLIB_ERR_SPI_WRITE_FAILED;
     BusLock lock(s_radio_mutex, 2000);
     return lock && radio_ready_ ? radio_.transmit(data, len) : RADIOLIB_ERR_SPI_WRITE_FAILED;
 }
 int WioTrackerL2Board::startRadioReceive()
 {
+    if (!platform::radio::power_policy().enabled()) return RADIOLIB_ERR_SPI_WRITE_FAILED;
     BusLock lock(s_radio_mutex);
     return lock && radio_ready_ ? radio_.startReceive() : RADIOLIB_ERR_SPI_WRITE_FAILED;
 }
@@ -719,7 +736,7 @@ bool WioTrackerL2Board::initializeAudio()
     config.dma_buf_count = 4;
     config.dma_buf_len = 128;
     config.tx_desc_auto_clear = true;
-    config.fixed_mclk = kAudioSampleRate * 256;
+    config.fixed_mclk = 0; // Follow the current sample rate for native-rate music playback.
     config.mclk_multiple = I2S_MCLK_MULTIPLE_256;
     if (i2s_driver_install(I2S_NUM_0, &config, 0, nullptr) != ESP_OK) return false;
     i2s_pin_config_t pins{};
@@ -747,7 +764,7 @@ bool WioTrackerL2Board::initializeAudio()
     codec_config.output_device = audio_driver::DAC_OUTPUT_ALL;
     codec_config.i2s.bits = audio_driver::BIT_LENGTH_16BITS;
     codec_config.i2s.rate = audio_driver::RATE_16K;
-    const bool ready = s_codec.begin(codec_config, s_codec_pins) && s_codec.setVolume(75);
+    const bool ready = s_codec.begin(codec_config, s_codec_pins) && setCodecUnityGain();
     Wire.setClock(i2c::kFrequencyHz);
     if (!ready) i2s_driver_uninstall(I2S_NUM_0);
     return ready;
@@ -818,6 +835,8 @@ void WioTrackerL2Board::playMessageTone()
 
 void WioTrackerL2Board::playTone()
 {
+    platform::audio::FocusScope focus(platform::audio::FocusOwner::Notification);
+    if (!focus) return;
     BusLock lock(s_audio_mutex, 0);
     if (!lock || !writeExpander(ExpanderPin::AudioAmplifierEnable, true)) return;
     delay(250);
@@ -841,6 +860,8 @@ void WioTrackerL2Board::playTone()
 
 bool WioTrackerL2Board::playCodec2Voice(const uint8_t* data, size_t size, uint8_t volume)
 {
+    platform::audio::FocusScope focus(platform::audio::FocusOwner::VoiceMessage);
+    if (!focus) return false;
     if (!audio_ready_ || !data || size == 0 || size > 875 || size % 7 != 0) return false;
     if (!ensureAudioReady())
     {
@@ -880,6 +901,101 @@ bool WioTrackerL2Board::playCodec2Voice(const uint8_t* data, size_t size, uint8_
 }
 
 void WioTrackerL2Board::setMessageToneVolume(uint8_t level) { tone_volume_ = std::min<uint8_t>(level, 100); }
+
+bool WioTrackerL2Board::beginMusic(uint32_t rate)
+{
+    if (platform::audio::music_blocked() || !ensureAudioReady()) return false;
+    BusLock lock(s_audio_mutex);
+    if (!lock || s_music_active) return false;
+    audio_driver::CodecConfig config;
+    config.input_device = audio_driver::ADC_INPUT_NONE;
+    config.output_device = audio_driver::DAC_OUTPUT_ALL;
+    config.i2s.bits = audio_driver::BIT_LENGTH_16BITS;
+    if (config.setRateNumeric(rate) != static_cast<int>(rate)) return false;
+    // Configure a running, silent clock before resetting the slave codec.
+    // No amplifier output may escape during a format/rate transition.
+    if (!writeExpander(ExpanderPin::AudioAmplifierEnable, false)) return false;
+    i2s_zero_dma_buffer(I2S_NUM_0);
+    bool configured = false;
+    const bool clocked = i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO) == ESP_OK;
+    const float actual_rate = clocked ? i2s_get_clk(I2S_NUM_0) : 0;
+    {
+        BusLock i2c(s_i2c_mutex);
+        if (i2c && clocked && std::abs(actual_rate - static_cast<float>(rate)) <= rate / 100.0F)
+        {
+            uint8_t reset = 0, format = 0, clock = 0;
+            configured = s_codec.setConfig(config) && setCodecUnityGain() &&
+                         readBytes(0x18, 0x00, &reset, 1) && readBytes(0x18, 0x09, &format, 1) && readBytes(0x18, 0x01, &clock, 1) &&
+                         !(reset & 0x40) && (format & 0x5F) == 0x0C && !(clock & 0x80);
+            Serial.printf("[WioL2] music requested=%luHz actual=%.1fHz ES8311 reset=%02x format=%02x clock=%02x ready=%u dac_target=0dB\n",
+                          static_cast<unsigned long>(rate), actual_rate, reset, format, clock, configured);
+        }
+    }
+    if (!configured || !writeExpander(ExpanderPin::AudioAmplifierEnable, true))
+    {
+        (void)writeExpander(ExpanderPin::AudioAmplifierEnable, false);
+        (void)i2s_set_clk(I2S_NUM_0, kAudioSampleRate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+        config.i2s.rate = audio_driver::RATE_16K;
+        BusLock i2c(s_i2c_mutex);
+        if (i2c) (void)s_codec.setConfig(config);
+        return false;
+    }
+    s_music_rate = rate;
+    s_music_last_write_us = s_music_max_gap_us = s_music_writes = s_music_late_writes = 0;
+    s_music_active = true;
+    return true;
+}
+bool WioTrackerL2Board::writeMusic(const int16_t* mono, size_t samples)
+{
+    BusLock lock(s_audio_mutex);
+    if (!lock || !s_music_active || !mono) return false;
+    const uint32_t now = micros();
+    if (s_music_writes)
+    {
+        const uint32_t gap = now - s_music_last_write_us;
+        s_music_max_gap_us = std::max(s_music_max_gap_us, gap);
+        // A gap longer than even a full DMA queue proves the producer was
+        // late. Report once when closing, never log in the streaming loop.
+        if (gap > UINT64_C(4) * 128 * 1000000 / s_music_rate) ++s_music_late_writes;
+    }
+    for (size_t offset = 0; offset < samples;)
+    {
+        const auto count = std::min<size_t>(128, samples - offset);
+        for (size_t i = 0; i < count; i++) s_tone_pcm[2 * i] = s_tone_pcm[2 * i + 1] = mono[offset + i];
+        size_t written = 0;
+        const auto bytes = count * 2 * sizeof(int16_t);
+        if (i2s_write(I2S_NUM_0, s_tone_pcm, bytes, &written, pdMS_TO_TICKS(100)) != ESP_OK || written != bytes) return false;
+        offset += count;
+    }
+    s_music_last_write_us = micros();
+    ++s_music_writes;
+    return true;
+}
+void WioTrackerL2Board::endMusic()
+{
+    BusLock lock(s_audio_mutex);
+    if (!lock || !s_music_active) return;
+    i2s_zero_dma_buffer(I2S_NUM_0);
+    writeExpander(ExpanderPin::AudioAmplifierEnable, false);
+    (void)i2s_set_clk(I2S_NUM_0, kAudioSampleRate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+    audio_driver::CodecConfig config;
+    config.input_device = audio_driver::ADC_INPUT_NONE;
+    config.output_device = audio_driver::DAC_OUTPUT_ALL;
+    config.i2s.bits = audio_driver::BIT_LENGTH_16BITS;
+    config.i2s.rate = audio_driver::RATE_16K;
+    {
+        BusLock i2c(s_i2c_mutex);
+        if (i2c)
+        {
+            (void)s_codec.setConfig(config);
+            (void)setCodecUnityGain();
+        }
+    }
+    Serial.printf("[WioL2] music writes=%lu late=%lu max_gap=%luus dma_budget=%luus\n",
+                  static_cast<unsigned long>(s_music_writes), static_cast<unsigned long>(s_music_late_writes),
+                  static_cast<unsigned long>(s_music_max_gap_us), static_cast<unsigned long>(UINT64_C(4) * 128 * 1000000 / s_music_rate));
+    s_music_active = false;
+}
 
 } // namespace boards::wio_tracker_l2
 

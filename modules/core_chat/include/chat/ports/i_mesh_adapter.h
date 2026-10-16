@@ -6,12 +6,30 @@
 #pragma once
 
 #include "../domain/chat_types.h"
+#include "chat/infra/lxmf/lxmf_wire.h"
+#include "chat/ports/device_author.h"
+#include "chat/ports/device_identity_restore.h"
+#include "chat/ports/track_binding_registration.h"
 #include <memory>
 
+namespace track_sharing
+{
+struct ManifestView;
+}
+namespace hostlink::management
+{
+struct IdentityRestoreView;
+struct RadioIdentityRestoreView;
+} // namespace hostlink::management
 namespace chat
 {
 class IIncomingDeliveryCommitPort;
 class IGeocachingTransport;
+class ITrackTransport;
+namespace lxmf
+{
+struct TrackDeliveryBinding;
+}
 
 namespace meshcore
 {
@@ -64,7 +82,54 @@ struct ReticulumLocalIdentityInfo
 class IMeshAdapter
 {
   public:
+    virtual DeviceIdentityRestoreResult restoreDeviceIdentity(const hostlink::management::IdentityRestoreView&, uint8_t*, size_t)
+    {
+        return DeviceIdentityRestoreResult::Unsupported;
+    }
+    virtual DeviceIdentityRestoreResult restoreRadioIdentity(const hostlink::management::RadioIdentityRestoreView&, uint8_t*, size_t)
+    {
+        return DeviceIdentityRestoreResult::Unsupported;
+    }
+    virtual DeviceAuthorResult readRadioIdentityInfo(uint8_t, uint32_t, uint8_t*, size_t, size_t& written) const
+    {
+        written = 0;
+        return DeviceAuthorResult::Unsupported;
+    }
+    virtual DeviceAuthorResult exportRadioIdentityBackup(uint8_t, uint32_t, uint8_t*, size_t, size_t& written, const uint8_t*, const uint8_t*) const
+    {
+        written = 0;
+        return DeviceAuthorResult::Unsupported;
+    }
+    virtual DeviceAuthorResult readDeviceAuthorKey(uint8_t*, uint32_t&) const { return DeviceAuthorResult::Unsupported; }
+    // Internal physical-USB export port. Caller owns authorization and the
+    // transient output; implementations must serialize identity access.
+    virtual DeviceAuthorResult exportDeviceIdentityBackup(uint32_t, uint8_t*, size_t, size_t& written) const
+    {
+        written = 0;
+        return DeviceAuthorResult::Unsupported;
+    }
+    // Internal primitive only: publication caller must validate file, identity,
+    // immutable lease and durable revision reservation before invoking this.
+    virtual DeviceAuthorResult signTrackManifest(const uint8_t*, size_t, uint32_t, track_sharing::ManifestView&,
+                                                 uint8_t*, size_t, uint8_t*, size_t) const { return DeviceAuthorResult::Unsupported; }
+    virtual DeviceAuthorResult proveDeviceAuthor(const uint8_t*, const uint8_t*, uint32_t,
+                                                 uint8_t*, size_t, uint8_t*, uint32_t&, uint8_t*) const
+    {
+        return DeviceAuthorResult::Unsupported;
+    }
     virtual IGeocachingTransport* geocachingTransport() { return nullptr; }
+    virtual ITrackTransport* trackTransport() { return nullptr; }
+    virtual bool bindTrackDelivery(const lxmf::TrackDeliveryBinding*) { return false; }
+    // Nonblocking ownership change, serialized with callback execution. Caller
+    // lends replacement until successful removal or an observed Conflict.
+    virtual TrackBindingChange replaceTrackDelivery(const lxmf::TrackDeliveryBinding*, const lxmf::TrackDeliveryBinding*) { return TrackBindingChange::Unsupported; }
+    // Run a bounded job step under callback serialization, after refreshing its
+    // author guard. Visitor must not reenter router APIs or send radio data.
+    virtual TrackBindingChange visitTrackDelivery(const lxmf::TrackDeliveryBinding*, uint8_t*, uint32_t&, TrackBindingVisit, void*) { return TrackBindingChange::Unsupported; }
+    virtual bool trackLocalDestination(uint8_t*) { return false; }
+    virtual bool requestTrackDirectoryPath(const uint8_t*) { return false; }
+    virtual MeshSendResult sendTrackData(const uint8_t*, lxmf::ByteSpan, const uint8_t*, uint32_t,
+                                         bool, std::array<uint8_t, 32>*) { return MeshSendResult::fail(MeshOperationFailure::Unsupported); }
     virtual ~IMeshAdapter() = default;
 
     /**

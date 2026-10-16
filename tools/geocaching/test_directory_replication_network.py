@@ -58,15 +58,23 @@ def reader(work, port):
                       "origin": "offline", "signature": "valid"}), flush=True)
 
 
-def acceptance(origin, work):
+def acceptance(origin, work, resume=False):
     from directory_store import unpacked, verify_cache
     expected = verify_cache(unpacked((origin / "publisher" / "sent-signed.bin").read_bytes()))
     origin_port = int(re.search(r"listen_port = (\d+)", (origin / "rns" / "config").read_text())[1])
-    work.mkdir(parents=True, exist_ok=False)
-    shutil.copyfile(origin / "publisher" / "sent-signed.bin", work / "expected.bin")
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
+    if resume:
+        assert (work/'expected.bin').read_bytes() == (origin/'publisher'/'sent-signed.bin').read_bytes()
+        port = int(re.search(r'listen_port = (\d+)', (work/'rns'/'config').read_text())[1])
+        # This is synthetic acceptance state after a known capability failure.
+        # Retry its persisted peer without deleting files, objects or identities.
+        with sqlite3.connect(work/'service'/'directory.sqlite') as database:
+            database.execute('UPDATE peers SET due=0')
+    else:
+        work.mkdir(parents=True, exist_ok=False)
+        shutil.copyfile(origin / "publisher" / "sent-signed.bin", work / "expected.bin")
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     running = []
 
@@ -148,9 +156,10 @@ def main():
     parser.add_argument("--origin", type=Path)
     parser.add_argument("--port", type=int)
     parser.add_argument("--origin-port", type=int)
+    parser.add_argument("--resume", action="store_true", help="Retry existing synthetic replica state without removing files")
     args = parser.parse_args()
     if args.mode == "acceptance":
-        acceptance(args.origin.resolve(), args.work.resolve())
+        acceptance(args.origin.resolve(), args.work.resolve(), args.resume)
     elif args.mode == "replica":
         replica(args.work.resolve(), args.port, args.origin_port)
     else:

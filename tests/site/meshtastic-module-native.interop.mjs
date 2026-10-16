@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
+import {TmsDocument} from '../../site/device/src/tms-document.js';import {updateStructuredModuleField,editStructuredModuleRow} from '../../site/device/src/meshtastic-module-model.js';import {readMeshtasticModule} from '../../site/device/src/meshtastic-module-document.js';import {protobufVarintField,protobufBytesField} from '../../site/device/src/module-protobuf-wire.js';
+const executable=process.argv[2]??fileURLToPath(new URL('../../.codex-build/hostlink-codec/native/meshtastic_module_native_decode.exe',import.meta.url));
+const native=bytes=>spawnSync(executable,[],{input:Buffer.from(bytes),encoding:'utf8'});
+let document=new TmsDocument(new TextEncoder().encode('TMSET7\nschema.version=u16:7\ndocument.kind=enum:working\nmt_module.format=str:pb-v1\nmt_module.size=u16:2\nmt_module.chunk_count=u8:3\nmt_module.chunk.0=b64:QAE=\nmt_module.chunk.1=b64:\nmt_module.chunk.2=b64:\nEND\n'));
+document=updateStructuredModuleField(document,['mqtt','enabled'],true);document=updateStructuredModuleField(document,['mqtt','password'],'synthetic');document=updateStructuredModuleField(document,['mqtt','map_report_settings','position_precision'],16);document=updateStructuredModuleField(document,['paxcounter','wifi_threshold'],-80);
+document=editStructuredModuleRow(document,['remote_hardware','available_pins'],0,{action:'insert',values:{gpio_pin:13,name:'Relay',type:2}});
+const result=native(readMeshtasticModule(document));assert.ifError(result.error);assert.equal(result.status,0,result.stderr);assert.deepEqual(JSON.parse(result.stdout),{version:1,mqtt:1,precision:16,threshold:-80,rows:1,gpio:13});
+const oversizeString=protobufBytesField(1,protobufBytesField(4,new Uint8Array(32).fill(65)));assert.equal(native(oversizeString).status,2);
+const overflowPin=protobufBytesField(10,protobufBytesField(3,protobufVarintField(1,256)));assert.equal(native(overflowPin).status,2);
+const rows=Uint8Array.from(Array.from({length:5},(_,index)=>[...protobufBytesField(3,protobufVarintField(1,index))]).flat());assert.equal(native(protobufBytesField(10,rows)).status,2);
+console.log('Actual firmware nanopb decoded browser MQTT/nested/signed/repeated fields; string, uint8 and repeated-capacity rejection matched.');

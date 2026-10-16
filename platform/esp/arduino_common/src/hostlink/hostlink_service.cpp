@@ -4,8 +4,10 @@
 #include "hostlink/hostlink_frame_router.h"
 #include "hostlink/hostlink_service_codec.h"
 #include "hostlink/hostlink_types.h"
+#include "hostlink/sensitive_memory.h"
 #include "platform/esp/arduino_common/hostlink/hostlink_bridge_radio.h"
 #include "platform/esp/arduino_common/hostlink/hostlink_config_service.h"
+#include "platform/esp/arduino_common/hostlink/hostlink_management_service.h"
 #include "usb/usb_cdc_transport.h"
 
 #include "app/app_config.h"
@@ -25,7 +27,9 @@
 
 #include "sys/clock.h"
 
+#include <atomic>
 #include <cstring>
+#include <esp_heap_caps.h>
 #include <string>
 #include <vector>
 
@@ -37,8 +41,13 @@ namespace
 constexpr uint32_t kHandshakeTimeoutMs = 5000;
 constexpr uint32_t kStatusIntervalMs = 1500;
 constexpr uint32_t kGpsIntervalMs = 1000;
+#if defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+constexpr size_t kTxQueueSize = 4;
+constexpr size_t kCmdQueueSize = 2;
+#else
 constexpr size_t kTxQueueSize = 12;
 constexpr size_t kCmdQueueSize = 12;
+#endif
 constexpr uint8_t kCmdTxAppFlagWantResponse = 1 << 0;
 constexpr uint8_t kCmdTxAppFlagTeamMgmtPlain = 1 << 1;
 
@@ -58,10 +67,24 @@ struct TxItem
     size_t len = 0;
 };
 
-TaskHandle_t s_task = nullptr;
+void release_tx_item(TxItem& item)
+{
+    clearSensitiveBytes(item.data, item.len);
+    free(item.data);
+    item = {};
+}
+
+void drain_tx_queue(QueueHandle_t queue)
+{
+    if (!queue) return;
+    TxItem item;
+    while (xQueueReceive(queue, &item, 0) == pdPASS) release_tx_item(item);
+}
+
+std::atomic<TaskHandle_t> s_task{nullptr};
 QueueHandle_t s_tx_queue = nullptr;
 QueueHandle_t s_cmd_queue = nullptr;
-volatile bool s_stop = false;
+std::atomic<bool> s_stop{false};
 SessionRuntime s_session{};
 
 Decoder s_decoder(kMaxFrameLen);
@@ -103,7 +126,8 @@ void send_hello_ack(uint16_t seq)
 {
     const uint32_t caps =
         CapTxMsg | CapConfig | CapSetTime | CapStatus | CapLogs | CapGps |
-        CapAppData | CapTeamState | CapAprsGateway | CapTxAppData;
+        CapAppData | CapTeamState | CapAprsGateway | CapTxAppData | CapManagement |
+        CapChannelPositionPrecision | CapSharedSignatureRecovery | CapSharedConfirmationRecovery;
 
     HelloAckPayloadInfo info;
     info.protocol_version = kProtocolVersion;
@@ -289,10 +313,12 @@ bool enqueue_pending_command(const PendingCommand& command)
 {
     if (!s_cmd_queue)
     {
+        platform::esp::arduino_common::geocaching::browse_runtime::webLease(false);
         return false;
     }
-    PendingCommand copy = command;
-    return xQueueSend(s_cmd_queue, &copy, 0) == pdPASS;
+    // FreeRTOS copies the item before returning; do not duplicate the 512-byte
+    // payload on the task stack just to enqueue it.
+    return xQueueSend(s_cmd_queue, &command, 0) == pdPASS;
 }
 
 ErrorCode execute_cmd_tx_msg(const PendingCommand& command)
@@ -488,6 +514,25 @@ ErrorCode execute_frame_command(HostlinkCommandId command, const Frame& frame)
     }
 }
 
+ErrorCode handle_cmd_management(const Frame& frame)
+{
+    if (frame.payload.empty() || frame.payload.size() > kMaxFrameLen)
+    {
+        return ErrorCode::InvalidParam;
+    }
+    management::EnvelopeView request;
+    if (!management::decodeEnvelope(frame.payload.data(), frame.payload.size(), request))
+    {
+        return ErrorCode::InvalidParam;
+    }
+    PendingCommand command{};
+    command.type = PendingCommandType::Management;
+    command.sequence = frame.seq;
+    command.payload_len = static_cast<uint16_t>(frame.payload.size());
+    std::memcpy(command.payload, frame.payload.data(), frame.payload.size());
+    return enqueue_pending_command(command) ? ErrorCode::Ok : ErrorCode::Busy;
+}
+
 void handle_frame(const Frame& frame)
 {
     const HostlinkFrameDecision decision = route_frame(frame, is_ready(s_session));
@@ -497,6 +542,7 @@ void handle_frame(const Frame& frame)
         send_ack(frame.seq, decision.error);
         return;
     case HostlinkFrameDecisionType::CompleteHello:
+        drain_tx_queue(s_tx_queue);
         send_hello_ack(frame.seq);
         mark_handshake_complete(s_session, sys::millis_now());
         send_status_event(true);
@@ -510,7 +556,12 @@ void handle_frame(const Frame& frame)
         return;
     }
 
-    ErrorCode result = execute_frame_command(decision.command, frame);
+    ErrorCode result;
+    if (decision.command == HostlinkCommandId::Management)
+    {
+        result = handle_cmd_management(frame);
+    }
+    else result = execute_frame_command(decision.command, frame);
     if (result != ErrorCode::Ok)
     {
         note_error(s_session, static_cast<uint32_t>(result));
@@ -532,6 +583,7 @@ void hostlink_task(void* /*arg*/)
         if (!connected)
         {
             mark_disconnected(s_session);
+            drain_tx_queue(s_tx_queue);
             s_decoder.reset();
             if (s_cmd_queue)
             {
@@ -585,10 +637,7 @@ void hostlink_task(void* /*arg*/)
                 usb_cdc::write(item.data, item.len);
                 note_tx(s_session);
             }
-            if (item.data)
-            {
-                free(item.data);
-            }
+            release_tx_item(item);
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -596,6 +645,7 @@ void hostlink_task(void* /*arg*/)
 
     usb_cdc::stop();
     stop_session(s_session);
+    s_task.store(nullptr, std::memory_order_release);
     vTaskDelete(nullptr);
 }
 
@@ -616,27 +666,53 @@ void start()
     {
         s_cmd_queue = xQueueCreate(kCmdQueueSize, sizeof(PendingCommand));
     }
-    xTaskCreate(hostlink_task, "hostlink", 6 * 1024, nullptr, 5, &s_task);
+    if (!s_tx_queue || !s_cmd_queue)
+    {
+        stop();
+        return;
+    }
+    TaskHandle_t created_task = nullptr;
+    if (xTaskCreate(hostlink_task, "hostlink", 6 * 1024, nullptr, 5, &created_task) != pdPASS)
+    {
+        // A failed start must not retain queues or leave a half-live session.
+        s_task = nullptr;
+        stop();
+    }
+    else s_task.store(created_task, std::memory_order_release);
 }
 
 void stop()
 {
-    s_stop = true;
-    if (s_task)
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    management::publication_runtime::disconnect();
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    // All snapshot operations run on this application scheduler. Retire before
+    // deleting the queue that would otherwise be needed for cleanup visits.
+    management::snapshot_runtime::retireForStop();
+    management::upload_runtime::advanceUploads(nullptr, 0, management::snapshot_runtime::nowMs(), false);
+    management::prepare_runtime::releasePrepare();
+    management::release_route_install();
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    // Conditional removal is nonblocking while an inbound callback owns the
+    // router lock. Retire this context before the stopped scheduler loses its
+    // cleanup visits; handover already clears owner and never removes a job.
+    while (!management::directory_runtime::release())
     {
-        vTaskDelete(s_task);
-        s_task = nullptr;
+        vTaskDelay(1);
+    }
+#endif
+    s_stop = true;
+    while (s_task.load(std::memory_order_acquire))
+    {
+        // Let the worker leave its loop and destroy its local frame buffers.
+        // Queues remain valid until the worker has acknowledged completion.
+        vTaskDelay(1);
     }
     if (s_tx_queue)
     {
-        TxItem item;
-        while (xQueueReceive(s_tx_queue, &item, 0) == pdPASS)
-        {
-            if (item.data)
-            {
-                free(item.data);
-            }
-        }
+        drain_tx_queue(s_tx_queue);
         vQueueDelete(s_tx_queue);
         s_tx_queue = nullptr;
     }
@@ -652,22 +728,43 @@ void stop()
 
 void process_pending_commands()
 {
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    management::ip_confirmation_runtime::tick(management::snapshot_runtime::nowMs(), usb_cdc::is_connected());
+#endif
     if (!s_cmd_queue)
     {
         return;
     }
-    if (!is_ready(s_session))
+    PendingCommand command{};
+    if (!usb_cdc::is_connected() || !is_ready(s_session))
     {
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+        management::advance_route_install(command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), false);
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+        management::snapshot_runtime::advance(command.payload, sizeof(command.payload), false);
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+        management::upload_runtime::advanceUploads(command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), false);
+        management::prepare_runtime::advancePrepare(nullptr, command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), false);
+        management::publication_runtime::advancePending(nullptr, command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), false);
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+        management::directory_runtime::advance(uint64_t(esp_timer_get_time() / 1000), false);
+#endif
+        platform::esp::arduino_common::geocaching::browse_runtime::webLease(false);
         xQueueReset(s_cmd_queue);
         return;
     }
 
-    PendingCommand command{};
-    while (xQueueReceive(s_cmd_queue, &command, 0) == pdPASS)
+    if (xQueueReceive(s_cmd_queue, &command, 0) == pdPASS)
     {
         ErrorCode result = ErrorCode::Unsupported;
         switch (command.type)
         {
+        case PendingCommandType::Management:
+            result = management::execute_management(command);
+            break;
         case PendingCommandType::TxMsg:
             result = execute_cmd_tx_msg(command);
             break;
@@ -683,6 +780,33 @@ void process_pending_commands()
             note_error(s_session, static_cast<uint32_t>(result));
         }
     }
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    management::snapshot_runtime::advance(command.payload, sizeof(command.payload), true);
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    management::upload_runtime::advanceUploads(command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), true);
+    management::publication_runtime::advancePending(app::hasAppFacade() ? app::messagingFacade().getMeshAdapter() : nullptr,
+                                                    command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), true);
+    if (management::prepare_runtime::work)
+    {
+        const auto advance = [&]
+        { return management::prepare_runtime::advancePrepare(app::hasAppFacade() ? app::messagingFacade().getMeshAdapter() : nullptr,
+                                                             command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), true); };
+        if (management::prepare_runtime::work->packageInstallation()) management::with_route_storage_gate(advance);
+        else advance();
+    }
+#endif
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    management::directory_runtime::advance(uint64_t(esp_timer_get_time() / 1000), true, command.payload, sizeof(command.payload));
+    management::advance_route_install(command.payload, sizeof(command.payload), management::snapshot_runtime::nowMs(), true);
+#endif
+}
+
+void tick_publication_tasks()
+{
+#if (defined(ESP_PLATFORM) && !defined(ARDUINO)) || defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    management::publication_runtime::tick(management::snapshot_runtime::nowMs());
+#endif
 }
 
 bool is_active()
@@ -695,47 +819,56 @@ Status get_status()
     return s_session.status;
 }
 
-bool enqueue_event(uint8_t type, const uint8_t* payload, size_t len, bool high_priority)
+bool enqueue_event(uint8_t type, const uint8_t* payload, size_t len, bool high_priority,
+                   uint16_t reply_sequence)
 {
     if (!s_tx_queue || !is_ready(s_session))
     {
         return false;
     }
-    std::vector<uint8_t> frame;
-    if (!encode_frame(type, next_seq(), payload, len, frame))
+    if (len > kMaxFrameLen || (len && !payload))
     {
         return false;
     }
 
     TxItem item;
-    item.len = frame.size();
+    item.len = kHeaderSize + len + kCrcSize;
+#if HAS_PSRAM
+    // These task-owned USB frames do not require DMA-capable storage. Keep
+    // queued payloads out of the internal radio/task-stack reserve when possible.
+    item.data = static_cast<uint8_t*>(heap_caps_malloc_prefer(item.len, 2,
+                                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+#else
     item.data = static_cast<uint8_t*>(malloc(item.len));
+#endif
     if (!item.data)
     {
         return false;
     }
-    memcpy(item.data, frame.data(), item.len);
+    size_t written = 0;
+    if (!encode_frame_into(type, reply_sequence ? reply_sequence : next_seq(), payload, len, item.data, item.len, written))
+    {
+        release_tx_item(item);
+        return false;
+    }
 
     if (xQueueSend(s_tx_queue, &item, 0) != pdPASS)
     {
         if (!high_priority)
         {
-            free(item.data);
+            release_tx_item(item);
             return false;
         }
         TxItem drop;
         if (xQueueReceive(s_tx_queue, &drop, 0) == pdPASS)
         {
-            if (drop.data)
-            {
-                free(drop.data);
-            }
+            release_tx_item(drop);
             if (xQueueSend(s_tx_queue, &item, 0) == pdPASS)
             {
                 return true;
             }
         }
-        free(item.data);
+        release_tx_item(item);
         return false;
     }
     return true;

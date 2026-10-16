@@ -327,6 +327,15 @@ Status flushPending()
     return out;
 }
 
+bool discardLegacySource()
+{
+    using namespace platform::esp::arduino_common::storage;
+    if (!sd_card_ready()) return false;
+    s_pending = false;
+    return (!sd_exists(kConfigTempPath) || sd_remove(kConfigTempPath)) &&
+           (!sd_exists(kConfigPath) || sd_remove(kConfigPath));
+}
+
 bool hasPending()
 {
     return s_pending;

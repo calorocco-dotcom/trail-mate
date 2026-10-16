@@ -79,6 +79,7 @@ enum class PagerAudioOwner : uint8_t
     VoiceMessage,
     Walkie,
     Sstv,
+    Music,
 };
 
 /**

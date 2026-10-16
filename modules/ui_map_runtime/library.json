@@ -8,7 +8,10 @@
       "-I../../modules/ui_map_runtime/include",
       "-I../../modules/ui_presentation/include",
       "-I../../modules/core_sys/include",
-      "-I../../modules/core_tmap/include"
+      "-I../../modules/core_track_sharing/include"
     ]
+  },
+  "dependencies": {
+    "tmap": "https://github.com/vicliu624/tmap.git#d74b084acb61653149dec1ac161df58a92278cff"
   }
 }

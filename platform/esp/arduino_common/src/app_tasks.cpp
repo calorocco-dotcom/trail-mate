@@ -5,8 +5,10 @@
 
 #include "platform/esp/arduino_common/app_tasks.h"
 
+#include "platform/radio/radio_power.h"
 #include "platform/ui/reticulum_call_runtime.h"
 #include "platform/ui/screen_runtime.h"
+#include "platform/ui/settings_store.h"
 #if defined(ARDUINO)
 #include <Arduino.h>
 #include <RadioLib.h>
@@ -272,6 +274,7 @@ bool AppTasks::init(LoraBoard& board, chat::IMeshAdapter* adapter)
     mesh_task_quiesced_ = false;
     radio_receive_active_ = false;
     radio_receive_restart_pending_ = !radio_receive_suppressed_;
+    (void)platform::radio::power_policy().request(platform::ui::settings_store::get_bool("settings", "radio_enabled", true));
     if (!radio_rx_scratch_)
     {
         radio_rx_scratch_ = allocate_radio_packet_buffer(255U);
@@ -332,6 +335,7 @@ bool AppTasks::pauseRadioTasks(uint32_t timeout_ms)
         return false;
     }
 
+    if (!platform::radio::power_policy().begin_exclusive()) return false;
     radio_tasks_paused_ = true;
     requestRadioReceiveRestart();
     const uint32_t start_ms = millis();
@@ -341,6 +345,7 @@ bool AppTasks::pauseRadioTasks(uint32_t timeout_ms)
         if (timeout_ms != 0U && millis() - start_ms >= timeout_ms)
         {
             radio_tasks_paused_ = false;
+            platform::radio::power_policy().end_exclusive();
             Serial.printf("[LORA] task quiesce timeout radio=%u mesh=%u wait_ms=%lu\n",
                           radio_task_quiesced_ ? 1U : 0U,
                           mesh_task_quiesced_ ? 1U : 0U,
@@ -401,6 +406,7 @@ void AppTasks::resumeRadioTasks()
     radio_tasks_paused_ = false;
 
     requestRadioReceiveRestart();
+    platform::radio::power_policy().end_exclusive();
 }
 
 void AppTasks::setRadioReceiveActive(bool active)
@@ -413,6 +419,7 @@ void AppTasks::setRadioReceiveActive(bool active)
     }
     radio_receive_active_ = active;
     radio_receive_restart_pending_ = !active;
+    if (active) platform::radio::power_policy().acknowledge(true);
 }
 
 void AppTasks::requestRadioReceiveRestart()
@@ -465,7 +472,7 @@ bool AppTasks::isRadioTransmitActive()
 
 bool AppTasks::enqueueRadioTransmit(const uint8_t* data, size_t size)
 {
-    if (!data || size == 0 || size > 255 || !radio_tx_queue_)
+    if (!platform::radio::power_policy().enabled() || !data || size == 0 || size > 255 || !radio_tx_queue_)
     {
         return false;
     }
@@ -517,6 +524,7 @@ void AppTasks::radioTask(void* pvParameters)
     const uint32_t terminal_irq_mask = radio_terminal_irq_mask();
     RadioRxSummary rx_summary{};
     uint32_t foreground_rx_quiet_until_ms = 0;
+    uint32_t next_standby_attempt_ms = 0;
 
     while (true)
     {
@@ -527,6 +535,36 @@ void AppTasks::radioTask(void* pvParameters)
             continue;
         }
         radio_task_quiesced_ = false;
+
+        auto& power = platform::radio::power_policy();
+        if (!power.enabled())
+        {
+            const auto status = power.status();
+            if (status.applied && deadline_reached(millis(), next_standby_attempt_ms))
+            {
+                // Complete any in-flight TX before this point. Reuse the board's
+                // checked standby operation; do not cut shared SD/display rails.
+                if (!board_ || board_->quiesceForExternalStorage()) power.acknowledge(false);
+                else power.fail();
+                next_standby_attempt_ms = millis() + 1000;
+                radio_receive_active_ = false;
+                radio_receive_restart_pending_ = false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        if (!power.status().applied)
+        {
+            if (!board_ || !board_->isRadioOnline())
+            {
+                power.fail();
+                vTaskDelay(pdMS_TO_TICKS(200));
+                continue;
+            }
+            requestRadioReceiveRestart();
+            // RX suppression is a protocol policy, independent of RF permission.
+            if (radio_receive_suppressed_ && board_ && board_->isRadioOnline()) power.acknowledge(true);
+        }
 
         if (::platform::ui::reticulum_call::realtime_mode_active())
         {

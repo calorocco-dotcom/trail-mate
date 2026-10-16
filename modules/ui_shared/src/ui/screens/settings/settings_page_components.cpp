@@ -4,6 +4,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -22,6 +23,7 @@
 #include "chat/infra/meshtastic/mt_region.h"
 #include "chat/ports/i_mesh_adapter.h"
 #include "meshtastic/config.pb.h"
+#include "platform/memory/psram_ptr.h"
 #include "platform/ui/auto_reply_settings.h"
 #include "platform/ui/device_runtime.h"
 #include "platform/ui/firmware_update_runtime.h"
@@ -5251,7 +5253,7 @@ static const settings::ui::SettingOption kSpeakerVolumeOptions[] = {
     {"100%", 100},
 };
 
-static settings::ui::SettingItem kProfileItems[] = {
+static const settings::ui::SettingItem kProfileItems[] = {
     {"User Name", settings::ui::SettingType::Text, nullptr, 0, nullptr, nullptr, g_settings.user_name, sizeof(g_settings.user_name), false, "chat_user"},
     {"Short Name", settings::ui::SettingType::Text, nullptr, 0, nullptr, nullptr, g_settings.short_name, sizeof(g_settings.short_name), false, "chat_short"},
     {"Protocol", settings::ui::SettingType::Enum, kChatProtocolOptions, 3, &g_settings.chat_protocol, nullptr, nullptr, 0, false, "mesh_protocol"},
@@ -5261,7 +5263,7 @@ static settings::ui::SettingItem kProfileItems[] = {
     {"Auto Reply Text", settings::ui::SettingType::Text, nullptr, 0, nullptr, nullptr, g_settings.chat_auto_reply_text, sizeof(g_settings.chat_auto_reply_text), false, "chat_auto_reply_text"},
 };
 
-static settings::ui::SettingItem kMeshItems[] = {
+static const settings::ui::SettingItem kMeshItems[] = {
     {"Region", settings::ui::SettingType::Enum, nullptr, 0, &g_settings.chat_region, nullptr, nullptr, 0, false, "chat_region"},
     {"Active Chat Channel", settings::ui::SettingType::Enum, kChatChannelOptions, 2, &g_settings.chat_channel, nullptr, nullptr, 0, false, "chat_channel"},
     {"MT Primary Enabled", settings::ui::SettingType::Toggle, nullptr, 0, nullptr, &g_settings.mt_primary_enabled, nullptr, 0, false, "mt_primary_enabled"},
@@ -5301,7 +5303,7 @@ static settings::ui::SettingItem kMeshItems[] = {
     {"Clear MC Channel", settings::ui::SettingType::Action, nullptr, 0, nullptr, nullptr, nullptr, 0, false, "mc_channel_clear"},
 };
 
-static settings::ui::SettingItem kReticulumItems[] = {
+static const settings::ui::SettingItem kReticulumItems[] = {
     {"Bearer", settings::ui::SettingType::Enum, kReticulumBearerOptions, sizeof(kReticulumBearerOptions) / sizeof(kReticulumBearerOptions[0]), &g_settings.rt_bearer_policy, nullptr, nullptr, 0, false, "rt_bearer"},
     {"Display Name", settings::ui::SettingType::Info, nullptr, 0, nullptr, nullptr, g_settings.rt_display_name, sizeof(g_settings.rt_display_name), false, "rt_display_name"},
     {"Identity Hash", settings::ui::SettingType::Info, nullptr, 0, nullptr, nullptr, g_settings.rt_identity_hash, sizeof(g_settings.rt_identity_hash), false, "rt_identity_hash"},
@@ -5317,7 +5319,7 @@ static settings::ui::SettingItem kReticulumItems[] = {
     {"Location Requests", settings::ui::SettingType::Toggle, nullptr, 0, nullptr, &g_settings.rt_location_requests, nullptr, 0, false, "rt_location_requests"},
 };
 
-static settings::ui::SettingItem kRadioItems[] = {
+static const settings::ui::SettingItem kRadioItems[] = {
     {"Use Preset", settings::ui::SettingType::Enum, kBoolOptions, sizeof(kBoolOptions) / sizeof(kBoolOptions[0]), &g_settings.net_use_preset, nullptr, nullptr, 0, false, "net_use_preset"},
     {"Modem Preset", settings::ui::SettingType::Enum, kNetPresetOptions, sizeof(kNetPresetOptions) / sizeof(kNetPresetOptions[0]), &g_settings.net_modem_preset, nullptr, nullptr, 0, false, "net_preset"},
     {"Manual BW", settings::ui::SettingType::Enum, kNetManualBwOptions, sizeof(kNetManualBwOptions) / sizeof(kNetManualBwOptions[0]), &g_settings.net_manual_bw, nullptr, nullptr, 0, false, "net_bw"},
@@ -5348,7 +5350,7 @@ static settings::ui::SettingItem kRadioItems[] = {
     {"Channel Utilization", settings::ui::SettingType::Enum, kNetUtilOptions, 3, &g_settings.net_channel_util, nullptr, nullptr, 0, false, "net_util"},
 };
 
-static settings::ui::SettingItem kLocationItems[] = {
+static const settings::ui::SettingItem kLocationItems[] = {
     {"GPS Enabled", settings::ui::SettingType::Toggle, nullptr, 0, nullptr, &g_settings.gps_enabled, nullptr, 0, false, "gps_enabled"},
     {"Receiver Baud", settings::ui::SettingType::Enum, kGpsInitBaudOptions, 7, &g_settings.gps_init_baud, nullptr, nullptr, 0, false, "gps_init_baud"},
     {"Probe Window", settings::ui::SettingType::Enum, kGpsInitProbeOptions, 4, &g_settings.gps_init_probe_ms, nullptr, nullptr, 0, false, "gps_init_probe_ms"},
@@ -5373,7 +5375,7 @@ static settings::ui::SettingItem kLocationItems[] = {
     {"Track Format", settings::ui::SettingType::Enum, kMapTrackFormatOptions, 3, &g_settings.map_track_format, nullptr, nullptr, 0, false, "map_track_format"},
 };
 
-static settings::ui::SettingItem kDeviceItems[] = {
+static const settings::ui::SettingItem kDeviceItems[] = {
     {"Display Language", settings::ui::SettingType::Enum, nullptr,
      0, &g_settings.display_locale_index, nullptr, nullptr, 0, false,
      "display_locale"},
@@ -5397,7 +5399,7 @@ static settings::ui::SettingItem kDeviceItems[] = {
      nullptr, 0, false, "spi_diagnostics"},
 };
 
-static settings::ui::SettingItem kWifiItems[] = {
+static const settings::ui::SettingItem kWifiItems[] = {
     {"Wi-Fi Enabled", settings::ui::SettingType::Toggle, nullptr, 0, nullptr, &g_settings.wifi_enabled, nullptr, 0, false, "wifi_enabled"},
     {"Status", settings::ui::SettingType::Info, nullptr, 0, nullptr, nullptr, g_settings.wifi_status, sizeof(g_settings.wifi_status), false, "wifi_status"},
     {"Scan Networks", settings::ui::SettingType::Action, nullptr, 0, nullptr, nullptr, nullptr, 0, false, "wifi_scan"},
@@ -5408,7 +5410,7 @@ static settings::ui::SettingItem kWifiItems[] = {
     {"Disconnect", settings::ui::SettingType::Action, nullptr, 0, nullptr, nullptr, nullptr, 0, false, "wifi_disconnect"},
 };
 
-static settings::ui::SettingItem kMaintenanceItems[] = {
+static const settings::ui::SettingItem kMaintenanceItems[] = {
     {"Current Version", settings::ui::SettingType::Info, nullptr, 0, nullptr, nullptr, g_settings.fw_current_version, sizeof(g_settings.fw_current_version), false, "fw_current"},
     {"Latest Version", settings::ui::SettingType::Info, nullptr, 0, nullptr, nullptr, g_settings.fw_latest_version, sizeof(g_settings.fw_latest_version), false, "fw_latest"},
     {"OTA Status", settings::ui::SettingType::Info, nullptr, 0, nullptr, nullptr, g_settings.fw_update_status, sizeof(g_settings.fw_update_status), false, "fw_status"},
@@ -5421,7 +5423,7 @@ static settings::ui::SettingItem kMaintenanceItems[] = {
     {"Factory Reset", settings::ui::SettingType::Action, nullptr, 0, nullptr, nullptr, nullptr, 0, false, "system_factory_reset"},
 };
 
-static const CategoryDef kCategories[] = {
+static CategoryDef kCategories[] = {
     {"Profile", kProfileItems, sizeof(kProfileItems) / sizeof(kProfileItems[0])},
     {"Mesh", kMeshItems, sizeof(kMeshItems) / sizeof(kMeshItems[0])},
     {"Radio", kRadioItems, sizeof(kRadioItems) / sizeof(kRadioItems[0])},
@@ -5431,6 +5433,32 @@ static const CategoryDef kCategories[] = {
     {"Device", kDeviceItems, sizeof(kDeviceItems) / sizeof(kDeviceItems[0])},
     {"Maintenance", kMaintenanceItems, sizeof(kMaintenanceItems) / sizeof(kMaintenanceItems[0])},
 };
+
+// Templates stay in mapped Flash. Only their small category handles are
+// writable before the first settings visit. The bound copies have stable
+// addresses for item, modal and deferred LVGL callbacks across page rebuilds.
+constexpr size_t kSettingCatalogCount =
+    std::size(kProfileItems) + std::size(kMeshItems) + std::size(kReticulumItems) +
+    std::size(kRadioItems) + std::size(kLocationItems) + std::size(kDeviceItems) +
+    std::size(kWifiItems) + std::size(kMaintenanceItems);
+
+static bool prepare_setting_catalog()
+{
+    using Catalog = std::array<settings::ui::SettingItem, kSettingCatalogCount>;
+    static ::platform::memory::PsramPtr<Catalog> catalog;
+    if (catalog) return true;
+    catalog.reset(::platform::memory::createPsram<Catalog>());
+    if (!catalog) return false;
+    size_t offset = 0;
+    for (CategoryDef& category : kCategories)
+    {
+        auto* items = catalog->data() + offset;
+        std::copy_n(category.items, category.item_count, items);
+        category.items = items;
+        offset += category.item_count;
+    }
+    return true;
+}
 
 static bool should_show_item(const settings::ui::SettingItem& item);
 
@@ -6666,12 +6694,16 @@ static void bind_dynamic_option_storage_to_items()
 
 static void refresh_timezone_option_count()
 {
-    for (settings::ui::SettingItem& item : kDeviceItems)
+    for (const CategoryDef& category : kCategories)
     {
-        if (item_id(item) == settings::ui::SettingId::TimezoneProfile)
+        for (size_t index = 0; index < category.item_count; ++index)
         {
-            item.option_count = kTimeZoneOptionCount;
-            return;
+            auto& item = const_cast<settings::ui::SettingItem&>(category.items[index]);
+            if (item_id(item) == settings::ui::SettingId::TimezoneProfile)
+            {
+                item.option_count = kTimeZoneOptionCount;
+                return;
+            }
         }
     }
 }
@@ -6680,6 +6712,12 @@ static void refresh_timezone_option_count()
 
 void create(lv_obj_t* parent)
 {
+    if (!prepare_setting_catalog())
+    {
+        ::ui::feedback::show_notice("Settings memory unavailable");
+        ui_request_exit_to_menu();
+        return;
+    }
 #if defined(ESP_PLATFORM)
     ESP_LOGI(kLogTag, "create begin");
 #endif

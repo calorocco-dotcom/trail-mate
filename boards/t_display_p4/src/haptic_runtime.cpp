@@ -167,6 +167,7 @@ bool trigger()
         !update_register(kRegPlayConfig3, 0x03, kRtpPlayMode) ||
         !update_register(kRegPlayConfig4, 0x01, 0x01))
     {
+        g_runtime.ready = false;
         return false;
     }
 
@@ -176,21 +177,24 @@ bool trigger()
         if (read_register(kRegGlobalState, &state) &&
             (state & 0x0F) == kRtpGlobalState)
         {
-            return i2c_master_transmit(g_runtime.device,
-                                       g_runtime.rtp_payload.data(),
-                                       g_runtime.rtp_payload.size(),
-                                       kI2cTimeoutMs) == ESP_OK;
+            const bool written = i2c_master_transmit(g_runtime.device,
+                                                     g_runtime.rtp_payload.data(),
+                                                     g_runtime.rtp_payload.size(),
+                                                     kI2cTimeoutMs) == ESP_OK;
+            if (!written) g_runtime.ready = false;
+            return written;
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
     ESP_LOGW(kTag, "AW86224 failed to enter RTP mode");
+    g_runtime.ready = false;
     return false;
 }
 
 void stop()
 {
     std::lock_guard<std::mutex> lock(g_runtime.mutex);
-    (void)stop_locked();
+    if (!stop_locked()) g_runtime.ready = false;
 }
 
 bool is_ready()

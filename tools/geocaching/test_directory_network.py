@@ -6,6 +6,7 @@ No firmware build or existing Reticulum configuration is involved.
 """
 import argparse
 import json
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -49,7 +50,7 @@ def read_after_restart(work, port):
     older = unpacked((work / "publisher" / "sent-signed-v1.bin").read_bytes())
     cache_id, revision, _, _ = verified_cache(expected)
     capabilities = peer.exchange(0, [])
-    assert capabilities[5][2] == [0, 1, 2, 3, 4]
+    assert capabilities[5][2] == [0, 1, 2, 3, 4, 5]
     query = peer.exchange(2, [[-900000000, -1800000000, 900000000, 1800000000], 7, None, 20, None])
     assert any(row[:3] == [cache_id, 2, revision] for row in query[5][1])
     assert peer.exchange(3, [cache_id, None, None])[5] == [expected, 1, 0]
@@ -61,14 +62,24 @@ def read_after_restart(work, port):
                       "latest": 2, "history": 1, "sync": "baseline and empty delta"}), flush=True)
 
 
-def acceptance(work):
-    work.mkdir(parents=True, exist_ok=False)
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
+def acceptance(work, resume_read=False):
+    if not resume_read:
+        work.mkdir(parents=True, exist_ok=False)
+    elif not (work/'service'/'directory.sqlite').is_file() or not (work/'publisher'/'sent-signed.bin').is_file():
+        raise ValueError('resume-read requires an existing completed synthetic publication')
+    if resume_read:
+        config = (work/'rns'/'config').read_text()
+        port = int(re.search(r'^listen_port = (\d+)$', config, re.MULTILINE).group(1))
+    else:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     identity = None
-    for phase in ("publish", "restart"):
+    if resume_read:
+        original = next(json.loads(line) for line in (work/'service-publish.log').read_text(encoding='utf-8').splitlines() if line.startswith('{"event": "ready"'))
+        identity = (original['delivery'], original['epoch'])
+    for phase in (("restart",) if resume_read else ("publish", "restart")):
         stop = work / "stop"
         if stop.exists():
             stop.unlink()
@@ -120,8 +131,9 @@ def main():
     parser.add_argument("mode", choices=("acceptance", "serve", "read"))
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--port", type=int)
+    parser.add_argument("--resume-read", action="store_true", help="Reuse completed synthetic publication for restart/read verification without deleting state")
     args = parser.parse_args()
-    {"acceptance": lambda: acceptance(args.work.resolve()),
+    {"acceptance": lambda: acceptance(args.work.resolve(), args.resume_read),
      "serve": lambda: serve(args.work.resolve(), args.port),
      "read": lambda: read_after_restart(args.work.resolve(), args.port)}[args.mode]()
 

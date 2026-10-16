@@ -4,7 +4,7 @@ TMAP 可以有数十 GB 的文件体积，但设备内存占用必须有固定�
 
 ## 当前读取核心
 
-`modules/core_tmap` 的 `Reader` 不进行堆分配，也不持有瓦片像素；由调用方提供 `Workspace`、搜索游标和输出缓冲。
+独立发布的 tmap SDK 中的 `Reader` 不进行堆分配，也不持有瓦片像素；由调用方提供 `Workspace`、搜索游标和输出缓冲。固件通过固定版本的第三方依赖引用它，具体版本与构建证据见 [Released TMAP dependency](../../../engineering/tmap-dependency.md)。
 
 | 对象 | Windows / ESP32-S3 编译确认 | 编译期上限 | 设备放置要求 |
 | --- | ---: | ---: | --- |

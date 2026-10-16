@@ -1,19 +1,37 @@
 #include "ui/screens/tracker/tracker_page_components.h"
 #include "app/app_config.h"
 #include "app/app_facade_access.h"
+#include "gps/kml/image_sources.h"
 #include "platform/ui/device_runtime.h"
+#include "platform/ui/navigation_runtime.h"
 #include "platform/ui/route_storage.h"
 #include "platform/ui/tracker_runtime.h"
 #include "platform/ui/wifi_runtime.h"
+#include "track_sharing/installed_package_path.h"
 #include "ui/app_runtime.h"
 #include "ui/assets/fonts/font_utils.h"
+#include "ui/components/bottom_bar.h"
+#include "ui/components/dialog_frame.h"
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/runtime/ui_feedback.h"
+#include "ui/screens/tracker/tracker_item_card_view.h"
+#include "ui/screens/tracker/tracker_navigation_dialog.h"
 #include "ui/screens/tracker/tracker_page_input.h"
 #include "ui/screens/tracker/tracker_page_layout.h"
 #include "ui/screens/tracker/tracker_state.h"
+#include "ui/support/card_file_location.h"
+#include "ui/support/card_location.h"
+#include "ui/support/disconnected_route_line.h"
+#include "ui/support/kml_route_projection.h"
 #include "ui/support/lvgl_fs_utils.h"
+#include "ui/support/route_image_kml_reader.h"
+#include "ui/support/route_image_memory.h"
+#include "ui/support/route_image_source_state.h"
+#include "ui/support/route_preview_viewport.h"
+#include "ui/support/route_segment_sampling.h"
+#include "ui/support/tmroute_map.h"
+#include "ui/support/tmroute_preview.h"
 #include "ui/ui_common.h"
 #include "ui/widgets/map/map_viewport.h"
 #include "ui/widgets/route_elevation_profile.h"
@@ -71,10 +89,15 @@ struct RoutePreviewPoint
     double lon = 0.0;
     double altitude_m = 0.0;
     bool has_altitude = false;
+    bool break_before = true;
 };
+
+static_assert(sizeof(RoutePreviewPoint) <= 32, "Segment flag must fit existing point padding");
 
 struct RoutePreviewImage
 {
+    uint8_t source_hash[32]{};
+    bool source_hash_valid = false;
     std::string url{};
     std::string local_path{};
     std::string preview_path{};
@@ -105,10 +128,10 @@ enum class RoutePreviewDownloadState : uint8_t
     Failed,
 };
 
-std::vector<RoutePreviewPoint> s_preview_route_points;
-std::vector<RoutePreviewImage> s_preview_images;
-std::vector<lv_point_precise_t> s_preview_map_line_points;
-std::vector<::ui::widgets::route_elevation_profile::Sample> s_preview_elevation_samples;
+::ui::support::RouteImageVector<RoutePreviewPoint, 96> s_preview_route_points;
+::ui::support::RouteImageVector<RoutePreviewImage> s_preview_images;
+::ui::support::RouteImageVector<lv_point_precise_t, 192> s_preview_map_line_points;
+::ui::support::RouteImageVector<::ui::widgets::route_elevation_profile::Sample, 96> s_preview_elevation_samples;
 ::ui::widgets::route_elevation_profile::Widget s_preview_elevation_profile;
 ::ui::widgets::route_image_strip::Widget s_preview_image_strip;
 std::vector<::ui::widgets::route_image_strip::Item> s_preview_image_strip_items;
@@ -126,6 +149,10 @@ bool s_preview_image_saved_state_known = false;
 bool s_preview_image_cache_state_known = false;
 std::size_t s_preview_saved_image_count_hint = 0;
 ::ui::widgets::map::Runtime s_preview_map_runtime;
+::ui::support::RoutePreviewViewport s_preview_view;
+::ui::support::TmRouteMap* s_preview_native_route = nullptr;
+lv_timer_t* s_preview_native_timer = nullptr;
+lv_obj_t* s_preview_map_controls = nullptr;
 lv_timer_t* s_preview_download_poll_timer = nullptr;
 bool s_preview_download_refresh_map_on_finish = false;
 
@@ -155,11 +182,11 @@ const ::ui::page_profile::PageLayoutProfile& page_profile();
 lv_coord_t filter_panel_width();
 lv_coord_t filter_button_height();
 lv_coord_t list_item_height();
-lv_coord_t bottom_bar_button_width();
 lv_coord_t modal_button_width();
 lv_coord_t action_menu_button_height();
 lv_coord_t action_menu_row_gap();
 void update_record_status();
+void refresh_route_list();
 void update_start_stop_button();
 void update_record_page();
 void update_route_status();
@@ -177,7 +204,9 @@ void open_route_preview_page();
 void close_route_preview_page();
 void render_route_preview_page();
 void refresh_route_preview_map();
+void create_preview_map_controls();
 void update_route_preview_status();
+void show_route_preview_notice(const char* message, uint32_t duration_ms);
 void update_route_preview_load_button();
 void update_route_preview_buttons();
 bool preview_selected_route_is_active();
@@ -213,6 +242,11 @@ lv_obj_t* create_list_item_button(const std::string& text, intptr_t user_data, b
 
 void on_back(void*)
 {
+    if (navigation_dialog::is_open())
+    {
+        navigation_dialog::close();
+        return;
+    }
     if (g_tracker_state.route_preview_help_modal)
     {
         close_route_preview_help_modal();
@@ -244,15 +278,6 @@ lv_coord_t filter_button_height()
 lv_coord_t list_item_height()
 {
     return page_profile().list_item_height;
-}
-
-lv_coord_t bottom_bar_button_width()
-{
-    if (page_profile().dense)
-    {
-        return ::ui::page_profile::resolve_control_button_min_width();
-    }
-    return page_profile().large_touch_hitbox ? 96 : kBottomBarButtonWidth;
 }
 
 lv_coord_t modal_button_width()
@@ -321,37 +346,6 @@ void modal_restore_group()
     state.prev_group = nullptr;
 }
 
-lv_obj_t* create_modal_root(int width, int height)
-{
-    lv_obj_t* screen = lv_screen_active();
-    lv_coord_t screen_w = lv_obj_get_width(screen);
-    lv_coord_t screen_h = lv_obj_get_height(screen);
-
-    lv_obj_t* bg = lv_obj_create(screen);
-    lv_obj_set_size(bg, screen_w, screen_h);
-    lv_obj_set_pos(bg, 0, 0);
-    lv_obj_set_style_bg_color(bg, lv_color_hex(0x3A2A1A), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bg, LV_OPA_50, LV_PART_MAIN);
-    lv_obj_set_style_border_width(bg, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(bg, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(bg, LV_OBJ_FLAG_CLICKABLE);
-
-    const auto modal_size = ::ui::page_profile::resolve_modal_size(width, height, screen);
-    lv_obj_t* win = lv_obj_create(bg);
-    lv_obj_set_size(win, modal_size.width, modal_size.height);
-    lv_obj_center(win);
-    lv_obj_set_style_bg_color(win, lv_color_hex(0xFFF7E9), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(win, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(win, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(win, lv_color_hex(0xD9B06A), LV_PART_MAIN);
-    lv_obj_set_style_radius(win, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(win, ::ui::page_profile::resolve_modal_pad(), LV_PART_MAIN);
-    lv_obj_clear_flag(win, LV_OBJ_FLAG_SCROLLABLE);
-
-    return bg;
-}
-
 void modal_close(lv_obj_t*& modal_obj)
 {
     if (modal_obj)
@@ -364,7 +358,7 @@ void modal_close(lv_obj_t*& modal_obj)
 
 bool is_any_modal_open()
 {
-    return g_tracker_state.del_confirm_modal != nullptr ||
+    return navigation_dialog::is_open() || g_tracker_state.del_confirm_modal != nullptr ||
            g_tracker_state.action_menu_modal != nullptr ||
            g_tracker_state.route_preview_help_modal != nullptr;
 }
@@ -456,16 +450,12 @@ void style_mode_button(lv_obj_t* btn, lv_obj_t* label, bool active)
     {
         return;
     }
-    lv_color_t bg = active ? lv_color_hex(0xEBA341) : lv_color_hex(0xFAF0D8);
-    lv_color_t fg = lv_color_hex(0x6B4A1E);
-    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0xE7C98F), LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 12, LV_PART_MAIN);
+    ::ui::components::bottom_bar::style_item(btn);
+    if (active) lv_obj_add_state(btn, LV_STATE_CHECKED);
+    else lv_obj_clear_state(btn, LV_STATE_CHECKED);
     if (label)
     {
-        lv_obj_set_style_text_color(label, fg, LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, lv_color_hex(0x6B4A1E), LV_PART_MAIN);
     }
 }
 
@@ -474,7 +464,8 @@ void update_mode_buttons()
     auto& state = g_tracker_state;
     bool record_active = (state.mode == TrackerPageState::Mode::Record);
     style_mode_button(state.mode_record_btn, state.mode_record_label, record_active);
-    style_mode_button(state.mode_route_btn, state.mode_route_label, !record_active);
+    style_mode_button(state.mode_route_btn, state.mode_route_label, state.mode == TrackerPageState::Mode::Route);
+    style_mode_button(state.mode_navigation_btn, state.mode_navigation_label, state.mode == TrackerPageState::Mode::Navigation);
 }
 
 std::string path_basename(const std::string& path)
@@ -528,7 +519,7 @@ bool can_delete_selected_item()
 bool can_load_selected_route()
 {
     auto& state = g_tracker_state;
-    return state.mode == TrackerPageState::Mode::Route &&
+    return state.mode != TrackerPageState::Mode::Record &&
            state.active_route.empty() &&
            state.selected_route_idx >= 0 &&
            !state.selected_route.empty();
@@ -537,14 +528,14 @@ bool can_load_selected_route()
 bool can_unload_active_route()
 {
     auto& state = g_tracker_state;
-    return state.mode == TrackerPageState::Mode::Route &&
+    return state.mode != TrackerPageState::Mode::Record &&
            !state.active_route.empty();
 }
 
 bool can_preview_selected_route()
 {
     auto& state = g_tracker_state;
-    return state.mode == TrackerPageState::Mode::Route &&
+    return state.mode != TrackerPageState::Mode::Record &&
            state.selected_route_idx >= 0 &&
            state.selected_route_idx < static_cast<int>(s_route_names.size()) &&
            !state.selected_route.empty();
@@ -552,7 +543,7 @@ bool can_preview_selected_route()
 
 std::string route_path_for_name(const std::string& route_name)
 {
-    return std::string(platform::ui::route_storage::route_dir()) + "/" + route_name;
+    return std::string(g_tracker_state.mode == TrackerPageState::Mode::Navigation ? platform::ui::navigation::directory() : platform::ui::route_storage::route_dir()) + "/" + route_name;
 }
 
 bool repair_degraded_active_route_from_list()
@@ -594,6 +585,7 @@ bool repair_degraded_active_route_from_list()
 
 std::string route_asset_id_for_name(const std::string& route_name)
 {
+    if (route_name.size() == 70 && route_name.substr(66) == ".kml" && track_sharing::isInstalledPackageAssetId(std::string_view(route_name).substr(0, 66))) return route_name.substr(0, 66);
     std::uint32_t hash = 2166136261U;
     for (unsigned char ch : route_name)
     {
@@ -644,79 +636,13 @@ std::size_t find_case_insensitive(const std::string& text,
     return std::string::npos;
 }
 
-std::string html_decode_attr(std::string value)
-{
-    auto replace_all = [&value](const char* from, const char* to)
-    {
-        std::size_t pos = 0;
-        const std::size_t from_len = std::strlen(from);
-        while ((pos = value.find(from, pos)) != std::string::npos)
-        {
-            value.replace(pos, from_len, to);
-            pos += std::strlen(to);
-        }
-    };
-    replace_all("&amp;", "&");
-    replace_all("&quot;", "\"");
-    replace_all("&#34;", "\"");
-    replace_all("&#38;", "&");
-    return value;
-}
-
 void extract_img_srcs(const std::string& text, std::vector<std::string>& out_urls)
 {
-    std::size_t pos = 0;
-    while (out_urls.size() < kPreviewMaxImages)
-    {
-        const std::size_t img_pos = find_case_insensitive(text, "<img", pos);
-        if (img_pos == std::string::npos)
-        {
-            break;
-        }
-        const std::size_t tag_end = text.find('>', img_pos);
-        const std::size_t tag_len =
-            (tag_end == std::string::npos) ? (text.size() - img_pos) : (tag_end - img_pos + 1);
-        const std::string tag = text.substr(img_pos, tag_len);
-        const std::size_t src_pos = find_case_insensitive(tag, "src");
-        if (src_pos != std::string::npos)
-        {
-            std::size_t eq_pos = tag.find('=', src_pos + 3);
-            if (eq_pos != std::string::npos)
-            {
-                ++eq_pos;
-                while (eq_pos < tag.size() &&
-                       std::isspace(static_cast<unsigned char>(tag[eq_pos])))
-                {
-                    ++eq_pos;
-                }
-                if (eq_pos < tag.size())
-                {
-                    const char quote = (tag[eq_pos] == '\'' || tag[eq_pos] == '"') ? tag[eq_pos] : '\0';
-                    const std::size_t value_start = quote ? eq_pos + 1 : eq_pos;
-                    std::size_t value_end = value_start;
-                    while (value_end < tag.size())
-                    {
-                        const char ch = tag[value_end];
-                        if ((quote && ch == quote) ||
-                            (!quote && (std::isspace(static_cast<unsigned char>(ch)) || ch == '>')))
-                        {
-                            break;
-                        }
-                        ++value_end;
-                    }
-                    if (value_end > value_start)
-                    {
-                        out_urls.push_back(html_decode_attr(tag.substr(value_start, value_end - value_start)));
-                    }
-                }
-            }
-        }
-        if (tag_end == std::string::npos)
-        {
-            break;
-        }
-        pos = tag_end + 1;
-    }
+    if (out_urls.size() >= kPreviewMaxImages) return;
+    gps::kml::forEachImageSource(text, [&](std::string_view source)
+                                 {
+                                   out_urls.push_back(gps::kml::decodeImageSource(source));
+                                   return out_urls.size() < kPreviewMaxImages; });
 }
 
 bool extract_tag_text(const std::string& line, const char* tag, std::string& out_text)
@@ -818,7 +744,7 @@ bool parse_space_coordinate_text(const std::string& text,
     return true;
 }
 
-void append_preview_route_point(double lat, double lon, double altitude_m, bool has_altitude)
+void append_preview_route_point(double lat, double lon, double altitude_m, bool has_altitude, bool break_before)
 {
     if (!std::isfinite(lat) || !std::isfinite(lon))
     {
@@ -829,31 +755,24 @@ void append_preview_route_point(double lat, double lon, double altitude_m, bool 
     point.lon = lon;
     point.altitude_m = altitude_m;
     point.has_altitude = has_altitude && std::isfinite(altitude_m);
+    point.break_before = break_before;
     s_preview_route_points.push_back(point);
 }
 
-void append_pending_images(const std::vector<std::string>& urls,
+bool append_pending_images(std::string url,
                            double lat,
                            double lon,
                            bool has_position)
 {
-    for (const auto& url : urls)
-    {
-        if (s_preview_images.size() >= kPreviewMaxImages)
-        {
-            return;
-        }
-        if (url.empty())
-        {
-            continue;
-        }
-        RoutePreviewImage image{};
-        image.url = url;
-        image.lat = lat;
-        image.lon = lon;
-        image.has_position = has_position && std::isfinite(lat) && std::isfinite(lon);
-        s_preview_images.push_back(image);
-    }
+    if (s_preview_images.size() >= kPreviewMaxImages) return false;
+    if (url.empty()) return true;
+    RoutePreviewImage image{};
+    image.source_hash_valid = platform::ui::route_storage::route_image_reference_hash(url, image.source_hash);
+    image.url = std::move(url);
+    image.lat = lat;
+    image.lon = lon;
+    image.has_position = has_position && std::isfinite(lat) && std::isfinite(lon);
+    return s_preview_images.push_back(std::move(image));
 }
 
 double preview_degrees_to_radians(double degrees)
@@ -884,6 +803,7 @@ void refresh_preview_metrics()
     const RoutePreviewPoint* previous_point = nullptr;
     for (const auto& point : s_preview_route_points)
     {
+        if (point.break_before) previous_point = nullptr, have_previous = false;
         if (previous_point)
         {
             const double distance = preview_distance_m(*previous_point, point);
@@ -896,6 +816,7 @@ void refresh_preview_metrics()
 
         if (!point.has_altitude || !std::isfinite(point.altitude_m))
         {
+            have_previous = false;
             continue;
         }
         if (!have_altitude)
@@ -957,16 +878,12 @@ void refresh_preview_saved_image_count_hint()
         return;
     }
 
-    std::size_t saved_count = 0;
-    if (platform::ui::route_storage::count_route_saved_images(
-            s_preview_asset_id,
-            s_preview_images.size(),
-            saved_count))
+    for (auto& image : s_preview_images)
     {
-        s_preview_saved_image_count_hint =
-            std::min<std::size_t>(saved_count, s_preview_images.size());
-        s_preview_image_saved_state_known = true;
+        ::ui::support::refreshRouteImageSourceState(image, false);
+        if (image.downloaded) ++s_preview_saved_image_count_hint;
     }
+    s_preview_image_saved_state_known = true;
 }
 
 void refresh_preview_image_storage_state(bool include_cache_state)
@@ -975,21 +892,10 @@ void refresh_preview_image_storage_state(bool include_cache_state)
     std::size_t saved_count = 0;
     for (RoutePreviewImage& image : s_preview_images)
     {
-        image.downloaded =
-            platform::ui::route_storage::route_asset_file_exists(image.local_path);
+        ::ui::support::refreshRouteImageSourceState(image, include_cache_state);
         if (image.downloaded)
         {
             ++saved_count;
-        }
-        if (include_cache_state)
-        {
-            image.preview_ready =
-                image.downloaded &&
-                platform::ui::route_storage::route_asset_file_exists(image.preview_path);
-        }
-        else
-        {
-            image.preview_ready = false;
         }
         image.view_ready = false;
     }
@@ -1016,62 +922,19 @@ bool apply_route_preview_download_status_to_images(
         return true;
     }
 
-    bool changed = false;
-    if (status.busy &&
-        status.phase == platform::ui::route_storage::RouteImageDownloadPhase::Downloading &&
-        status.failed == 0 &&
-        status.saved > 0)
-    {
-        const std::size_t confirmed =
-            std::min<std::size_t>(status.saved, s_preview_images.size());
-        for (std::size_t index = 0; index < confirmed; ++index)
-        {
-            if (!s_preview_images[index].downloaded)
-            {
-                s_preview_images[index].downloaded = true;
-                changed = true;
-            }
-        }
-    }
-    else if (status.busy &&
-             status.phase == platform::ui::route_storage::RouteImageDownloadPhase::Caching &&
-             status.failed == 0 &&
-             status.saved > 0)
-    {
-        const std::size_t confirmed =
-            std::min<std::size_t>(status.saved, s_preview_images.size());
-        for (std::size_t index = 0; index < confirmed; ++index)
-        {
-            RoutePreviewImage& image = s_preview_images[index];
-            if (!image.downloaded)
-            {
-                image.downloaded = true;
-                changed = true;
-            }
-            if (!image.preview_ready)
-            {
-                image.preview_ready = true;
-                changed = true;
-            }
-        }
-    }
-    if (changed || (status.busy && status.saved > 0))
-    {
-        s_preview_saved_image_count_hint = 0;
-        for (const RoutePreviewImage& image : s_preview_images)
-        {
-            if (image.downloaded)
-            {
-                ++s_preview_saved_image_count_hint;
-            }
-        }
-        s_preview_image_saved_state_known = true;
-    }
-    return changed;
+    // A batch may contain only missing images. Its first N successes are not
+    // the first N global image slots, and counters are not source proofs.
+    // Keep progress display separate; inspect actual records at termination.
+    return false;
 }
 
 void clear_preview_model()
 {
+    if (s_preview_native_timer) lv_timer_del(s_preview_native_timer);
+    s_preview_native_timer = nullptr;
+    s_preview_map_controls = nullptr;
+    ::ui::support::RouteUiMemory::destroy(s_preview_native_route);
+    s_preview_view.reset();
     s_preview_route_points.clear();
     s_preview_images.clear();
     s_preview_map_line_points.clear();
@@ -1094,126 +957,63 @@ void clear_preview_model()
 bool load_route_preview_model(const std::string& route_name)
 {
     clear_preview_model();
-    if (route_name.empty())
-    {
-        return false;
-    }
-
+    if (route_name.empty()) return false;
     s_preview_route_name = route_name;
     s_preview_asset_id = route_asset_id_for_name(route_name);
-    std::vector<RoutePreviewPoint> fallback_line_points;
-    std::vector<std::string> pending_image_urls;
-    bool in_line_string = false;
-
     const std::string path = route_path_for_name(route_name);
-    const bool read_ok = ::ui::fs::read_text_file_lines(
-        path.c_str(),
-        [&](std::string& line)
+    if (path.size() >= 8 && path.compare(path.size() - 8, 8, ".tmroute") == 0)
+    {
+        auto result = ::ui::support::projectTmRoutePreview(path.c_str(), s_preview_route_points, s_preview_metrics.distance_m);
+        if (result == tmap::Result::Ok && !s_preview_route_points.empty())
         {
-            if (find_case_insensitive(line, "<Placemark") != std::string::npos)
-            {
-                pending_image_urls.clear();
-            }
-            if (find_case_insensitive(line, "<LineString") != std::string::npos)
-            {
-                in_line_string = true;
-            }
-
-            extract_img_srcs(line, pending_image_urls);
-
-            std::string text;
-            if (extract_tag_text(line, "gx:coord", text))
-            {
-                double lat = 0.0;
-                double lon = 0.0;
-                double altitude_m = 0.0;
-                bool has_altitude = false;
-                if (parse_space_coordinate_text(text, lat, lon, altitude_m, has_altitude))
-                {
-                    append_preview_route_point(lat, lon, altitude_m, has_altitude);
-                }
-            }
-
-            if (extract_tag_text(line, "coordinates", text))
-            {
-                std::size_t token_start = 0;
-                bool first_token = true;
-                while (token_start < text.size())
-                {
-                    while (token_start < text.size() &&
-                           std::isspace(static_cast<unsigned char>(text[token_start])))
-                    {
-                        ++token_start;
-                    }
-                    if (token_start >= text.size())
-                    {
-                        break;
-                    }
-                    std::size_t token_end = token_start;
-                    while (token_end < text.size() &&
-                           !std::isspace(static_cast<unsigned char>(text[token_end])))
-                    {
-                        ++token_end;
-                    }
-                    const std::string token = text.substr(token_start, token_end - token_start);
-                    double lat = 0.0;
-                    double lon = 0.0;
-                    double altitude_m = 0.0;
-                    bool has_altitude = false;
-                    if (parse_comma_coordinate_token(token, lat, lon, altitude_m, has_altitude))
-                    {
-                        if (first_token && !pending_image_urls.empty())
-                        {
-                            append_pending_images(pending_image_urls, lat, lon, true);
-                            pending_image_urls.clear();
-                        }
-                        if (in_line_string)
-                        {
-                            RoutePreviewPoint point{};
-                            point.lat = lat;
-                            point.lon = lon;
-                            point.altitude_m = altitude_m;
-                            point.has_altitude = has_altitude;
-                            fallback_line_points.push_back(point);
-                        }
-                    }
-                    first_token = false;
-                    token_start = token_end;
-                }
-            }
-
-            if (find_case_insensitive(line, "</LineString") != std::string::npos)
-            {
-                in_line_string = false;
-            }
-            if (find_case_insensitive(line, "</Placemark") != std::string::npos)
-            {
-                if (!pending_image_urls.empty())
-                {
-                    append_pending_images(pending_image_urls, 0.0, 0.0, false);
-                    pending_image_urls.clear();
-                }
-            }
-            return true;
-        },
-        8192);
-
-    if (!read_ok)
+            s_preview_native_route = ::ui::support::RouteUiMemory::create<::ui::support::TmRouteMap>();
+            if (s_preview_native_route && s_preview_native_route->begin(path.c_str())) return true;
+            result = tmap::Result::BudgetExceeded;
+        }
+        clear_preview_model();
+        s_preview_status_text = ::ui::i18n::tr(result == tmap::Result::Busy ? "SD busy; retry preview" : result == tmap::Result::BudgetExceeded ? "Route preview budget exceeded"
+                                                                                                                                                : "Route file unavailable or damaged");
+        return false;
+    }
+    ::ui::support::KmlElevationMetrics metrics;
+    if (!::ui::support::projectKmlRoute(path.c_str(), s_preview_route_points, s_preview_elevation_samples, metrics, 96))
     {
         clear_preview_model();
         return false;
     }
-    if (s_preview_route_points.empty())
+    size_t feature_start = 0;
+    const track_sharing::KmlImageCallbacks callbacks{
+        &feature_start,
+        [](void* p)
+        { *static_cast<size_t*>(p) = s_preview_images.size(); },
+        [](void*, std::string_view source)
+        {
+            if (s_preview_images.size() >= kPreviewMaxImages || s_preview_images.failed()) return false;
+            return append_pending_images(gps::kml::decodeImageSource(source), 0, 0, false);
+        },
+        [](void* p, bool located, double lat, double lon)
+        {
+            for (size_t i = *static_cast<size_t*>(p); i < s_preview_images.size(); ++i)
+            {
+                s_preview_images[i].has_position = located;
+                s_preview_images[i].lat = lat;
+                s_preview_images[i].lon = lon;
+            }
+        }};
+    if (!::ui::support::readRouteImageKml(path.c_str(), callbacks))
     {
-        s_preview_route_points = fallback_line_points;
+        clear_preview_model();
+        return false;
     }
-    refresh_preview_metrics();
+    s_preview_metrics.altitude_count = metrics.altitude_count;
+    s_preview_metrics.min_altitude_m = metrics.min_altitude_m;
+    s_preview_metrics.max_altitude_m = metrics.max_altitude_m;
+    s_preview_metrics.ascent_m = metrics.ascent_m;
+    s_preview_metrics.descent_m = metrics.descent_m;
+    s_preview_metrics.distance_m = s_preview_elevation_samples.empty() ? 0 : s_preview_elevation_samples.back().distance_m;
     assign_preview_image_paths();
     refresh_preview_saved_image_count_hint();
-    if (!s_preview_images.empty())
-    {
-        s_preview_selected_image = 0;
-    }
+    if (!s_preview_images.empty()) s_preview_selected_image = 0;
     return !s_preview_route_points.empty() || !s_preview_images.empty();
 }
 
@@ -1314,6 +1114,13 @@ bool preview_model_fits_bounds(lv_obj_t* viewport_root,
     model.focus_point.valid = bounds.valid;
     model.focus_point.lat = bounds.valid ? (bounds.min_lat + bounds.max_lat) / 2.0 : 0.0;
     model.focus_point.lon = bounds.valid ? (bounds.min_lon + bounds.max_lon) / 2.0 : 0.0;
+    if (s_preview_view.zoom >= 0)
+    {
+        model.zoom = s_preview_view.zoom;
+        model.pan_x = s_preview_view.pan_x;
+        model.pan_y = s_preview_view.pan_y;
+        return model;
+    }
     if (!bounds.valid || !g_tracker_state.route_preview_map_host)
     {
         return model;
@@ -1330,7 +1137,41 @@ bool preview_model_fits_bounds(lv_obj_t* viewport_root,
             break;
         }
     }
+    s_preview_view.zoom = model.zoom;
     return model;
+}
+
+bool build_preview_map_line_points()
+{
+    s_preview_map_line_points.clear();
+    bool disconnected = true;
+    bool admitted = true;
+    ::ui::support::sampleRouteSegments(
+        s_preview_route_points.data(), s_preview_route_points.size(), kPreviewMaxDrawPoints,
+        [](const RoutePreviewPoint& point)
+        { return std::isfinite(point.lat) && std::isfinite(point.lon); },
+        [&](const RoutePreviewPoint& point, bool connect)
+        {
+            lv_point_t projected{};
+            if (!::ui::widgets::map::project_point(s_preview_map_runtime, {true, point.lat, point.lon}, projected))
+            {
+                disconnected = true;
+                return true;
+            }
+            if ((!connect || disconnected) && !s_preview_map_line_points.empty())
+                admitted = s_preview_map_line_points.push_back(::ui::support::routeLineBreak());
+            if (admitted)
+            {
+                lv_point_precise_t precise{};
+                precise.x = static_cast<float>(projected.x);
+                precise.y = static_cast<float>(projected.y);
+                admitted = s_preview_map_line_points.push_back(std::move(precise));
+            }
+            disconnected = false;
+            return admitted;
+        });
+    if (!admitted) s_preview_map_line_points.clear();
+    return s_preview_map_line_points.size() >= 2;
 }
 
 void draw_preview_map_overlay()
@@ -1342,40 +1183,30 @@ void draw_preview_map_overlay()
     }
     lv_obj_clean(widgets.overlay_layer);
 
-    if (!s_preview_route_points.empty())
+    if (s_preview_native_route)
     {
-        const std::size_t draw_count =
-            std::min<std::size_t>(kPreviewMaxDrawPoints, s_preview_route_points.size());
-        s_preview_map_line_points.clear();
-        s_preview_map_line_points.reserve(draw_count);
-        for (std::size_t index = 0; index < draw_count; ++index)
-        {
-            const std::size_t src_index = draw_count <= 1
-                                              ? 0
-                                              : (index * (s_preview_route_points.size() - 1)) / (draw_count - 1);
-            const auto& point = s_preview_route_points[src_index];
-            lv_point_t projected{};
-            if (::ui::widgets::map::project_point(
-                    s_preview_map_runtime,
-                    {true, point.lat, point.lon},
-                    projected))
-            {
-                lv_point_precise_t precise{};
-                precise.x = static_cast<float>(projected.x);
-                precise.y = static_cast<float>(projected.y);
-                s_preview_map_line_points.push_back(precise);
-            }
-        }
-        if (s_preview_map_line_points.size() >= 2)
-        {
-            lv_obj_t* line = lv_line_create(widgets.overlay_layer);
-            lv_line_set_points(line,
-                               s_preview_map_line_points.data(),
-                               static_cast<std::uint16_t>(s_preview_map_line_points.size()));
-            lv_obj_set_style_line_width(line, 3, LV_PART_MAIN);
-            lv_obj_set_style_line_color(line, lv_color_hex(0xE94F2E), LV_PART_MAIN);
-            lv_obj_set_style_line_rounded(line, true, LV_PART_MAIN);
-        }
+        // A child follows the viewport's lightweight translation during a drag.
+        // Its draw callback consumes only the existing fixed screen snapshot.
+        auto* line = lv_obj_create(widgets.overlay_layer);
+        lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_opa(line, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(line, 0, 0);
+        lv_obj_set_style_pad_all(line, 0, 0);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
+        s_preview_native_route->attach(line);
+    }
+    else if (build_preview_map_line_points())
+    {
+        lv_obj_t* line = lv_line_create(widgets.overlay_layer);
+        lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_line_width(line, 3, LV_PART_MAIN);
+        lv_obj_set_style_line_color(line, lv_color_hex(0xE94F2E), LV_PART_MAIN);
+        lv_obj_set_style_line_rounded(line, true, LV_PART_MAIN);
+        lv_obj_add_event_cb(
+            line, [](lv_event_t* event)
+            { ::ui::support::drawDisconnectedRouteLine(event, s_preview_map_line_points.data(), s_preview_map_line_points.size()); },
+            LV_EVENT_DRAW_MAIN, nullptr);
     }
 
     for (std::size_t index = 0; index < s_preview_images.size(); ++index)
@@ -1432,6 +1263,64 @@ void draw_preview_map_overlay()
     }
 }
 
+bool project_preview_native_route(void*, tmap::GeoPoint point, tmap::ScreenPoint& output)
+{
+    lv_point_t pixel;
+    if (!::ui::widgets::map::project_point(s_preview_map_runtime, {true, point.latitude / 1e7, point.longitude / 1e7}, pixel)) return false;
+    output.x = static_cast<float>(pixel.x);
+    output.y = static_cast<float>(pixel.y);
+    return true;
+}
+
+void sync_preview_native_view()
+{
+    if (!s_preview_native_route) return;
+    auto* host = g_tracker_state.route_preview_map_host;
+    ::ui::widgets::map::GeoPoint center;
+    if (!host || !::ui::widgets::map::screen_center(s_preview_map_runtime, center)) return;
+    tmap::MapViewport view;
+    view.center = {static_cast<int32_t>(std::llround(center.lat * 1e7)), static_cast<int32_t>(std::llround(center.lon * 1e7))};
+    view.zoom = static_cast<uint8_t>(s_preview_view.zoom);
+    view.width = static_cast<float>(lv_obj_get_content_width(host));
+    view.height = static_cast<float>(lv_obj_get_content_height(host));
+    if (view.width <= 0 || view.height <= 0) return;
+    s_preview_native_route->setViewport(view, project_preview_native_route, nullptr,
+                                        app::configFacade().readConfig().map_coord_system ? 200000 : 0);
+}
+
+void preview_map_gesture(const ::ui::widgets::map::GestureEvent& event, void*)
+{
+    using Phase = ::ui::widgets::map::GesturePhase;
+    if (event.phase == Phase::Tapped)
+    {
+        const auto* overlay = ::ui::widgets::map::widgets(s_preview_map_runtime).overlay_layer;
+        if (!overlay) return;
+        lv_area_t origin;
+        lv_obj_get_coords(overlay, &origin);
+        for (std::size_t i = s_preview_images.size(); i > 0; --i)
+        {
+            const auto& image = s_preview_images[i - 1];
+            lv_point_t point;
+            if (!image.has_position || !::ui::widgets::map::project_point(s_preview_map_runtime, {true, image.lat, image.lon}, point)) continue;
+            if (std::abs(event.point.x - origin.x1 - point.x) > 12 || std::abs(event.point.y - origin.y1 - (point.y - 6)) > 12) continue;
+            s_preview_selected_image = static_cast<int>(i - 1);
+            s_preview_status_text.clear();
+            sync_route_preview_download_status();
+            refresh_route_preview_map();
+            update_route_preview_status();
+            break;
+        }
+    }
+    else if (event.phase == Phase::DragBegin) s_preview_view.beginDrag();
+    else if (event.phase == Phase::DragUpdate)
+    {
+        s_preview_view.drag(event.total_dx, event.total_dy);
+        ::ui::widgets::map::apply_model_lightweight(s_preview_map_runtime, build_preview_map_model());
+    }
+    else if (event.phase == Phase::DragEnd || event.phase == Phase::Cancel)
+        refresh_route_preview_map();
+}
+
 void refresh_route_preview_map()
 {
     auto& state = g_tracker_state;
@@ -1451,13 +1340,27 @@ void refresh_route_preview_map()
     if (!::ui::widgets::map::widgets(s_preview_map_runtime).root)
     {
         (void)::ui::widgets::map::create(s_preview_map_runtime, state.route_preview_map_host, 180);
-        ::ui::widgets::map::set_gesture_enabled(s_preview_map_runtime, false);
+        ::ui::widgets::map::set_gesture_callback(s_preview_map_runtime, preview_map_gesture, nullptr);
+        ::ui::widgets::map::set_gesture_enabled(s_preview_map_runtime, true);
         s_preview_map_loader_paused = false;
     }
     sync_route_preview_map_loader_pause();
     ::ui::widgets::map::set_size(s_preview_map_runtime, width, height);
     ::ui::widgets::map::apply_model(s_preview_map_runtime, build_preview_map_model());
     draw_preview_map_overlay();
+    sync_preview_native_view();
+    create_preview_map_controls();
+    if (s_preview_native_route && !s_preview_native_timer)
+        s_preview_native_timer = lv_timer_create([](lv_timer_t*)
+                                                 {
+            auto* page = g_tracker_state.route_preview_page;
+            if (!page || !lv_obj_is_valid(page) || !lv_obj_is_visible(page) || !s_preview_native_route) return;
+            const bool changed = s_preview_native_route->poll(false, {}, lv_tick_get(), 0, false, lv_tick_get);
+            if (changed && s_preview_native_route->dense())
+                show_route_preview_notice("Zoom in to show route detail", 2000);
+            else if (changed && s_preview_native_route->error() != tmap::Result::Ok && s_preview_native_route->error() != tmap::Result::More)
+                show_route_preview_notice("Route file unavailable or damaged", 2500); },
+                                                 50, nullptr);
     sync_route_preview_image_strip();
 }
 
@@ -1607,7 +1510,7 @@ void toggle_route_preview_image_strip()
     assign_preview_image_paths();
     if (s_preview_images.empty())
     {
-        s_preview_status_text = "No route images";
+        s_preview_status_text = s_preview_images.failed() ? ::ui::i18n::tr("Image memory unavailable") : "No route images";
         s_preview_image_strip_visible = false;
         sync_route_preview_image_strip();
         update_route_preview_status();
@@ -1620,6 +1523,8 @@ void toggle_route_preview_image_strip()
     if (s_preview_image_strip_visible)
     {
         ensure_route_preview_image_cache_build();
+        if (::ui::support::routeImagesNeedSourceReview(s_preview_images))
+            show_route_preview_notice(::ui::i18n::tr("Image cache needs checking. Download again."), 2200);
     }
     sync_route_preview_image_strip();
     update_route_preview_status();
@@ -1677,9 +1582,10 @@ std::vector<platform::ui::route_storage::RouteImageCacheItem> route_preview_cach
 {
     std::vector<platform::ui::route_storage::RouteImageCacheItem> items;
     items.reserve(s_preview_images.size());
+    const bool package = track_sharing::isInstalledPackageRoute(route_path_for_name(s_preview_route_name));
     for (const auto& image : s_preview_images)
     {
-        if (!image.downloaded)
+        if (!image.downloaded && !package)
         {
             continue;
         }
@@ -1687,6 +1593,8 @@ std::vector<platform::ui::route_storage::RouteImageCacheItem> route_preview_cach
         item.source_path = image.local_path;
         item.preview_path = image.preview_path;
         item.view_path = image.view_path;
+        std::memcpy(item.source_hash, image.source_hash, 32);
+        item.source_hash_valid = image.source_hash_valid;
         items.push_back(std::move(item));
     }
     return items;
@@ -1923,12 +1831,14 @@ void pause_route_preview_download_poll_timer()
 
 void ensure_route_preview_image_cache_build(bool refresh_state)
 {
+    const auto path = route_path_for_name(s_preview_route_name);
+    const bool package = track_sharing::isInstalledPackageRoute(path);
     if (refresh_state)
     {
         refresh_preview_image_storage_state(true);
     }
     if (s_preview_images.empty() ||
-        !route_preview_all_images_saved() ||
+        (!route_preview_all_images_saved() && !package) ||
         route_preview_all_image_caches_ready())
     {
         return;
@@ -1970,9 +1880,10 @@ void ensure_route_preview_image_cache_build(bool refresh_state)
     std::string error;
     if (!platform::ui::route_storage::start_route_image_cache_build(
             s_preview_asset_id,
-            items,
+            std::move(items),
             error,
-            platform::ui::route_storage::RouteImageTaskPresentation::UserVisible))
+            platform::ui::route_storage::RouteImageTaskPresentation::UserVisible,
+            package ? path : std::string{}))
     {
         s_preview_download_state = RoutePreviewDownloadState::Failed;
         s_preview_status_text = error.empty() ? "Start cache failed" : error;
@@ -2129,6 +2040,50 @@ lv_obj_t* create_preview_page_button(lv_obj_t* parent,
     return btn;
 }
 
+void preview_map_control(lv_event_t* event)
+{
+    const auto action = reinterpret_cast<intptr_t>(lv_event_get_user_data(event));
+    if (!action) s_preview_view.reset();
+    else if (!s_preview_view.zoomBy(static_cast<int>(action))) return;
+    refresh_route_preview_map();
+}
+
+void create_preview_map_controls()
+{
+    auto* host = g_tracker_state.route_preview_map_host;
+    if (!host || !lv_obj_is_valid(host)) return;
+    if (!s_preview_map_controls || !lv_obj_is_valid(s_preview_map_controls))
+    {
+        s_preview_map_controls = lv_obj_create(host);
+        lv_obj_add_flag(s_preview_map_controls, LV_OBJ_FLAG_IGNORE_LAYOUT);
+        lv_obj_clear_flag(s_preview_map_controls, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(s_preview_map_controls, 122, 36);
+        lv_obj_align(s_preview_map_controls, LV_ALIGN_TOP_LEFT, 4, 4);
+        lv_obj_set_flex_flow(s_preview_map_controls, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_bg_opa(s_preview_map_controls, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(s_preview_map_controls, 0, 0);
+        lv_obj_set_style_pad_all(s_preview_map_controls, 0, 0);
+        lv_obj_set_style_pad_column(s_preview_map_controls, 4, 0);
+        const char* labels[] = {"+", "-", "Fit"};
+        for (int index = 0; index < 3; ++index)
+        {
+            auto* button = create_preview_page_button(s_preview_map_controls, labels[index], nullptr, 38);
+            lv_obj_set_height(button, 36);
+            lv_obj_set_style_pad_all(button, 2, 0);
+            lv_obj_add_event_cb(button, preview_map_control, LV_EVENT_CLICKED,
+                                reinterpret_cast<void*>(intptr_t(index == 0 ? 1 : index == 1 ? -1
+                                                                                             : 0)));
+        }
+    }
+    auto* zoom_in = lv_obj_get_child(s_preview_map_controls, 0);
+    auto* zoom_out = lv_obj_get_child(s_preview_map_controls, 1);
+    if (s_preview_view.zoom >= ::ui::widgets::map::kMaxZoom) lv_obj_add_state(zoom_in, LV_STATE_DISABLED);
+    else lv_obj_clear_state(zoom_in, LV_STATE_DISABLED);
+    if (s_preview_view.zoom <= ::ui::widgets::map::kMinZoom) lv_obj_add_state(zoom_out, LV_STATE_DISABLED);
+    else lv_obj_clear_state(zoom_out, LV_STATE_DISABLED);
+    lv_obj_move_foreground(s_preview_map_controls);
+}
+
 bool preview_selected_route_is_active()
 {
     const auto& state = g_tracker_state;
@@ -2190,13 +2145,14 @@ void ensure_route_preview_elevation_profile()
 
 void rebuild_preview_elevation_samples()
 {
+    if (!s_preview_elevation_samples.empty()) return; // full-stream distances already projected at load
     s_preview_elevation_samples.clear();
-    s_preview_elevation_samples.reserve(s_preview_route_points.size());
+    if (!s_preview_elevation_samples.reserve(s_preview_route_points.size())) return;
     double distance_m = 0.0;
     const RoutePreviewPoint* previous = nullptr;
     for (const auto& point : s_preview_route_points)
     {
-        if (previous)
+        if (previous && !point.break_before)
         {
             const double step = preview_distance_m(*previous, point);
             if (std::isfinite(step))
@@ -2209,6 +2165,7 @@ void rebuild_preview_elevation_samples()
         sample.altitude_m = point.altitude_m;
         sample.distance_m = distance_m;
         sample.has_altitude = point.has_altitude;
+        sample.break_before = point.break_before;
         s_preview_elevation_samples.push_back(sample);
     }
 }
@@ -2340,39 +2297,14 @@ void open_route_preview_help_modal()
     }
 
     modal_prepare_group();
-    state.route_preview_help_modal = create_modal_root(304, 176);
-    lv_obj_set_style_bg_color(state.route_preview_help_modal, lv_color_hex(0x1C1812), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(state.route_preview_help_modal, LV_OPA_70, LV_PART_MAIN);
-    lv_obj_t* win = lv_obj_get_child(state.route_preview_help_modal, 0);
-    if (!win)
-    {
-        modal_close(state.route_preview_help_modal);
-        return;
-    }
-
-    lv_obj_set_flex_flow(win, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(win, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_bg_color(win, lv_color_hex(0xFFF3DF), LV_PART_MAIN);
-    lv_obj_set_style_border_width(win, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(win, lv_color_hex(0x8A6E43), LV_PART_MAIN);
-    lv_obj_set_style_radius(win, 4, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(win, 7, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(win, 7, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(win, 5, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(win, 5, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(win, 2, LV_PART_MAIN);
-    lv_obj_add_flag(win, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(win, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(win, LV_SCROLLBAR_MODE_AUTO);
+    const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
+                                                              {"Preview Help", 304, 176, [](lv_event_t*)
+                                                               { close_route_preview_help_modal(); },
+                                                               on_route_preview_help_key});
+    state.route_preview_help_modal = frame.overlay;
+    lv_obj_t* win = frame.body;
     lv_obj_add_flag(win, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(win, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-    lv_obj_add_event_cb(win, on_route_preview_help_key, LV_EVENT_KEY, nullptr);
-
-    lv_obj_t* title = lv_label_create(win);
-    ::ui::i18n::set_label_text(title, "Preview Help");
-    lv_obj_set_width(title, LV_PCT(100));
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x25170D), LV_PART_MAIN);
 
     auto add_keycap = [](lv_obj_t* parent, const char* text, lv_coord_t width)
     {
@@ -2442,18 +2374,25 @@ void open_route_preview_help_modal()
         lv_label_set_text(text, description ? description : "");
     };
 
-    add_help_row("D", nullptr, "Download images");
+    add_help_row("WASD", nullptr, "Pan map (images hidden)");
+    add_help_row("Q / -", nullptr, "Zoom out");
+    add_help_row("E / +", nullptr, "Zoom in");
+    add_help_row("F", nullptr, "Fit whole route");
     add_help_row("R", nullptr, "Load/off route");
     add_help_row("L", nullptr, "Change base layer");
-    add_help_row("E", nullptr, "Show/hide profile");
+    add_help_row("V", nullptr, "Show/hide profile");
+    add_help_row("G", nullptr, "Download images");
     add_help_row("P", nullptr, "Show/hide images");
-    add_help_row("W/S", "Up/Dn", "Select image");
+    add_help_row("W/S", nullptr, "Select image when shown");
     add_help_row("Enter", nullptr, "Open/close image");
     add_help_row("Pin", nullptr, "Select image point");
-    add_help_row("H", "Back", "Close help");
+    add_help_row("W/S", nullptr, "Scroll this help");
+    add_help_row("X/H", "Back", "Close help");
 
     lv_obj_move_foreground(state.route_preview_help_modal);
     lv_group_add_obj(state.modal_group, win);
+    lv_group_add_obj(state.modal_group, frame.close);
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.modal_group);
     lv_group_focus_obj(win);
 }
 
@@ -2520,10 +2459,7 @@ void close_route_preview_page()
     state.route_preview_load_btn = nullptr;
     state.route_preview_load_label = nullptr;
     clear_preview_model();
-    if (state.filter_panel)
-    {
-        lv_obj_clear_flag(state.filter_panel, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (state.bottom_bar) lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     if (state.list_panel)
     {
         lv_obj_clear_flag(state.list_panel, LV_OBJ_FLAG_HIDDEN);
@@ -2567,7 +2503,37 @@ void on_route_preview_key(lv_event_t* e)
         close_route_preview_page();
         return;
     }
-    if (key == 'd' || key == 'D')
+    if (key == '+' || key == '=' || key == '-' || key == '_' ||
+        key == 'q' || key == 'Q' || key == 'e' || key == 'E')
+    {
+        if (s_preview_view.zoomBy(key == '+' || key == '=' || key == 'e' || key == 'E' ? 1 : -1)) refresh_route_preview_map();
+        consume_route_preview_key_event(e);
+        return;
+    }
+    if (key == 'f' || key == 'F')
+    {
+        s_preview_view.reset();
+        refresh_route_preview_map();
+        consume_route_preview_key_event(e);
+        return;
+    }
+    if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT || key == LV_KEY_UP || key == LV_KEY_DOWN ||
+        key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
+        key == 's' || key == 'S' || key == 'd' || key == 'D')
+    {
+        const bool left = key == LV_KEY_LEFT || key == 'a' || key == 'A';
+        const bool right = key == LV_KEY_RIGHT || key == 'd' || key == 'D';
+        const bool up = key == LV_KEY_UP || key == 'w' || key == 'W';
+        const bool down = key == LV_KEY_DOWN || key == 's' || key == 'S';
+        s_preview_view.pan(left ? 40 : right ? -40
+                                             : 0,
+                           up ? 40 : down ? -40
+                                          : 0);
+        refresh_route_preview_map();
+        consume_route_preview_key_event(e);
+        return;
+    }
+    if (key == 'g' || key == 'G')
     {
         consume_route_preview_key_event(e);
         on_route_preview_download_clicked(nullptr);
@@ -2585,7 +2551,7 @@ void on_route_preview_key(lv_event_t* e)
         cycle_route_preview_map_layer();
         return;
     }
-    if (key == 'e' || key == 'E')
+    if (key == 'v' || key == 'V')
     {
         consume_route_preview_key_event(e);
         toggle_route_preview_elevation();
@@ -2659,6 +2625,11 @@ void on_route_preview_download_clicked(lv_event_t*)
         return;
     }
 
+    if (track_sharing::isInstalledPackageRoute(route_path_for_name(s_preview_route_name)))
+    {
+        ensure_route_preview_image_cache_build(false);
+        return;
+    }
     const auto wifi = platform::ui::wifi::status();
     if (!wifi.supported || !wifi.connected)
     {
@@ -2773,6 +2744,7 @@ void render_route_preview_page()
     }
     destroy_route_preview_image_strip(false);
     ::ui::widgets::map::destroy(s_preview_map_runtime);
+    s_preview_map_controls = nullptr;
     lv_obj_clean(state.route_preview_page);
     ::ui::widgets::route_elevation_profile::reset(s_preview_elevation_profile);
     state.route_preview_download_btn = nullptr;
@@ -2932,7 +2904,8 @@ void open_route_preview_page()
     {
         if (state.status_label)
         {
-            ::ui::i18n::set_label_text(state.status_label, "Preview failed");
+            if (!s_preview_status_text.empty()) ::ui::i18n::set_label_text_raw(state.status_label, s_preview_status_text.c_str());
+            else ::ui::i18n::set_label_text(state.status_label, "Preview failed");
         }
         return;
     }
@@ -2945,6 +2918,7 @@ void open_route_preview_page()
     {
         lv_obj_add_flag(state.list_panel, LV_OBJ_FLAG_HIDDEN);
     }
+    if (state.bottom_bar) lv_obj_add_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     ::ui::widgets::top_bar_set_title(state.top_bar, ::ui::i18n::tr("Route Preview"));
 
     state.route_preview_page = lv_obj_create(state.content);
@@ -3125,29 +3099,23 @@ void focus_main_panel()
 void set_mode(TrackerPageState::Mode mode)
 {
     auto& state = g_tracker_state;
+    const bool change_navigation = state.mode != mode && (mode == TrackerPageState::Mode::Navigation || state.mode == TrackerPageState::Mode::Navigation);
+    if (change_navigation)
+    {
+        state.selected_route.clear();
+        state.selected_route_idx = -1;
+    }
     state.mode = mode;
+    if (state.status_label)
+    {
+        if (mode == TrackerPageState::Mode::Record) lv_obj_clear_flag(state.status_label, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(state.status_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (change_navigation || mode == TrackerPageState::Mode::Navigation) refresh_route_list();
     update_mode_buttons();
     if (state.bottom_bar)
     {
-        if (mode == TrackerPageState::Mode::Record)
-        {
-            lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
-        }
-        else
-        {
-            lv_obj_add_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-    if (state.start_stop_btn)
-    {
-        if (mode == TrackerPageState::Mode::Record)
-        {
-            lv_obj_clear_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
-        }
-        else
-        {
-            lv_obj_add_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_clear_flag(state.bottom_bar, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (mode == TrackerPageState::Mode::Record)
@@ -3158,6 +3126,7 @@ void set_mode(TrackerPageState::Mode mode)
     }
     else
     {
+        update_start_stop_button();
         update_route_status();
         update_route_page();
     }
@@ -3187,27 +3156,9 @@ void update_start_stop_button()
 {
     auto& state = g_tracker_state;
     const bool recording = platform::ui::tracker::is_recording();
-    if (state.start_stop_label)
-    {
-        ::ui::i18n::set_label_text(state.start_stop_label, recording ? "Stop recording" : "Start recording");
-        int text_width = 0;
-        for (const char* key : {"Start recording", "Stop recording"})
-        {
-            lv_point_t size;
-            lv_text_get_size(&size, ::ui::i18n::tr(key),
-                             lv_obj_get_style_text_font(state.start_stop_label, LV_PART_MAIN),
-                             lv_obj_get_style_text_letter_space(state.start_stop_label, LV_PART_MAIN),
-                             0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-            text_width = std::max<int>(text_width, size.x);
-        }
-        const int inset = lv_obj_get_style_pad_left(state.start_stop_btn, LV_PART_MAIN) +
-                          lv_obj_get_style_pad_right(state.start_stop_btn, LV_PART_MAIN) +
-                          2 * lv_obj_get_style_border_width(state.start_stop_btn, LV_PART_MAIN);
-        lv_obj_set_width(state.start_stop_btn,
-                         std::max<int>(bottom_bar_button_width(), text_width + inset + 2));
-        lv_obj_set_style_max_width(state.start_stop_btn, LV_PCT(100), 0);
-        lv_label_set_long_mode(state.start_stop_label, LV_LABEL_LONG_DOT);
-    }
+    if (!state.start_stop_btn) return;
+    if (state.mode == TrackerPageState::Mode::Record && recording) lv_obj_clear_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(state.start_stop_btn, LV_OBJ_FLAG_HIDDEN);
 }
 
 size_t utf8_count_chars(const std::string& text)
@@ -3296,46 +3247,166 @@ std::string format_list_name(const std::string& name)
     return utf8_truncate(name, max_chars);
 }
 
-void update_record_page()
+void update_item_card();
+
+void update_card_location()
 {
     auto& state = g_tracker_state;
-    if (!state.list_container)
+    if (!state.item_card || !state.card_location_model || is_any_modal_open()) return;
+    auto& location = *state.card_location_model;
+    if (!location.valid && state.mode == TrackerPageState::Mode::Record && platform::ui::tracker::is_recording())
     {
-        return;
+        double latitude = 0, longitude = 0;
+        if (::ui::support::readCardFileLocation(location.file.c_str(), latitude, longitude))
+            ::ui::support::updateCardLocation(state.card_location_model, true, latitude, longitude, state.card_location, state.card_distance);
     }
+    ::ui::support::updateCardLocation(state.card_location_model, location.valid, location.latitude, location.longitude,
+                                      state.card_location, state.card_distance);
+}
 
-    const lv_coord_t scroll_y = lv_obj_get_scroll_y(state.list_container);
-    clear_list_items();
+void step_item_card(int direction)
+{
+    auto& state = g_tracker_state;
+    if (is_any_modal_open()) return;
+    const bool recording = state.mode == TrackerPageState::Mode::Record;
+    const auto& names = recording ? s_record_names : s_route_names;
+    auto& index = recording ? state.selected_record_idx : state.selected_route_idx;
+    auto& selected = recording ? state.selected_record : state.selected_route;
+    const int next = index + direction;
+    if (next < 0 || next >= static_cast<int>(names.size())) return;
+    index = next;
+    selected = names[static_cast<size_t>(next)];
+    update_item_card();
+}
 
-    if (s_record_names.empty())
+void update_item_card()
+{
+    auto& state = g_tracker_state;
+    if (!state.list_container || is_any_modal_open()) return;
+    if (!state.item_card)
     {
-        create_empty_state(s_record_empty_text);
+        // A fixed set of widgets serves every file. Only filenames are indexed;
+        // KML, elevation and images remain in the existing on-demand preview.
+        lv_obj_clear_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_pad_all(state.list_container, 0, 0);
+        const auto view = item_card_view::create(state.list_container,
+                                                 ::ui::page_profile::resolve_body_font(), ::ui::page_profile::resolve_caption_font(),
+                                                 ::ui::page_profile::resolve_title_font(),
+                                                 page_profile().compact_touch_keyboard ? 36 : page_profile().control_button_height, page_profile().dense);
+        auto* card = state.item_card = view.root;
+        state.card_name = view.name;
+        state.card_distance = view.distance;
+        state.card_location = view.region;
+        state.card_format = view.format;
+        state.card_previous = view.previous;
+        state.card_counter = view.counter;
+        state.card_next = view.next;
+        state.card_actions = view.actions;
+        ::ui::i18n::set_label_text(lv_obj_get_child(view.actions, 0), "Actions");
+        state.card_timer = lv_timer_create([](lv_timer_t*)
+                                           { update_card_location(); },
+                                           500, nullptr);
+        lv_obj_add_event_cb(card, on_list_item_clicked, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(
+            card, [](lv_event_t*)
+            {
+                                auto* input = lv_indev_get_act();
+                                if (!input) return;
+                                const auto direction = lv_indev_get_gesture_dir(input);
+                                if (direction == LV_DIR_TOP || direction == LV_DIR_LEFT) step_item_card(1);
+                                else if (direction == LV_DIR_BOTTOM || direction == LV_DIR_RIGHT) step_item_card(-1); },
+            LV_EVENT_GESTURE, nullptr);
+        for (auto* button : {state.card_previous, state.card_next})
+        {
+            const int direction = button == state.card_previous ? -1 : 1;
+            lv_obj_add_event_cb(
+                button, [](lv_event_t* event)
+                { step_item_card(static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)))); },
+                LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(direction)));
+        }
+        lv_obj_add_event_cb(
+            state.card_actions, [](lv_event_t*)
+            { open_action_menu_modal(); },
+            LV_EVENT_CLICKED, nullptr);
+    }
+    const bool recording = state.mode == TrackerPageState::Mode::Record;
+    const auto& names = recording ? s_record_names : s_route_names;
+    auto& index = recording ? state.selected_record_idx : state.selected_route_idx;
+    auto& selected = recording ? state.selected_record : state.selected_route;
+    const auto found = std::find(names.begin(), names.end(), selected);
+    index = found != names.end() ? static_cast<int>(found - names.begin()) : names.empty() ? -1
+                                                                                           : 0;
+    if (index < 0)
+    {
+        selected.clear();
+        if (state.card_location_model) state.card_location_model->file.clear();
+        lv_obj_set_user_data(state.item_card, nullptr);
+        lv_obj_add_state(state.item_card, LV_STATE_DISABLED);
+        ::ui::i18n::set_content_label_text_raw(state.card_name, (recording ? s_record_empty_text : s_route_empty_text).c_str());
+        ::ui::i18n::set_label_text(state.card_format, recording ? "Tracks" : "Routes");
+        ::ui::support::updateCardLocation(state.card_location_model, false, 0, 0, state.card_location, state.card_distance);
     }
     else
     {
-        for (size_t index = 0; index < s_record_names.size(); ++index)
+        selected = names[static_cast<size_t>(index)];
+        lv_obj_set_user_data(state.item_card, reinterpret_cast<void*>(static_cast<intptr_t>(index) + kListUserDataOffset));
+        lv_obj_clear_state(state.item_card, LV_STATE_DISABLED);
+        const auto extension = selected.find_last_of('.');
+        std::string format = extension == std::string::npos ? "" : selected.substr(extension + 1);
+        std::transform(format.begin(), format.end(), format.begin(), [](unsigned char ch)
+                       { return static_cast<char>(std::toupper(ch)); });
+        const char* status = ::ui::i18n::tr(recording ? "Tracks" : state.mode == TrackerPageState::Mode::Navigation ? "Navigation"
+                                                                                                                    : "Routes");
+        if (recording && platform::ui::tracker::is_recording())
         {
-            create_list_item_button(format_list_name(s_record_names[index]),
-                                    static_cast<intptr_t>(index) + kListUserDataOffset,
-                                    static_cast<int>(index) == state.selected_record_idx,
-                                    false);
+            std::string current;
+            if (platform::ui::tracker::current_path(current) && path_basename(current) == selected) status = ::ui::i18n::tr("Recording");
         }
+        if (!recording && state.active_route == selected)
+            ::ui::i18n::set_content_label_text_raw(state.card_format, ::ui::i18n::format("Active: %s", format.c_str()).c_str());
+        else lv_label_set_text_fmt(state.card_format, "%s | %s", format.c_str(), status);
+        const auto path = recording ? std::string(platform::ui::tracker::track_dir()) + "/" + selected : route_path_for_name(selected);
+        if (!state.card_location_model) state.card_location_model = ::platform::memory::createPsram<::ui::support::CardLocation>();
+        if (state.card_location_model && state.card_location_model->file != path)
+        {
+            state.card_location_model->file = path;
+            double latitude = 0, longitude = 0;
+            std::string title;
+            const bool has_position = ::ui::support::readCardFileLocation(path.c_str(), latitude, longitude, &title);
+            if (title.empty()) title = ::ui::support::cardFileTitleFallback(selected, ::ui::i18n::tr("Route"));
+            ::ui::i18n::set_content_label_text_raw(state.card_name, title.c_str());
+            ::ui::support::updateCardLocation(state.card_location_model, has_position, latitude, longitude, state.card_location, state.card_distance);
+        }
+        else if (!state.card_location_model)
+        {
+            ::ui::i18n::set_content_label_text_raw(state.card_name, ::ui::support::cardFileTitleFallback(selected, ::ui::i18n::tr("Route")).c_str());
+            ::ui::support::updateCardLocation(state.card_location_model, false, 0, 0, state.card_location, state.card_distance);
+        }
+        else update_card_location();
     }
-
-    lv_obj_add_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(state.list_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_scroll_to_y(state.list_container, scroll_y, LV_ANIM_OFF);
+    lv_label_set_text_fmt(state.card_counter, "%u / %u", index < 0 ? 0 : static_cast<unsigned>(index + 1), static_cast<unsigned>(names.size()));
+    if (index <= 0) lv_obj_add_state(state.card_previous, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.card_previous, LV_STATE_DISABLED);
+    if (index < 0 || static_cast<size_t>(index + 1) >= names.size()) lv_obj_add_state(state.card_next, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.card_next, LV_STATE_DISABLED);
+    if (index < 0) lv_obj_add_state(state.card_actions, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.card_actions, LV_STATE_DISABLED);
+    if (!recording) update_route_status();
     if (state.focus_col == TrackerPageState::FocusColumn::Main && !is_any_modal_open())
     {
         tracker::ui::input::tracker_input_on_ui_refreshed();
     }
 }
 
+void update_record_page()
+{
+    update_item_card();
+}
+
 void refresh_record_list()
 {
     auto& state = g_tracker_state;
-    if (!state.list_container)
+    if (!state.list_container || is_any_modal_open())
     {
         return;
     }
@@ -3354,11 +3425,6 @@ void refresh_record_list()
 
     constexpr size_t kMaxTracks = 32;
     platform::ui::tracker::list_tracks(s_record_names, kMaxTracks);
-    if (state.selected_record_idx >= static_cast<int>(s_record_names.size()))
-    {
-        state.selected_record_idx = -1;
-        state.selected_record.clear();
-    }
     if (state.mode == TrackerPageState::Mode::Record)
     {
         update_record_page();
@@ -3413,7 +3479,7 @@ void update_route_status()
     lv_obj_set_style_text_color(state.status_label, lv_color_hex(kPanelTextMuted), 0);
     lv_obj_set_style_text_font(
         state.status_label, ::ui::fonts::localized_font(::ui::fonts::ui_chrome_font()), 0);
-    if (state.mode == TrackerPageState::Mode::Route)
+    if (state.mode != TrackerPageState::Mode::Record)
     {
         if (!state.active_route.empty())
         {
@@ -3434,71 +3500,34 @@ void update_route_status()
 
 void update_route_page()
 {
-    auto& state = g_tracker_state;
-    if (!state.list_container)
-    {
-        return;
-    }
-
-    const lv_coord_t scroll_y = lv_obj_get_scroll_y(state.list_container);
-    clear_list_items();
-
-    if (s_route_names.empty())
-    {
-        create_empty_state(s_route_empty_text);
-        if (platform::ui::device::sd_ready())
-        {
-            create_empty_state(::ui::i18n::tr("Add KML files to the routes folder"));
-        }
-    }
-    else
-    {
-        for (size_t index = 0; index < s_route_names.size(); ++index)
-        {
-            create_list_item_button(format_list_name(s_route_names[index]),
-                                    static_cast<intptr_t>(index) + kListUserDataOffset,
-                                    static_cast<int>(index) == state.selected_route_idx,
-                                    false);
-        }
-    }
-
-    lv_obj_add_flag(state.list_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(state.list_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_scroll_to_y(state.list_container, scroll_y, LV_ANIM_OFF);
-    if (state.focus_col == TrackerPageState::FocusColumn::Main && !is_any_modal_open())
-    {
-        tracker::ui::input::tracker_input_on_ui_refreshed();
-    }
+    update_item_card();
 }
 
 void refresh_route_list()
 {
     auto& state = g_tracker_state;
-    if (!state.list_container)
+    if (!state.list_container || is_any_modal_open())
     {
         return;
     }
     s_route_names.clear();
-    state.selected_route_idx = -1;
-    state.selected_route.clear();
-    s_route_empty_text = ::ui::i18n::tr("No KML routes");
+    s_route_empty_text = ::ui::i18n::tr(state.mode == TrackerPageState::Mode::Navigation ? "No saved navigation" : "No KML routes");
 
     if (!platform::ui::device::sd_ready())
     {
         s_route_empty_text = ::ui::i18n::tr("No SD Card");
-        if (state.mode == TrackerPageState::Mode::Route)
+        if (state.mode != TrackerPageState::Mode::Record)
         {
             update_route_page();
         }
         return;
     }
 
-    const bool route_dir_ready = platform::ui::route_storage::list_routes(s_route_names, 64);
+    const bool route_dir_ready = state.mode == TrackerPageState::Mode::Navigation ? platform::ui::navigation::list(s_route_names, 64) : platform::ui::route_storage::list_routes(s_route_names, 64);
     if (!route_dir_ready)
     {
         s_route_empty_text = ::ui::i18n::tr("No routes folder");
-        if (state.mode == TrackerPageState::Mode::Route)
+        if (state.mode != TrackerPageState::Mode::Record)
         {
             update_route_page();
         }
@@ -3507,7 +3536,7 @@ void refresh_route_list()
 
     if (s_route_names.empty())
     {
-        if (state.mode == TrackerPageState::Mode::Route)
+        if (state.mode != TrackerPageState::Mode::Record)
         {
             update_route_page();
         }
@@ -3516,7 +3545,7 @@ void refresh_route_list()
 
     std::sort(s_route_names.begin(), s_route_names.end());
     (void)repair_degraded_active_route_from_list();
-    if (state.mode == TrackerPageState::Mode::Route)
+    if (state.mode != TrackerPageState::Mode::Record)
     {
         update_route_page();
     }
@@ -3547,6 +3576,17 @@ void sync_active_route_from_config()
 
 void on_start_stop_clicked(lv_event_t*)
 {
+    if (g_tracker_state.mode == TrackerPageState::Mode::Navigation)
+    {
+        navigation_dialog::open(g_tracker_state.root, [](const char* path, void*)
+                                {
+                auto& state = g_tracker_state;
+                state.selected_route = path_basename(path);
+                refresh_route_list();
+                update_route_page();
+                open_route_preview_page(); });
+        return;
+    }
     const bool was_recording = platform::ui::tracker::is_recording();
     if (was_recording)
     {
@@ -3570,16 +3610,81 @@ void on_start_stop_clicked(lv_event_t*)
     schedule_deferred_record_list_refresh(120);
 }
 
+enum class CategoryAction : uint8_t
+{
+    View,
+    New,
+    Current
+};
+
+void on_category_action(lv_event_t* event)
+{
+    const auto value = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+    const auto mode = static_cast<TrackerPageState::Mode>(value >> 2);
+    const auto action = static_cast<CategoryAction>(value & 3);
+    focus_main_panel();
+    set_mode(mode);
+    if (action == CategoryAction::View) return;
+    if (action == CategoryAction::New)
+    {
+        if (mode == TrackerPageState::Mode::Record && platform::ui::tracker::is_recording()) return;
+        on_start_stop_clicked(nullptr);
+        if (mode == TrackerPageState::Mode::Navigation || !platform::ui::tracker::is_recording()) return;
+    }
+    auto& state = g_tracker_state;
+    if (mode == TrackerPageState::Mode::Record)
+    {
+        std::string path;
+        if (!platform::ui::tracker::current_path(path)) return;
+        refresh_record_list();
+        const auto name = path_basename(path);
+        const auto found = std::find(s_record_names.begin(), s_record_names.end(), name);
+        if (found != s_record_names.end())
+        {
+            state.selected_record_idx = static_cast<int>(found - s_record_names.begin());
+            state.selected_record = name;
+            update_record_page();
+        }
+    }
+    else
+    {
+        state.selected_route = path_basename(app::appFacade().readConfig().route_path);
+        update_route_page();
+        open_route_preview_page();
+    }
+}
+
+void show_category_menu(TrackerPageState::Mode mode)
+{
+    auto* panel = lv_obj_create(g_tracker_state.root);
+    const bool recording = platform::ui::tracker::is_recording();
+    const auto& cfg = app::appFacade().readConfig();
+    const bool current = mode == TrackerPageState::Mode::Record ? recording : cfg.route_enabled && std::string(cfg.route_path).find(std::string(platform::ui::navigation::directory()) + "/") == 0;
+    const char* labels[] = {"View", "New", "Current"};
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        auto* item = ::ui::components::bottom_bar::add_button(panel, labels[i], on_category_action,
+                                                              reinterpret_cast<void*>((static_cast<uintptr_t>(mode) << 2) | i));
+        lv_obj_set_height(item, filter_button_height());
+        if ((i == 1 && mode == TrackerPageState::Mode::Record && recording) || (i == 2 && !current)) lv_obj_add_state(item, LV_STATE_DISABLED);
+    }
+    tracker::ui::input::tracker_show_submenu(panel);
+}
+
 void on_mode_record_clicked(lv_event_t*)
 {
-    set_mode(TrackerPageState::Mode::Record);
-    focus_main_panel();
+    show_category_menu(TrackerPageState::Mode::Record);
 }
 
 void on_mode_route_clicked(lv_event_t*)
 {
     set_mode(TrackerPageState::Mode::Route);
     focus_main_panel();
+}
+
+void on_mode_navigation(lv_event_t*)
+{
+    show_category_menu(TrackerPageState::Mode::Navigation);
 }
 
 void on_list_item_clicked(lv_event_t* e)
@@ -3652,7 +3757,7 @@ lv_obj_t* create_action_menu_button(lv_obj_t* parent, const char* text)
     lv_obj_t* label = lv_label_create(btn);
     ::ui::i18n::set_label_text(label, text);
     lv_obj_center(label);
-    apply_action_button(btn, label);
+    ::ui::components::bottom_bar::style_item(btn);
     return btn;
 }
 
@@ -3685,10 +3790,12 @@ void on_action_menu_item_clicked(lv_event_t* e)
     {
     case ActionMenuCommand::Load:
         on_route_load_clicked(nullptr);
+        update_item_card();
         focus_main_panel();
         break;
     case ActionMenuCommand::Unload:
         on_route_unload_clicked(nullptr);
+        update_item_card();
         focus_main_panel();
         break;
     case ActionMenuCommand::Preview:
@@ -3712,38 +3819,9 @@ void open_action_menu_modal()
         return;
     }
 
-    bool has_item = false;
-    int action_count = 1; // Cancel
-    if (state.mode == TrackerPageState::Mode::Record)
-    {
-        has_item = state.selected_record_idx >= 0 &&
-                   state.selected_record_idx < static_cast<int>(s_record_names.size());
-        if (can_delete_selected_item())
-        {
-            ++action_count;
-        }
-    }
-    else
-    {
-        has_item = state.selected_route_idx >= 0 &&
-                   state.selected_route_idx < static_cast<int>(s_route_names.size());
-        if (can_load_selected_route())
-        {
-            ++action_count;
-        }
-        if (can_unload_active_route())
-        {
-            ++action_count;
-        }
-        if (can_preview_selected_route())
-        {
-            ++action_count;
-        }
-        if (can_delete_selected_item())
-        {
-            ++action_count;
-        }
-    }
+    const bool has_item = state.mode == TrackerPageState::Mode::Record
+                              ? state.selected_record_idx >= 0 && state.selected_record_idx < static_cast<int>(s_record_names.size())
+                              : state.selected_route_idx >= 0 && state.selected_route_idx < static_cast<int>(s_route_names.size());
 
     if (!has_item)
     {
@@ -3751,40 +3829,18 @@ void open_action_menu_modal()
     }
 
     modal_prepare_group();
-    const int max_modal_h = page_profile().large_touch_hitbox ? 320 : 220;
-    const int modal_content_h = 56 + static_cast<int>(action_count) *
-                                         static_cast<int>(action_menu_button_height() + action_menu_row_gap());
-    const int modal_h = std::min<int>(max_modal_h, modal_content_h);
-    state.action_menu_modal = create_modal_root(190, modal_h);
-    lv_obj_t* win = lv_obj_get_child(state.action_menu_modal, 0);
-    if (!win)
-    {
-        modal_close(state.action_menu_modal);
-        return;
-    }
-
-    lv_obj_set_flex_flow(win, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(win, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(win, 4, LV_PART_MAIN);
-
-    lv_obj_t* title_label = lv_label_create(win);
     const char* title = (state.mode == TrackerPageState::Mode::Record) ? "Track Actions" : "Route Actions";
-    ::ui::i18n::set_label_text(title_label, title);
-    lv_obj_set_width(title_label, LV_PCT(100));
-    lv_label_set_long_mode(title_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t* list = lv_obj_create(win);
-    lv_obj_set_width(list, LV_PCT(100));
-    lv_obj_set_height(list, 0);
-    lv_obj_set_flex_grow(list, 1);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
+    const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
+                                                              {title, 200, 180, [](lv_event_t*)
+                                                               {
+                                                                   modal_close(g_tracker_state.action_menu_modal);
+                                                                   focus_main_panel();
+                                                               },
+                                                               on_action_menu_key});
+    state.action_menu_modal = frame.overlay;
+    lv_group_add_obj(state.modal_group, frame.close);
+    lv_obj_t* list = frame.body;
     lv_obj_set_style_pad_row(list, action_menu_row_gap(), LV_PART_MAIN);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
     lv_obj_t* first_focus = nullptr;
     auto add_action = [&](ActionMenuCommand cmd, const char* text)
@@ -3802,7 +3858,7 @@ void open_action_menu_modal()
         }
     };
 
-    if (state.mode == TrackerPageState::Mode::Route)
+    if (state.mode != TrackerPageState::Mode::Record)
     {
         if (can_load_selected_route())
         {
@@ -3810,7 +3866,7 @@ void open_action_menu_modal()
         }
         if (can_unload_active_route())
         {
-            add_action(ActionMenuCommand::Unload, "Off");
+            add_action(ActionMenuCommand::Unload, "Unload");
         }
         if (can_preview_selected_route())
         {
@@ -3821,7 +3877,8 @@ void open_action_menu_modal()
     {
         add_action(ActionMenuCommand::Delete, "Delete");
     }
-    add_action(ActionMenuCommand::Cancel, "Cancel");
+    ::ui::components::dialog_frame::fit_content_height(frame);
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.modal_group);
 
     if (first_focus)
     {
@@ -3916,42 +3973,9 @@ void on_list_item_defocused(lv_event_t* e)
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
 }
 
-void on_mode_record_focused(lv_event_t*)
-{
-    set_mode(TrackerPageState::Mode::Record);
-}
-
 void on_mode_route_focused(lv_event_t*)
 {
     set_mode(TrackerPageState::Mode::Route);
-}
-
-void on_mode_record_key(lv_event_t* e)
-{
-    if (!e)
-    {
-        return;
-    }
-    uint32_t key = lv_event_get_key(e);
-    if (key != LV_KEY_ENTER)
-    {
-        return;
-    }
-    on_mode_record_clicked(e);
-}
-
-void on_mode_route_key(lv_event_t* e)
-{
-    if (!e)
-    {
-        return;
-    }
-    uint32_t key = lv_event_get_key(e);
-    if (key != LV_KEY_ENTER)
-    {
-        return;
-    }
-    on_mode_route_clicked(e);
 }
 
 void on_route_load_clicked(lv_event_t*)
@@ -3975,7 +3999,7 @@ void on_route_load_clicked(lv_event_t*)
         }
         edit.config().route_enabled = true;
         char path[96];
-        snprintf(path, sizeof(path), "%s/%s", platform::ui::route_storage::route_dir(), state.active_route.c_str());
+        snprintf(path, sizeof(path), "%s", route_path_for_name(state.active_route).c_str());
         strncpy(edit.config().route_path, path, sizeof(edit.config().route_path) - 1);
         edit.config().route_path[sizeof(edit.config().route_path) - 1] = '\0';
         edit.commit(app::AppConfigChangeSet::route());
@@ -4065,7 +4089,7 @@ void on_del_confirm_clicked(lv_event_t*)
             state.selected_route_idx = -1;
             state.selected_route.clear();
             refresh_route_list();
-            if (state.mode == TrackerPageState::Mode::Route)
+            if (state.mode != TrackerPageState::Mode::Record)
             {
                 update_route_page();
             }
@@ -4123,18 +4147,29 @@ void open_delete_confirm_modal()
         }
         state.pending_delete_mode = TrackerPageState::Mode::Route;
         state.pending_delete_name = s_route_names[state.selected_route_idx].c_str();
-        std::string path = std::string(platform::ui::route_storage::route_dir()) + "/" + s_route_names[state.selected_route_idx];
+        std::string path = route_path_for_name(s_route_names[state.selected_route_idx]);
         state.pending_delete_path = path;
     }
 
     modal_prepare_group();
-    state.del_confirm_modal = create_modal_root(280, 140);
-    lv_obj_t* win = lv_obj_get_child(state.del_confirm_modal, 0);
+    const auto frame = ::ui::components::dialog_frame::create(lv_screen_active(),
+                                                              {"Delete", 280, 140, on_del_cancel_clicked, [](lv_event_t* event)
+                                                               {
+                                                                   if (lv_event_get_key(event) == LV_KEY_ESC || lv_event_get_key(event) == LV_KEY_BACKSPACE)
+                                                                   {
+                                                                       lv_event_stop_bubbling(event);
+                                                                       on_del_cancel_clicked(event);
+                                                                   }
+                                                               }});
+    state.del_confirm_modal = frame.overlay;
+    lv_obj_t* win = frame.body;
+    lv_group_add_obj(state.modal_group, frame.close);
 
     const std::string msg = ::ui::i18n::format("Delete %s?", state.pending_delete_name.c_str());
     lv_obj_t* label = lv_label_create(win);
     ::ui::i18n::set_label_text_raw(label, msg.c_str());
-    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
 
     lv_obj_t* btn_row = lv_obj_create(win);
     lv_obj_set_size(btn_row, LV_PCT(100), LV_SIZE_CONTENT);
@@ -4165,6 +4200,7 @@ void open_delete_confirm_modal()
 
     lv_group_add_obj(state.modal_group, confirm_btn);
     lv_group_add_obj(state.modal_group, cancel_btn);
+    ::ui::components::dialog_frame::bind_close_shortcuts(frame, state.modal_group);
     lv_group_focus_obj(cancel_btn);
 }
 
@@ -4172,6 +4208,7 @@ void open_delete_confirm_modal()
 
 void refresh_page()
 {
+    if (g_tracker_state.card_location_model) g_tracker_state.card_location_model->file.clear();
     sync_active_route_from_config();
     update_mode_buttons();
     update_record_status();
@@ -4218,6 +4255,17 @@ void init_page(lv_obj_t* parent)
     ::ui::i18n::set_label_text(state.mode_route_label, "Routes");
     lv_obj_center(state.mode_route_label);
 
+    if (platform::ui::navigation::supported())
+    {
+        state.mode_navigation_btn = lv_btn_create(state.filter_panel);
+        lv_obj_set_size(state.mode_navigation_btn, LV_PCT(100), filter_button_height());
+        state.mode_navigation_label = lv_label_create(state.mode_navigation_btn);
+        lv_obj_add_style(state.mode_navigation_label, &s_btn_label, LV_PART_MAIN);
+        ::ui::i18n::set_label_text(state.mode_navigation_label, "Nav");
+        lv_obj_center(state.mode_navigation_label);
+        lv_obj_add_event_cb(state.mode_navigation_btn, on_mode_navigation, LV_EVENT_CLICKED, nullptr);
+    }
+
     state.status_label = lv_label_create(state.list_panel);
     ::ui::i18n::set_label_text(state.status_label, "Not recording");
     lv_obj_set_width(state.status_label, LV_PCT(100));
@@ -4230,14 +4278,9 @@ void init_page(lv_obj_t* parent)
     lv_obj_set_scroll_dir(state.list_container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(state.list_container, LV_SCROLLBAR_MODE_AUTO);
 
-    state.bottom_bar = layout::create_bottom_bar(state.list_panel);
-    state.start_stop_btn = lv_btn_create(state.bottom_bar);
-    lv_obj_set_size(state.start_stop_btn, bottom_bar_button_width(), filter_button_height());
-    state.start_stop_label = lv_label_create(state.start_stop_btn);
-    lv_obj_set_width(state.start_stop_label, LV_PCT(100));
-    lv_label_set_long_mode(state.start_stop_label, LV_LABEL_LONG_DOT);
-    lv_obj_center(state.start_stop_label);
-    apply_action_button(state.start_stop_btn, state.start_stop_label);
+    state.bottom_bar = ::ui::components::bottom_bar::create(state.root);
+    state.start_stop_btn = ::ui::components::bottom_bar::add_button(state.bottom_bar, "Stop recording", on_start_stop_clicked);
+    state.start_stop_label = lv_obj_get_child(state.start_stop_btn, 0);
 
     ::ui::widgets::TopBarConfig cfg;
     cfg.height = page_profile().top_bar_height;
@@ -4247,11 +4290,7 @@ void init_page(lv_obj_t* parent)
 
     lv_obj_add_event_cb(state.mode_record_btn, on_mode_record_clicked, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(state.mode_route_btn, on_mode_route_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(state.mode_record_btn, on_mode_record_focused, LV_EVENT_FOCUSED, nullptr);
     lv_obj_add_event_cb(state.mode_route_btn, on_mode_route_focused, LV_EVENT_FOCUSED, nullptr);
-    lv_obj_add_event_cb(state.mode_record_btn, on_mode_record_key, LV_EVENT_KEY, nullptr);
-    lv_obj_add_event_cb(state.mode_route_btn, on_mode_route_key, LV_EVENT_KEY, nullptr);
-    lv_obj_add_event_cb(state.start_stop_btn, on_start_stop_clicked, LV_EVENT_CLICKED, nullptr);
 
     set_mode(TrackerPageState::Mode::Record);
     refresh_page();
@@ -4259,7 +4298,15 @@ void init_page(lv_obj_t* parent)
 
 void cleanup_page()
 {
+    navigation_dialog::close();
     auto& state = g_tracker_state;
+    if (state.card_timer)
+    {
+        lv_timer_del(state.card_timer);
+        state.card_timer = nullptr;
+    }
+    ::platform::memory::destroyPsram(state.card_location_model);
+    state.card_location_model = nullptr;
     cancel_deferred_record_list_refresh();
     if (state.action_menu_modal)
     {

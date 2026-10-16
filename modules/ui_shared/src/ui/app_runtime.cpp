@@ -344,6 +344,9 @@ void rebuild_active_app_timer_cb(lv_timer_t* timer)
     {
         lv_obj_clean(parent);
     }
+#if defined(ARDUINO_T_LORA_PAGER)
+    if (app_g) lv_group_set_editing(app_g, false);
+#endif
     app->enter(parent);
 #if defined(ESP_PLATFORM)
     ESP_LOGI(kTag,
@@ -449,6 +452,11 @@ void ui_switch_to_app(AppScreen* app, lv_obj_t* parent)
                     s_active_app ? s_active_app->name() : "<none>",
                     app->name(),
                     parent ? 1 : 0);
+#if defined(ARDUINO_T_LORA_PAGER)
+        // App groups are reused. Editing in the previous app must not turn
+        // the next page's wheel into a value/cursor editor on entry.
+        if (app_g) lv_group_set_editing(app_g, false);
+#endif
         app->enter(parent);
         ui::menu_runtime::setScene(ui::menu_runtime::Scene::App);
     }

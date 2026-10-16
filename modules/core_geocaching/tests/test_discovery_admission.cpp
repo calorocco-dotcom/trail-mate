@@ -22,6 +22,40 @@ int main()
     packet.destination_hash = destination.data();
     packet.payload = payload.data();
     packet.payload_len = payload.size();
+    {
+        constexpr size_t prefix = reticulum::kCombinedPublicKeySize + reticulum::kNameHashSize + 10 + reticulum::kSignatureSize;
+        payload.resize(prefix + 99);
+        packet.payload = payload.data();
+        packet.payload_len = payload.size();
+        reticulum::computeNameHash("trailmate", "track.directory", payload.data() + reticulum::kCombinedPublicKeySize);
+        assert(GeocachingDiscoveryBudget::matchesApplications(packet, false, true, budget));
+        assert(GeocachingDiscoveryBudget::matchesApplications(packet, true, true, budget));
+        assert(!GeocachingDiscoveryBudget::matchesApplications(packet, true, false, budget));
+        assert(!GeocachingDiscoveryBudget::matches(packet, true, budget));
+        for (auto phase : {"call", "nomad", "saver"})
+        {
+            budget.phase = phase;
+            assert(!GeocachingDiscoveryBudget::matchesApplications(packet, false, true, budget));
+        }
+        budget.phase = "screen";
+        payload.resize(prefix + 128);
+        packet.payload = payload.data();
+        packet.payload_len = payload.size();
+        assert(GeocachingDiscoveryBudget::matchesApplications(packet, false, true, budget));
+        payload.resize(prefix + 129);
+        packet.payload = payload.data();
+        packet.payload_len = payload.size();
+        assert(!GeocachingDiscoveryBudget::matchesApplications(packet, false, true, budget));
+        payload.resize(prefix + 99);
+        packet.payload = payload.data();
+        packet.payload_len = payload.size();
+        payload[reticulum::kCombinedPublicKeySize] ^= 1;
+        assert(!GeocachingDiscoveryBudget::matchesApplications(packet, false, true, budget));
+        payload.resize(prefix + 1);
+        packet.payload = payload.data();
+        packet.payload_len = payload.size();
+        reticulum::computeNameHash("trailmate", "geocache.directory", payload.data() + reticulum::kCombinedPublicKeySize);
+    }
     // Signature bytes intentionally invalid: classification is not authentication.
     assert(GeocachingDiscoveryBudget::matches(packet, true, budget));
     assert(!GeocachingDiscoveryBudget::matches(packet, false, budget));

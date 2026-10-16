@@ -17,6 +17,7 @@
 #include "ui/components/shortcut_help_modal.h"
 #endif
 #include "ui/formatters.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_layout.h"
 #include "ui/menu/menu_profile.h"
 #include "ui/ui_common.h"
@@ -250,16 +251,36 @@ void openMenuHelpModal()
         return;
     }
 
-    ::ui::components::shortcut_help_modal::Row rows[7] = {
-        {"WASD", nullptr, "Select app"},
-        {"Enter", nullptr, "Open app"},
-        {"B", nullptr, "Cycle screen brightness"},
-        {"K", nullptr, "Cycle keyboard backlight"},
-        {"Space", nullptr, "Walkie PTT when monitor is on"},
-        {"ALT", "ALT", "Save screenshot"},
-        {"H", "Back", "Close help"},
-    };
-    std::size_t row_count = 2;
+    ::ui::components::shortcut_help_modal::Row rows[12] = {};
+    std::size_t row_count = 0;
+    if (ui::menu::dashboard::isFeedOpen())
+    {
+#if defined(ARDUINO_T_LORA_PAGER)
+        rows[row_count++] = {"V", "Back", "Return to menu"};
+        rows[row_count++] = {"W/S", "Wheel", "Switch widget"};
+        rows[row_count++] = {"A/D", nullptr, "Select widget control"};
+        rows[row_count++] = {"Enter", nullptr, "Run / edit selected control"};
+        rows[row_count++] = {"A/D", nullptr, "Adjust slider while editing"};
+#else
+        rows[row_count++] = {"W/S", "Wheel", "Switch widget"};
+        rows[row_count++] = {"D", "Back", "Return to menu"};
+#endif
+    }
+    else
+    {
+#if defined(ARDUINO_T_LORA_PAGER)
+        rows[row_count++] = {"V", nullptr, "Open widget screen"};
+        rows[row_count++] = {"WASD", "Wheel", "Select app"};
+#else
+        rows[row_count++] = {"WASD", nullptr, "Select app"};
+#endif
+        rows[row_count++] = {"Enter", nullptr, "Open app"};
+#if defined(ARDUINO_T_DECK) || defined(ARDUINO_WIO_TRACKER_L2)
+        rows[row_count++] = {"A", nullptr, "Widgets at left edge"};
+#elif defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+        rows[row_count++] = {"Swipe", nullptr, "More dashboard widgets"};
+#endif
+    }
     if (screenBrightnessShortcutEnabled())
     {
         rows[row_count++] = {"B", nullptr, "Cycle screen brightness"};
@@ -281,6 +302,10 @@ void openMenuHelpModal()
     config.row_count = row_count;
     config.width = 304;
     config.height = 176;
+#if defined(ARDUINO_T_LORA_PAGER)
+    config.title = ui::menu::dashboard::isFeedOpen() ? "Widgets Help" : "Main Menu Help";
+    config.height = 192;
+#endif
     config.restore_group = lv_group_get_default();
     (void)::ui::components::shortcut_help_modal::open(
         s_runtime.menu_help_modal,
@@ -924,6 +949,15 @@ bool handleShortcutKey(char key, int state)
     {
         return false;
     }
+
+#if defined(ARDUINO_T_LORA_PAGER)
+    // V is advertised by launcher Help itself. Restore the launcher's group
+    // before dispatch so following that hint works without an extra close.
+    if ((key == 'v' || key == 'V') &&
+        ::ui::components::shortcut_help_modal::is_open(s_runtime.menu_help_modal))
+        closeMenuHelpModal();
+#endif
+    if (ui::menu::dashboard::handleKey(static_cast<uint32_t>(key))) return true;
 
     if (isMenuHelpKey(key))
     {

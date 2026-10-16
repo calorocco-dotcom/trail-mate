@@ -7,14 +7,7 @@
     "build":  {
                   "includeDir":  "include",
                   "srcDir":  "src",
-                  "srcFilter":  [
-                                    "+<*>",
-                                    "-<ble/>",
-                                    "-<hostlink/>",
-                                    "-<rnode_kiss/>",
-                                    "-<platform_ui_hostlink_runtime.cpp>",
-                                    "-<ui/screens/gps/>"
-                                ],
+                  "extraScript": "configure_sources.py",
                   "flags":  [
                                 "-I../../../platform/shared/include",
                                 "-I../../../modules/ui_shared/include",

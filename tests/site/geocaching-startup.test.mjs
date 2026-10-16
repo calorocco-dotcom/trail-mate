@@ -4,17 +4,19 @@ import {test} from 'node:test';
 
 // Exercise the production startup function without the map/DOM dependencies.
 const page = await readFile(new URL('../../site/geocaching/src/page.js', import.meta.url), 'utf8');
-const startup = page.slice(page.indexOf('let serviceRetry ='), page.indexOf("$('search').onclick"))
+const startupStart=page.indexOf('let serviceRetry ='),startupEnd=page.indexOf("$('search').onclick");
+assert.ok(startupStart>=0&&startupEnd>startupStart,'bounded production startup extraction');
+const startup = page.slice(startupStart,startupEnd)
   .replaceAll('import.meta.url', 'baseUrl');
 function fixture(fetch) {
   const timers = [], calls = [], nodes = new Map();
-  const create = new Function('fetch', 'rpc', '$', 'tr', 'notice', 'setTimeout', 'clearTimeout', 'baseUrl',
+  const create = new Function('fetch', 'rpc', '$', 'presentation', 'showNotice', 'setTimeout', 'clearTimeout', 'baseUrl','registerGeocachingNetwork',
     `${startup}\nreturn {startService, stop:()=>{serviceStopped=true;clearTimeout(serviceRetry);},delay:()=>serviceRetryDelay};`);
   const service = create(fetch, async (...args)=>calls.push(args), id=>{
     if (!nodes.has(id)) nodes.set(id, {});
     return nodes.get(id);
-  }, en=>en, ()=>{}, (callback, delay)=>{const timer={callback,delay};timers.push(timer);return timer;},
-  timer=>{if(timer)timer.cancelled=true;}, 'https://example.org/geocaching/src/page.js');
+  }, {set:(id,key)=>nodes.set(id,{key})}, ()=>{}, (callback, delay)=>{const timer={callback,delay};timers.push(timer);return timer;},
+  timer=>{if(timer)timer.cancelled=true;}, 'https://example.org/geocaching/src/page.js',registration=>{assert.equal(typeof registration.rpc,'function');assert.equal(typeof registration.isReady,'function');});
   return {service,timers,calls};
 }
 const config = {ok:true,json:async()=>({endpoint:'wss://example.org:18434/',discoverySeeds:[]})};

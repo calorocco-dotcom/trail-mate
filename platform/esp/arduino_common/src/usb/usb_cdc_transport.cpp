@@ -53,7 +53,7 @@ bool start()
     s_status.dtr = false;
 
     s_cdc.enableReboot(false);
-    s_cdc.setRxBufferSize(2048);
+    s_cdc.setRxBufferSize(1024);
     s_cdc.setTxTimeoutMs(10);
     s_cdc.onEvent(cdc_event_cb);
     s_cdc.begin();
@@ -67,6 +67,11 @@ bool start()
 
 void stop()
 {
+#if defined(TRAIL_MATE_USB_HOSTLINK_AUTOSTART)
+    // The app owns enumeration for reconnect. HostLink may release its task
+    // and queues without re-registering callbacks or rebuilding descriptors.
+    return;
+#endif
 #if CONFIG_TINYUSB_CDC_ENABLED && defined(TRAIL_MATE_ENABLE_USB_CDC_TRANSPORT)
     if (!s_status.started)
     {

@@ -86,6 +86,8 @@ bool apply_enabled(bool enabled)
     return !enabled;
 }
 
+bool set_user_enabled(bool enabled) { return apply_enabled(enabled); }
+
 bool suspend_for_external_storage(ExternalStorageSuspension* out_suspension)
 {
     if (out_suspension)

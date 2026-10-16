@@ -10,6 +10,7 @@
 #include "chat/infra/mesh_adapter_router_core.h"
 #include "chat/ports/i_incoming_delivery_commit_port.h"
 #include "chat/ports/i_mesh_adapter.h"
+#include "chat/ports/i_track_transport.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <array>
@@ -28,6 +29,17 @@ class MeshAdapterRouter : public IMeshAdapter,
   public:
     MeshAdapterRouter();
     ~MeshAdapterRouter() override;
+    DeviceAuthorResult readDeviceAuthorKey(uint8_t* public_key, uint32_t& generation) const override;
+    DeviceAuthorResult exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const override;
+    DeviceIdentityRestoreResult restoreDeviceIdentity(const hostlink::management::IdentityRestoreView& request, uint8_t* work, size_t capacity) override;
+    DeviceIdentityRestoreResult restoreRadioIdentity(const hostlink::management::RadioIdentityRestoreView& request, uint8_t* work, size_t capacity) override;
+    DeviceAuthorResult readRadioIdentityInfo(uint8_t kind, uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const override;
+    DeviceAuthorResult exportRadioIdentityBackup(uint8_t kind, uint32_t generation, uint8_t* output, size_t capacity, size_t& written, const uint8_t* session, const uint8_t* request) const override;
+    DeviceAuthorResult signTrackManifest(const uint8_t* raw, size_t size, uint32_t generation, track_sharing::ManifestView& view,
+                                         uint8_t* workspace, size_t capacity, uint8_t* signature, size_t signature_capacity) const override;
+    DeviceAuthorResult proveDeviceAuthor(const uint8_t* session, const uint8_t* challenge, uint32_t expected_generation,
+                                         uint8_t* workspace, size_t capacity, uint8_t* public_key,
+                                         uint32_t& generation, uint8_t* signature) const override;
 
     bool installBackend(MeshProtocol protocol, std::unique_ptr<IMeshAdapter> backend) override;
     bool installServiceBackend(MeshProtocol protocol, std::unique_ptr<IMeshAdapter> backend);
@@ -35,6 +47,16 @@ class MeshAdapterRouter : public IMeshAdapter,
     // Retire a cached former chat instance, never an active/shared service.
     std::unique_ptr<IMeshAdapter> takeInactiveReticulumCache();
     bool processServiceQueue(MeshProtocol protocol);
+    // Resolve and validate under the same lock as dispatch. No backend pointer
+    // escapes; expected identity is mandatory for durable publication jobs.
+    MeshSendResult sendTrackData(const uint8_t destination[16], lxmf::ByteSpan data,
+                                 const uint8_t expected_author[64], uint32_t expected_generation,
+                                 bool response = false, std::array<uint8_t, 32>* accepted_hash = nullptr) override;
+    bool trackLocalDestination(uint8_t* output) override;
+    bool requestTrackDirectoryPath(const uint8_t* destination) override;
+    bool bindTrackDelivery(const lxmf::TrackDeliveryBinding* binding) override;
+    TrackBindingChange replaceTrackDelivery(const lxmf::TrackDeliveryBinding* expected, const lxmf::TrackDeliveryBinding* replacement) override;
+    TrackBindingChange visitTrackDelivery(const lxmf::TrackDeliveryBinding* expected, uint8_t* author, uint32_t& generation, TrackBindingVisit visit, void* context) override;
     // Worker-thread call. Resolves the current instance while holding the
     // router lock; callers must not retain a backend pointer across switches.
     MeshSendResult sendGeocachingData(const uint8_t destination_hash[16],
@@ -127,7 +149,9 @@ class MeshAdapterRouter : public IMeshAdapter,
     };
 
     mutable SemaphoreHandle_t mutex_ = nullptr;
+    const lxmf::TrackDeliveryBinding* track_delivery_binding_ = nullptr;
     chat::MeshAdapterRouterCore core_;
+    const IMeshAdapter* deviceAuthorBackendLocked() const;
     IGeocachingTransport* geocachingTransportLocked();
     bool geocachingDestinationLocked(uint8_t out[16]);
     void applyGeocachingHandlers(MeshProtocol protocol, IMeshAdapter* backend);

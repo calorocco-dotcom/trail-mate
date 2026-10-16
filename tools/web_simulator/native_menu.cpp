@@ -3,6 +3,7 @@
 #include "ui/app_catalog.h"
 #include "ui/app_catalog_builder.h"
 #include "ui/app_runtime.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_layout.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/runtime/ui_feedback.h"
@@ -10,19 +11,44 @@
 #include <cstring>
 
 extern "C" void native_open_page(int page);
+namespace ui::agenda
+{
+class IAgendaSource;
+}
+ui::agenda::IAgendaSource* preview_agenda_source();
+void preview_bind_controls();
+void preview_bind_music();
 static bool menu_created = false;
 static AppScreen* active_app = nullptr;
 static ui::AppCatalog catalog;
 static int page_for(const char* id)
 {
+    if (std::strcmp(id, "music") == 0) return 19;
+    if (std::strcmp(id, "geocaching") == 0) return 20;
     const char* ids[] = {"calculator", "sky_plot", "usb_mass_storage", "walkie_talkie", "sstv", "chat", "", "", "extensions", "network", "", "settings", "contacts", "team", "tracker", "map", "energy_sweep"};
     for (int i = 0; i < 17; ++i)
         if (std::strcmp(ids[i], id) == 0) return i;
     return -1;
 }
 
+void preview_select_page(int page)
+{
+    active_app = nullptr;
+    for (size_t i = 0; i < ui::catalogCount(catalog); ++i)
+    {
+        auto* app = ui::catalogAt(catalog, i);
+        if (page_for(app->stable_id()) == page || (page >= 5 && page <= 7 && !std::strcmp(app->stable_id(), "chat")))
+        {
+            active_app = app;
+            break;
+        }
+    }
+}
+
 void preview_menu_enter()
 {
+    preview_bind_controls();
+    preview_bind_music();
     if (!menu_created)
     {
         auto* previous_group = app_g;
@@ -37,6 +63,7 @@ void preview_menu_enter()
 #endif
         catalog = ui::app_catalog_builder::build(flags);
         ui::menu_layout::InitOptions options;
+        ui::menu::dashboard::bindAgendaSource(preview_agenda_source());
         options.apps = catalog;
         ui::menu_layout::init(options);
         if (previous_group) lv_group_delete(previous_group);
@@ -58,6 +85,7 @@ void preview_menu_exit()
 {
     if (menu_created)
     {
+        ui::menu::dashboard::setActive(false);
         ui::menu_runtime::setScene(ui::menu_runtime::Scene::App);
         lv_obj_add_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
     }

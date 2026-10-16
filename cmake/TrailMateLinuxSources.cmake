@@ -132,6 +132,7 @@ _trailmate_set_linux_paths()
 # ---------------------------------------------------------------------------
 
 set(TRAIL_MATE_LINUX_COMMON_SOURCES
+    "${TRAIL_MATE_REPO_ROOT}/third_party/yxml/yxml.c"
     # app facade
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/app/linux_app_services.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/app/linux_app_facade.cpp"
@@ -162,6 +163,10 @@ set(TRAIL_MATE_LINUX_COMMON_SOURCES
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/map_diagnostics.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/hostlink_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/lora_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/agenda_widget_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/music_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/quick_controls_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/resource_lock.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/orientation_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/pack_repository_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/route_storage.cpp"
@@ -380,6 +385,8 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/info_card.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/two_pane_layout.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/two_pane_nav.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/bottom_bar.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/dialog_frame.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/components/two_pane_styles.cpp"
     # modules/ui_shared �?shell / menu / page
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/app_runtime.cpp"
@@ -390,6 +397,10 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/startup_shell.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/watch_face.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_compass_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_agenda_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_music_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_controls_widget.cpp"
+    "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/assets/music.c"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_gps_widget.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_mesh_widget.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/menu/dashboard/dashboard_recent_widget.cpp"
@@ -516,6 +527,7 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
     # tracker
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_components.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_input.cpp"
+      "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_navigation_dialog.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_layout.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_runtime.cpp"
     "${TRAIL_MATE_UI_SHARED_SRC_ROOT}/ui/screens/tracker/tracker_page_shell.cpp"
@@ -556,6 +568,7 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
 # ---------------------------------------------------------------------------
 
 set(TRAIL_MATE_LINUX_COMMON_INCLUDES
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_music/include"
     "${TRAIL_MATE_LINUX_COMMON_INCLUDE_ROOT}"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}"
     "${TRAIL_MATE_CORE_CHAT_INCLUDE_ROOT}"
@@ -563,6 +576,9 @@ set(TRAIL_MATE_LINUX_COMMON_INCLUDES
     "${TRAIL_MATE_CORE_CHAT_NANOPB_ROOT}"
     "${TRAIL_MATE_CORE_GPS_INCLUDE_ROOT}"
     "${TRAIL_MATE_CORE_HOSTLINK_INCLUDE_ROOT}"
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_track_sharing/include"
+    "${TRAIL_MATE_REPO_ROOT}/third_party/yxml"
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_geocaching/include"
     "${TRAIL_MATE_CORE_SYS_INCLUDE_ROOT}"
     "${TRAIL_MATE_CORE_DEVICE_INCLUDE_ROOT}"
     "${TRAIL_MATE_CORE_MESH_INCLUDE_ROOT}"
@@ -581,6 +597,8 @@ set(TRAIL_MATE_LINUX_COMMON_INCLUDES
 )
 
 set(TRAIL_MATE_LINUX_UI_SHELL_INCLUDES
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_agenda/include"
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_music/include"
     "${TRAIL_MATE_LINUX_COMMON_INCLUDE_ROOT}"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}"
     "${TRAIL_MATE_CORE_CHAT_INCLUDE_ROOT}"
@@ -617,6 +635,8 @@ function(trailmate_apply_linux_common_warnings target_name)
 endfunction()
 
 function(trailmate_add_linux_common target_name)
+    include("${TRAIL_MATE_REPO_ROOT}/cmake/TrailMateTmap.cmake")
+    trailmate_add_tmap()
     find_package(CURL REQUIRED)
     find_package(SQLite3 REQUIRED)
     find_package(OpenSSL QUIET)
@@ -636,6 +656,7 @@ function(trailmate_add_linux_common target_name)
     )
     target_link_libraries(${target_name}
         PUBLIC
+            tmap::tmap
             Threads::Threads
             CURL::libcurl
             SQLite::SQLite3

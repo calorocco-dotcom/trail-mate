@@ -828,3 +828,59 @@ No saved waypoints	保存済みのウェイポイントはありません
 Saved waypoint	保存済みウェイポイント
 Waypoint unavailable	ウェイポイントを利用できません
 Reticulum	Reticulum
+Image memory unavailable	画像用メモリが不足しています
+Image cache needs checking. Download again.	画像キャッシュの確認が必要です。再ダウンロードしてください。
+Off route %.0fm	ルート外 %.0fm
+Route position unavailable	ルート位置を取得できません
+Route storage unavailable	ルート保存領域が使用できません
+Route: waiting for GPS	ルート：GPS待機中
+Route position ambiguous	ルート位置に複数の候補
+Route end (estimated)	ルート終点（推定）
+Route %u%% | %s left	ルート %u%% | 残り %s
+Matching route...	ルートを照合中…
+Distance %.0f m	距離 %.0f m
+Distance %.1f km	距離 %.1f km
+Position unknown	位置不明
+Region unknown	行政区域不明
+Location loading...	位置を検索中…
+Distance unknown	距離不明
+My position unknown	現在地不明
+No nodes	ノードなし
+Old position	古い位置情報
+Contacts unavailable	連絡先を利用できません
+Map Help	地図ヘルプ
+Map layer: %s	地図レイヤー: %s
+Show contours	等高線を表示
+Hide contours	等高線を非表示
+Search POI	周辺施設を検索
+Load navigation	ナビを読み込む
+Load track	軌跡を読み込む
+No saved navigation	保存済みのナビはありません
+Help	ヘルプ
+Menu	メニュー
+Navigation	ナビゲーション
+Nav	ナビ
+New navigation	新しいナビゲーション
+Current location	現在地
+Use current location	現在地を使う
+Choose destination	目的地を選択
+Calculate route	経路を計算
+Save and preview	保存してプレビュー
+Calculating route...	経路を計算中...
+Route ready: %.1f km	経路の準備完了：%.1f km
+No TMAP routing data	TMAPの経路データがありません
+No path found	経路が見つかりません
+Outside routing coverage	経路データの範囲外です
+Navigation memory limit	ナビゲーションのメモリ上限に達しました
+Navigation unavailable	ナビゲーションを利用できません
+Origin	出発地
+Destination	目的地
+Tap the origin to search for a place	出発地をタップして場所を検索
+Search unavailable	検索を利用できません
+Cancelled	キャンセル済み
+No team	チームメンバーがいません
+View	一覧
+Current	現在
+Contours	等高線
+Load	読み込む
+Unload	解除

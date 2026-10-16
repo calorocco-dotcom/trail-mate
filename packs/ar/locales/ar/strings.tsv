@@ -828,3 +828,59 @@ No saved waypoints	لا توجد نقاط طريق محفوظة
 Saved waypoint	نقطة طريق محفوظة
 Waypoint unavailable	نقطة الطريق غير متاحة
 Reticulum	Reticulum
+Image memory unavailable	ذاكرة الصور غير كافية
+Image cache needs checking. Download again.	تحتاج ذاكرة الصور إلى التحقق. نزّل الصور مجددًا.
+Off route %.0fm	خارج المسار %.0fm
+Route position unavailable	موضع المسار غير متاح
+Route storage unavailable	تخزين المسار غير متاح
+Route: waiting for GPS	المسار: انتظار GPS
+Route position ambiguous	موضع المسار متعدد الاحتمالات
+Route end (estimated)	نهاية المسار (تقدير)
+Route %u%% | %s left	المسار %u%% | المتبقي %s
+Matching route...	جارٍ مطابقة المسار…
+Distance %.0f m	المسافة %.0f م
+Distance %.1f km	المسافة %.1f كم
+Position unknown	الموقع غير معروف
+Region unknown	المنطقة الإدارية غير معروفة
+Location loading...	جارٍ البحث عن الموقع…
+Distance unknown	المسافة غير معروفة
+My position unknown	موقعي غير معروف
+No nodes	لا توجد عقد
+Old position	موقع قديم
+Contacts unavailable	جهات الاتصال غير متاحة
+Map Help	مساعدة الخريطة
+Map layer: %s	طبقة الخريطة: %s
+Show contours	إظهار خطوط الكنتور
+Hide contours	إخفاء خطوط الكنتور
+Search POI	البحث عن أماكن
+Load navigation	تحميل مسار الملاحة
+Load track	تحميل المسار المسجل
+No saved navigation	لا توجد ملاحة محفوظة
+Help	مساعدة
+Menu	القائمة
+Navigation	الملاحة
+Nav	ملاحة
+New navigation	ملاحة جديدة
+Current location	الموقع الحالي
+Use current location	استخدام الموقع الحالي
+Choose destination	اختيار الوجهة
+Calculate route	حساب المسار
+Save and preview	حفظ ومعاينة
+Calculating route...	جارٍ حساب المسار...
+Route ready: %.1f km	المسار جاهز: %.1f كم
+No TMAP routing data	لا توجد بيانات توجيه TMAP
+No path found	لم يتم العثور على مسار
+Outside routing coverage	خارج تغطية التوجيه
+Navigation memory limit	تم بلوغ حد ذاكرة الملاحة
+Navigation unavailable	الملاحة غير متاحة
+Origin	نقطة البداية
+Destination	الوجهة
+Tap the origin to search for a place	اضغط على نقطة البداية للبحث عن مكان
+Search unavailable	البحث غير متاح
+Cancelled	تم الإلغاء
+No team	لا يوجد أعضاء فريق
+View	عرض
+Current	الحالي
+Contours	خطوط الكنتور
+Load	تحميل
+Unload	إلغاء التحميل

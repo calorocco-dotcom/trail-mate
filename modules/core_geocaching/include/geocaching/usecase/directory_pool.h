@@ -54,6 +54,11 @@ class DirectoryPool
         {
             entry->epoch = announce.epoch;
             entry->sequence = announce.sequence;
+            // A new directory incarnation must negotiate its limits again.
+            // Keep in_flight owned by the existing request lifecycle.
+            entry->capabilities_verified = false;
+            entry->max_query_items = 0;
+            entry->retry_after = 0;
         }
         else if (announce.sequence > entry->sequence) entry->sequence = announce.sequence;
         entry->last_seen = now;

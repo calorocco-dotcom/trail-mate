@@ -3,13 +3,16 @@ import {readFile} from 'node:fs/promises';
 import {test} from 'node:test';
 
 const page=await readFile(new URL('../../site/geocaching/src/page.js',import.meta.url),'utf8');
-const rpcSource=page.slice(page.indexOf('function rpc('),page.indexOf('const notice ='));
-const recovery=page.slice(page.indexOf('function recoverWorker()'),page.indexOf('\nworker.onmessage=receiveWorkerMessage;'))
+const rpcStart=page.indexOf('function rpc('),rpcEnd=page.search(/^const notice\s*=/m);
+const recoveryStart=page.indexOf('function recoverWorker()'),recoveryEnd=page.indexOf('\nworker.onmessage=receiveWorkerMessage;');
+assert.ok(rpcStart>=0&&rpcEnd>rpcStart&&recoveryStart>=0&&recoveryEnd>recoveryStart,'bounded production function extraction');
+const rpcSource=page.slice(rpcStart,rpcEnd);
+const recovery=page.slice(recoveryStart,recoveryEnd)
   .replaceAll('import.meta.url','baseUrl');
 function fixture(creationFailures=0) {
   const messages=[],timers=[],nodes=new Map();let terminated=0,created=0,started=0;
   const worker={postMessage:message=>messages.push(message),terminate:()=>terminated++};
-  const create=new Function('initialWorker','Worker','setTimeout','clearTimeout','$','notice','tr','onMessage','startService','baseUrl',
+  const create=new Function('initialWorker','Worker','setTimeout','clearTimeout','$','showNotice','statusText','onMessage','startService','baseUrl',
     `let worker=initialWorker,nextId=0,serviceStopped=false,serviceRetry=null;const pending=new Map();
      const receiveWorkerMessage=onMessage;const updateSelection=()=>{};
      ${rpcSource}\n${recovery}\nreturn {rpc,rejectPending,recoverWorker,size:()=>pending.size};`);

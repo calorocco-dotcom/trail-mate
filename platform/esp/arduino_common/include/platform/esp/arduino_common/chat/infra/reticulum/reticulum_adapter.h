@@ -15,6 +15,7 @@
 #include "chat/ports/i_incoming_delivery_commit_port.h"
 #include "chat/ports/i_mesh_adapter.h"
 #include "chat/ports/i_mesh_peer_directory.h"
+#include "chat/ports/i_track_transport.h"
 
 #include <memory>
 #include <new>
@@ -40,6 +41,7 @@ enum class ReticulumUsage : uint8_t
 };
 
 class ReticulumAdapter final : public IMeshAdapter,
+                               public ITrackTransport,
                                public IGeocachingTransport,
                                public IIncomingDeliveryCommitPort
 {
@@ -58,7 +60,20 @@ class ReticulumAdapter final : public IMeshAdapter,
     ReticulumAdapter& operator=(const ReticulumAdapter&) = delete;
 
     MeshCapabilities getCapabilities() const override;
+    DeviceAuthorResult readDeviceAuthorKey(uint8_t* public_key, uint32_t& generation) const override;
+    DeviceAuthorResult exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const override;
+    DeviceIdentityRestoreResult restoreDeviceIdentity(const hostlink::management::IdentityRestoreView& request, uint8_t* work, size_t capacity) override;
+    DeviceAuthorResult signTrackManifest(const uint8_t* raw, size_t size, uint32_t generation, track_sharing::ManifestView& view,
+                                         uint8_t* workspace, size_t capacity, uint8_t* signature, size_t signature_capacity) const override;
+    DeviceAuthorResult proveDeviceAuthor(const uint8_t* session, const uint8_t* challenge, uint32_t expected_generation,
+                                         uint8_t* workspace, size_t capacity, uint8_t* public_key,
+                                         uint32_t& generation, uint8_t* signature) const override;
     IGeocachingTransport* geocachingTransport() override { return this; }
+    ITrackTransport* trackTransport() override { return this; }
+    bool requestDirectoryPath(const uint8_t* destination) override;
+    MeshSendResult sendTrackData(const uint8_t destination[16], lxmf::ByteSpan data,
+                                 bool response, std::array<uint8_t, 32>* accepted_hash) override;
+    void setTrackDeliveryBinding(const lxmf::TrackDeliveryBinding* binding) override;
     bool getGeocachingAuthorKey(uint8_t out[64]) override;
     bool signGeocachingRecord(lxmf::ByteSpan record, uint8_t* workspace, size_t workspace_capacity,
                               uint8_t* output, size_t output_capacity, size_t& written) override;

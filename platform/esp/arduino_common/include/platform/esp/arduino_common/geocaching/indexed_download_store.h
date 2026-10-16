@@ -24,8 +24,8 @@ class IndexedDownloadStore final : public DownloadStore
                          uint8_t* frame, size_t capacity, uint8_t* response, size_t response_capacity,
                          uint8_t* verification, size_t verification_capacity, ::geocaching::protocol::RecordCrypto& crypto)
         : volume_(volume), root_(root), copy_(copy), roots_{&first, &second}, owner_(owner), workspace_(workspace),
-          frame_(frame), capacity_(capacity), response_(response), response_capacity_(response_capacity),
-          verification_(verification), verification_capacity_(verification_capacity), crypto_(crypto)
+          frame_(frame), response_(response), verification_(verification), capacity_(capacity),
+          response_capacity_(response_capacity), verification_capacity_(verification_capacity), crypto_(crypto)
     {
         valid_ = copy < 2 && ::geocaching::storage::validIndexRoot(root) && root.shards.data == roots_[copy]->data() + 48 &&
                  frame && capacity >= 24 && response_capacity && verification_capacity && workspace.outgoing;

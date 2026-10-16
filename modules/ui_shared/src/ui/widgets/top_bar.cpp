@@ -4,11 +4,16 @@
  */
 
 #include "ui/widgets/top_bar.h"
+#if defined(ARDUINO_T_LORA_PAGER)
+#include "platform/ui/psram_ui_lease.h"
+#endif
 
 #include <algorithm>
 #include <cstring>
 
 #include "ui/assets/fonts/font_utils.h"
+#include "ui/input/pager_navigation.h"
+#include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/ui_theme.h"
 #include "ui/widgets/top_bar_power_presenter.h"
@@ -78,6 +83,9 @@ static const lv_font_t* resolve_top_bar_font(lv_coord_t height)
 
 void top_bar_init(TopBar& bar, lv_obj_t* parent, const TopBarConfig& config)
 {
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
     const auto& profile = ::ui::page_profile::current();
     const lv_coord_t resolved_height = resolve_top_bar_height(config);
     const bool large_touch = resolved_height > ::ui::kUnifiedTopBarHeight &&
@@ -203,6 +211,19 @@ void top_bar_init(TopBar& bar, lv_obj_t* parent, const TopBarConfig& config)
     {
         top_bar_power::bind(bar);
     }
+#if defined(ARDUINO_T_LORA_PAGER)
+    if (config.page_help)
+    {
+        // Dialog headers own their shortcuts. Registering them as pages would
+        // make H open another Help instead of closing the current dialog.
+        auto* help_hint = lv_label_create(bar.container);
+        lv_label_set_text(help_hint, "H Help");
+        lv_obj_set_style_text_font(help_hint, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(help_hint, ui::theme::text(), 0);
+        lv_obj_move_to_index(help_hint, lv_obj_get_index(bar.right_label));
+        ui::input::pager::install_help(parent, bar.title_label);
+    }
+#endif
 }
 
 void top_bar_set_title(TopBar& bar, const char* title)
@@ -265,6 +286,44 @@ void top_bar_set_back_callback(TopBar& bar, void (*cb)(void*), void* user_data)
 {
     bar.back_cb = cb;
     bar.back_user_data = user_data;
+}
+
+lv_obj_t* top_bar_create_dialog_header(lv_obj_t* parent, const char* title,
+                                       lv_event_cb_t on_close, void* context, lv_obj_t** close_button)
+{
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
+    TopBar bar{};
+    TopBarConfig config{};
+    // Neither a back callback nor the power presenter retains this local view.
+    config.create_back = false;
+    config.power_indicator = false;
+    config.page_help = false;
+    top_bar_init(bar, parent, config);
+    lv_obj_del(bar.right_label);
+    top_bar_set_title(bar, ::ui::i18n::tr(title));
+    // A header is a leaf widget. Keep its close control independent of the
+    // taskbar/menu implementation so standalone pages can link it directly.
+    auto* close = lv_button_create(bar.container);
+    lv_obj_set_style_bg_color(close, lv_color_hex(0xF8E6C3), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(close, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(close, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(close, lv_color_hex(0x8A6E43), LV_PART_MAIN);
+    lv_obj_set_style_radius(close, 4, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(close, 0, LV_PART_MAIN);
+    lv_obj_set_style_text_color(close, lv_color_hex(0x25170D), LV_PART_MAIN);
+    lv_obj_set_style_text_font(close, resolve_top_bar_font(resolve_top_bar_height(config)), LV_PART_MAIN);
+    lv_obj_clear_flag(close, LV_OBJ_FLAG_SCROLLABLE);
+    auto* caption = lv_label_create(close);
+    lv_label_set_text(caption, LV_SYMBOL_CLOSE);
+    lv_obj_center(caption);
+    if (on_close) lv_obj_add_event_cb(close, on_close, LV_EVENT_CLICKED, context);
+    const auto size = std::max<lv_coord_t>(16, resolve_top_bar_height(config) - 4);
+    lv_obj_set_size(close, size, size);
+    lv_obj_set_style_pad_all(close, 0, LV_PART_MAIN);
+    if (close_button) *close_button = close;
+    return bar.container;
 }
 
 } // namespace widgets

@@ -110,7 +110,7 @@ class IndexedPublicationStore final : public PublicationStore
         if (!catalog_)
         {
             if (!owner_.acquire(this)) return DraftReadResult::Busy;
-            catalog_.reset(::platform::memory::createPsram<SdIndexedDraftCatalog>(volume_, crypto_));
+            catalog_.reset(::platform::memory::createPsram<SdIndexedDraftCatalog>(volume_, crypto_, verification_, verification_capacity_));
             if (!catalog_)
             {
                 owner_.release(this);
@@ -161,7 +161,7 @@ class IndexedPublicationStore final : public PublicationStore
         if (!history_)
         {
             if (!owner_.acquire(this)) return DraftReadResult::Busy;
-            history_.reset(::platform::memory::createPsram<SdIndexedPublicationHistory>(volume_, crypto_));
+            history_.reset(::platform::memory::createPsram<SdIndexedPublicationHistory>(volume_, crypto_, verification_, verification_capacity_));
             if (!history_)
             {
                 owner_.release(this);
@@ -287,6 +287,15 @@ class IndexedPublicationStore final : public PublicationStore
         if (acquired != JournalWriteResult::Verified) return acquired;
         return started(io_->emplace<SdIndexedAuthorReservation>(volume_, crypto_).beginReserve(root_, copy_, record, time, workspace, capacity, frame_, capacity_, *roots_[1 - copy_], key, generation));
     }
+    JournalWriteResult reserveWebDraftUnsignedRecord(::geocaching::ByteView key, uint64_t generation, ::geocaching::ByteView record,
+                                                     ::geocaching::protocol::RecordCrypto& crypto, uint8_t* workspace, size_t capacity,
+                                                     const ::geocaching::storage::StoredTime& time) override
+    {
+        if (&crypto != &crypto_ || !key.data || key.size != 16 || !generation) return JournalWriteResult::Invalid;
+        const auto acquired = acquire();
+        if (acquired != JournalWriteResult::Verified) return acquired;
+        return started(io_->emplace<SdIndexedAuthorReservation>(volume_, crypto_).beginReserve(root_, copy_, record, time, workspace, capacity, frame_, capacity_, *roots_[1 - copy_], key, generation, true));
+    }
     JournalWriteResult persistNewTask(const ::geocaching::Destination& local, const ::geocaching::Destination& remote,
                                       const ::geocaching::RequestId& request, const std::array<uint8_t, 16>& task, uint8_t kind,
                                       ::geocaching::ByteView bytes, const ::geocaching::storage::StoredTime& time,
@@ -312,6 +321,18 @@ class IndexedPublicationStore final : public PublicationStore
         std::memmove(response_, response.data, response.size);
         return started(io_->emplace<SdIndexedDirectoryReply>(volume_).begin(root_, copy_, {key_.data(), key_.size()}, 1, {response_, response.size},
                                                                             workspace_, frame_, capacity_, *roots_[1 - copy_], &crypto_, verification_, verification_capacity_));
+    }
+    JournalWriteResult commitWebPublication(const ::geocaching::Destination& local, const ::geocaching::Destination& remote,
+                                            const ::geocaching::RequestId& request, const std::array<uint8_t, 16>& operation,
+                                            ::geocaching::ByteView request_bytes, ::geocaching::ByteView confirmation,
+                                            const ::geocaching::storage::StoredTime& time, ::geocaching::protocol::RecordCrypto& crypto) override
+    {
+        if (&crypto != &crypto_ || !request_bytes.data || request_bytes.size > 8192 || !confirmation.data || confirmation.size > 384)
+            return JournalWriteResult::Invalid;
+        const auto acquired = acquire();
+        if (acquired != JournalWriteResult::Verified) return acquired;
+        return started(io_->emplace<SdIndexedNewTask>(volume_).beginConfirmed(root_, copy_, local, remote, request, operation, request_bytes, confirmation, time,
+                                                                              workspace_, frame_, capacity_, *roots_[1 - copy_], crypto_, verification_, verification_capacity_));
     }
     JournalWriteResult stopTask(const std::array<uint8_t, 16>& task) override
     {

@@ -4,9 +4,11 @@
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 
 #include <cmath>
+#include <cstring>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <new>
+#include <strings.h>
 
 namespace gps
 {
@@ -315,11 +317,12 @@ void TrackRecorder::stop()
 
 void TrackRecorder::setAutoRecording(bool enabled)
 {
-    if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(200)) != pdTRUE)
-    {
-        return;
-    }
+    requested_auto_recording_.store(enabled ? 1 : 0, std::memory_order_release);
+    applyPendingSettings();
+}
 
+void TrackRecorder::applyAutoRecordingLocked(bool enabled)
+{
     auto_recording_ = enabled;
     if (auto_recording_ && !recording_)
     {
@@ -352,11 +355,6 @@ void TrackRecorder::setAutoRecording(bool enabled)
         pending_point_count_ = 0;
     }
     updateActiveStateLocked();
-
-    if (mutex_)
-    {
-        xSemaphoreGive(mutex_);
-    }
 }
 
 void TrackRecorder::setIntervalSeconds(uint32_t seconds)
@@ -375,17 +373,16 @@ void TrackRecorder::setDistanceOnly(bool enabled)
 
 void TrackRecorder::setFormat(TrackFormat format)
 {
-    if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(400)) != pdTRUE)
-    {
-        return;
-    }
+    const auto value = static_cast<uint8_t>(format);
+    if (value > static_cast<uint8_t>(TrackFormat::Binary)) return;
+    requested_format_.store(value, std::memory_order_release);
+    applyPendingSettings();
+}
 
+void TrackRecorder::applyFormatLocked(TrackFormat format)
+{
     if (format_ == format)
     {
-        if (mutex_)
-        {
-            xSemaphoreGive(mutex_);
-        }
         return;
     }
 
@@ -394,14 +391,8 @@ void TrackRecorder::setFormat(TrackFormat format)
     if (!recording_)
     {
         format_ = format;
-        if (mutex_)
-        {
-            xSemaphoreGive(mutex_);
-        }
         return;
     }
-
-    format_ = format;
 
     if (current_path_.length() > 0)
     {
@@ -417,6 +408,7 @@ void TrackRecorder::setFormat(TrackFormat format)
             f.close();
         }
     }
+    format_ = format;
     recording_ = false;
     current_path_ = "";
     last_point_valid_ = false;
@@ -431,24 +423,41 @@ void TrackRecorder::setFormat(TrackFormat format)
             beginNewFile();
         }
     }
+}
 
-    if (mutex_)
+void TrackRecorder::applyPendingSettingsLocked()
+{
+    const auto automatic = requested_auto_recording_.load(std::memory_order_acquire);
+    const auto format = requested_format_.load(std::memory_order_acquire);
+    // Stop automatic recording before a format change; enabling comes last.
+    // Requests remain available for another poll if a newer value arrives
+    // during application. Never clear a newer request with an old completion.
+    if (automatic == 0 && auto_recording_) applyAutoRecordingLocked(false);
+    if (format <= static_cast<uint8_t>(TrackFormat::Binary) && format != static_cast<uint8_t>(format_))
+        applyFormatLocked(static_cast<TrackFormat>(format));
+    const uint32_t now = millis();
+    if (automatic == 1 && (!auto_recording_ || (!recording_ && now - last_flush_ms_ >= 1000U)))
     {
-        xSemaphoreGive(mutex_);
+        // While stopped there are no pending points; reuse the flush clock to
+        // bound automatic-start retries if the card is not ready yet.
+        last_flush_ms_ = now;
+        applyAutoRecordingLocked(true);
     }
+}
+
+void TrackRecorder::applyPendingSettings()
+{
+    if (!mutex_ || xSemaphoreTake(mutex_, 0) != pdTRUE) return;
+    applyPendingSettingsLocked();
+    xSemaphoreGive(mutex_);
 }
 
 void TrackRecorder::appendPoint(const TrackPoint& pt)
 {
-    if (!recording_ || current_path_.isEmpty())
-    {
-        return;
-    }
-
     bool force_flush_before_enqueue = false;
     bool should_flush_after_enqueue = false;
 
-    if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(20)) != pdTRUE)
+    if (!mutex_ || xSemaphoreTake(mutex_, pdMS_TO_TICKS(20)) != pdTRUE)
     {
         return;
     }
@@ -512,7 +521,7 @@ void TrackRecorder::appendPoint(const TrackPoint& pt)
 void TrackRecorder::flushPending(bool force)
 {
     const TickType_t mutex_wait = force ? pdMS_TO_TICKS(400) : pdMS_TO_TICKS(20);
-    if (mutex_ && xSemaphoreTake(mutex_, mutex_wait) != pdTRUE)
+    if (!mutex_ || xSemaphoreTake(mutex_, mutex_wait) != pdTRUE)
     {
         return;
     }
@@ -764,6 +773,46 @@ void TrackRecorder::clearActiveStateLocked() const
     {
         sd_remove(kActivePath);
     }
+}
+
+bool TrackRecorder::tryAcquireRead(bool require_stopped)
+{
+    if (!mutex_ || xSemaphoreTake(mutex_, 0) != pdTRUE) return false;
+    if (require_stopped && recording_)
+    {
+        xSemaphoreGive(mutex_);
+        return false;
+    }
+    return true;
+}
+
+void TrackRecorder::releaseRead()
+{
+    if (mutex_)
+    {
+        applyPendingSettingsLocked();
+        xSemaphoreGive(mutex_);
+    }
+}
+
+bool TrackRecorder::removeTrack(const char* path)
+{
+    if (!path || std::strncmp(path, "/trackers/", 10) || !path[10]) return false;
+    const char* name = path + 10;
+    if (!std::strcmp(name, ".") || !std::strcmp(name, "..")) return false;
+    // Recovery metadata is not a user track, including FAT case aliases.
+    if (!strcasecmp(path, kActivePath)) return false;
+    for (const char* cursor = name; *cursor; ++cursor)
+    {
+        if (*cursor == '/' || *cursor == '\\' || *cursor == ':' ||
+            static_cast<unsigned char>(*cursor) < 32) return false;
+    }
+    if (!mutex_ || xSemaphoreTake(mutex_, 0) != pdTRUE) return false;
+    // FAT path comparisons must reject case variants of the active filename.
+    const bool active = recording_ && !strcasecmp(path, current_path_.c_str());
+    const bool removed = !active && sd_card_ready() && sd_remove(path);
+    xSemaphoreGive(mutex_);
+    return removed;
 }
 
 size_t TrackRecorder::listTracks(String* out_names, size_t max_names) const

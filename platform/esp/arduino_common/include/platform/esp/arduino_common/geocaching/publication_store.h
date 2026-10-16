@@ -58,6 +58,14 @@ class PublicationStore
     virtual JournalWriteResult reserveDraftUnsignedRecord(::geocaching::ByteView, uint64_t, ::geocaching::ByteView,
                                                           ::geocaching::protocol::RecordCrypto&, uint8_t*, size_t,
                                                           const ::geocaching::storage::StoredTime&) = 0;
+    // USB author maintenance: fixed record time, with first-author binding in
+    // the same durable draft/issuance transaction. Unsupported stores fail shut.
+    virtual JournalWriteResult reserveWebDraftUnsignedRecord(::geocaching::ByteView, uint64_t, ::geocaching::ByteView,
+                                                             ::geocaching::protocol::RecordCrypto&, uint8_t*, size_t,
+                                                             const ::geocaching::storage::StoredTime&)
+    {
+        return JournalWriteResult::Invalid;
+    }
     virtual JournalWriteResult persistNewTask(const ::geocaching::Destination&, const ::geocaching::Destination&,
                                               const ::geocaching::RequestId&, const std::array<uint8_t, 16>&, uint8_t,
                                               ::geocaching::ByteView, const ::geocaching::storage::StoredTime&,
@@ -65,6 +73,13 @@ class PublicationStore
     virtual JournalWriteResult commitPublishResult(const ::geocaching::Destination&, const ::geocaching::Destination&,
                                                    const ::geocaching::RequestId&, ::geocaching::ByteView,
                                                    ::geocaching::protocol::RecordCrypto&) = 0;
+    virtual JournalWriteResult commitWebPublication(const ::geocaching::Destination&, const ::geocaching::Destination&,
+                                                    const ::geocaching::RequestId&, const std::array<uint8_t, 16>&,
+                                                    ::geocaching::ByteView, ::geocaching::ByteView,
+                                                    const ::geocaching::storage::StoredTime&, ::geocaching::protocol::RecordCrypto&)
+    {
+        return JournalWriteResult::Invalid;
+    }
     virtual JournalWriteResult stopTask(const std::array<uint8_t, 16>&) = 0;
 };
 } // namespace platform::esp::arduino_common::geocaching

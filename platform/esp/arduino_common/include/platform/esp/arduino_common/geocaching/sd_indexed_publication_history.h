@@ -10,8 +10,9 @@ namespace platform::esp::arduino_common::geocaching
 class SdIndexedPublicationHistory
 {
   public:
-    SdIndexedPublicationHistory(const ::geocaching::storage::VolumeInstance& volume, ::geocaching::protocol::RecordCrypto& crypto)
-        : volume_(volume), crypto_(crypto) {}
+    SdIndexedPublicationHistory(const ::geocaching::storage::VolumeInstance& volume, ::geocaching::protocol::RecordCrypto& crypto,
+                                uint8_t* verification = nullptr, size_t verification_capacity = 0)
+        : volume_(volume), crypto_(crypto), verification_(verification), verification_capacity_(verification_capacity) {}
     bool begin(const ::geocaching::storage::IndexRootView& root, ::geocaching::ByteView key, uint64_t generation,
                const ::geocaching::GeocacheId& cache, ::geocaching::ByteView author,
                ::geocaching::storage::PublicationHistory& out, uint8_t* frame, size_t capacity)
@@ -63,7 +64,7 @@ class SdIndexedPublicationHistory
                 return IndexGetStep::Invalid;
             }
             draft_.reset();
-            catalog_.reset(::platform::memory::createPsram<SdIndexedDraftCatalog>(volume_, crypto_));
+            catalog_.reset(::platform::memory::createPsram<SdIndexedDraftCatalog>(volume_, crypto_, verification_, verification_capacity_));
             if (!catalog_)
             {
                 unavailable_ = true;
@@ -96,7 +97,25 @@ class SdIndexedPublicationHistory
         if (!scan_) return IndexGetStep::Invalid;
         const auto status = scan_->step();
         if (status == IndexScanStep::Working) return IndexGetStep::Working;
-        if (status == IndexScanStep::End) return history_.finish(confirmed_, *out_) ? IndexGetStep::Ready : IndexGetStep::Invalid;
+        if (status == IndexScanStep::End)
+        {
+            if (history_.needsRecoveryValidation())
+            {
+                if (!history_.beginRecoveryValidation()) return IndexGetStep::Invalid;
+                // Drop before allocating so a second scan never owns another
+                // simultaneous frame or scanner. The same snapshot stays pinned.
+                scan_.reset();
+                scan_.reset(::platform::memory::createPsram<SdIndexScan>(volume_));
+                if (!scan_)
+                {
+                    unavailable_ = true;
+                    return IndexGetStep::Invalid;
+                }
+                if (!scan_->begin(root_, 3, frame_, capacity_)) return IndexGetStep::Invalid;
+                return IndexGetStep::Working;
+            }
+            return history_.finish(confirmed_, *out_) ? IndexGetStep::Ready : IndexGetStep::Invalid;
+        }
         if (status != IndexScanStep::Item)
             return status == IndexScanStep::IoError ? IndexGetStep::IoError : status == IndexScanStep::VolumeChanged   ? IndexGetStep::VolumeChanged
                                                                           : status == IndexScanStep::WorkspaceTooSmall ? IndexGetStep::WorkspaceTooSmall
@@ -124,6 +143,8 @@ class SdIndexedPublicationHistory
     uint64_t generation_ = 0;
     uint32_t confirmed_ = 0;
     bool unavailable_ = false;
+    uint8_t* verification_ = nullptr;
+    size_t verification_capacity_ = 0;
 };
 static_assert(sizeof(SdIndexedPublicationHistory) <= (sizeof(void*) == 4 ? 384 : 448), "History read retains metadata, never record payloads");
 } // namespace platform::esp::arduino_common::geocaching

@@ -332,13 +332,15 @@ int main(int argc, char** argv)
 
     const std::string idf_sd_runtime = read_file(
         repo_root / "platform/esp/idf_common/src/sd_card_runtime_sdfat_adapter.cpp");
-    assert(contains(idf_sd_runtime,
-                    "defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) ||"));
+    // All native SDMMC targets share the bounded transfer policy; correctness
+    // and batching are exercised with real SdFat in tests/sd_transport.
+    assert(contains(idf_sd_runtime, "SdmmcSdTransferPolicy::dma_buffer_bytes"));
+    assert(contains(idf_sd_runtime, "SdmmcSdTransferPolicy::max_direct_sectors"));
+    assert(contains(idf_sd_runtime, "SdmmcSdTransferPolicy::file_slice_bytes"));
     assert(contains(idf_sd_runtime, "bool canUseMultiSectorDma"));
     assert(contains(idf_sd_runtime,
-                    "sdmmc_read_sectors(card_, dst, sector, ns)"));
-    assert(contains(idf_sd_runtime,
-                    "sdmmc_write_sectors(card_, src, sector, ns)"));
+                    "sdmmc_read_sectors(card_, target, sector, batch)"));
+    assert(contains(idf_sd_runtime, "bool validTransfer("));
     assert(contains(idf_sd_runtime,
                     "card_->host.check_buffer_alignment("));
     assert(contains(idf_sd_runtime, "sector_count > (SIZE_MAX / kSdSectorSize)"));

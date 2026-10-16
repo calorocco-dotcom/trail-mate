@@ -1,0 +1,4 @@
+.management-language{position:relative;z-index:2;display:flex;justify-content:flex-end;max-width:1440px;margin:0 auto;padding:12px 20px;color:var(--ink,#263b38)}
+.management-language label{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.management-language select{max-width:100%;padding:7px 10px;border:1px solid #c9d7d0;border-radius:8px;background:#fff;color:inherit;font:inherit}
+@media(max-width:480px){.management-language{padding:10px 12px}}

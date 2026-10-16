@@ -9,6 +9,8 @@
 #include "freertos/task.h"
 
 #include <atomic>
+#include <cstring>
+#include <strings.h>
 
 namespace platform::ui::tracker
 {
@@ -137,13 +139,21 @@ void stop_recording()
 
 bool current_path(std::string& out_path)
 {
-    const String& path = ::gps::TrackRecorder::getInstance().currentPath();
-    if (path.isEmpty())
+    auto& recorder = ::gps::TrackRecorder::getInstance();
+    if (!recorder.tryAcquireRead(false))
     {
         out_path.clear();
         return false;
     }
+    const String& path = recorder.currentPath();
+    if (path.isEmpty())
+    {
+        out_path.clear();
+        recorder.releaseRead();
+        return false;
+    }
     out_path = path.c_str();
+    recorder.releaseRead();
     return true;
 }
 
@@ -168,6 +178,7 @@ bool list_tracks(std::vector<std::string>& out_tracks, std::size_t max_count)
 void poll()
 {
     (void)ensure_worker();
+    ::gps::TrackRecorder::getInstance().applyPendingSettings();
     if (!s_start_pending.load() && !s_stop_pending.load())
     {
         s_desired_recording.store(::gps::TrackRecorder::getInstance().isRecording());
@@ -180,12 +191,44 @@ bool remove_track(const std::string& path)
     {
         return false;
     }
-    return ::platform::esp::arduino_common::storage::sd_remove(path.c_str());
+    return ::gps::TrackRecorder::getInstance().removeTrack(path.c_str());
 }
 
 const char* track_dir()
 {
     return ::gps::TrackRecorder::kTrackDir;
+}
+
+bool try_acquire_snapshot_read()
+{
+    if (s_start_pending.load() || s_stop_pending.load()) return false;
+    auto& recorder = ::gps::TrackRecorder::getInstance();
+    if (!recorder.tryAcquireRead(true)) return false;
+    if (s_start_pending.load() || s_stop_pending.load())
+    {
+        recorder.releaseRead();
+        return false;
+    }
+    return true;
+}
+
+bool try_acquire_catalog_read()
+{
+    return ::gps::TrackRecorder::getInstance().tryAcquireRead(false);
+}
+
+void release_snapshot_read()
+{
+    ::gps::TrackRecorder::getInstance().releaseRead();
+}
+
+bool is_recording_filename(const char* filename)
+{
+    // Caller holds the catalog/snapshot mutex, so the borrowed path is stable.
+    auto& recorder = ::gps::TrackRecorder::getInstance();
+    const String& path = recorder.currentPath();
+    return filename && recorder.isRecording() && !std::strncmp(path.c_str(), "/trackers/", 10) &&
+           !strcasecmp(path.c_str() + 10, filename);
 }
 
 void set_auto_recording(bool enabled)

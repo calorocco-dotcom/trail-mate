@@ -381,7 +381,6 @@ BackgroundTaskStartResult startBackgroundTasks(LoraBoard* board, chat::IMeshAdap
 
 void tickBoundLifecycle(std::size_t max_events)
 {
-    app::sd_tms::serviceWorkingConfig();
     app::IAppLifecycleFacade& lifecycle = app::lifecycleFacade();
     lifecycle.updateCoreServices();
     lifecycle.tickEventRuntime();

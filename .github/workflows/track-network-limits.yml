@@ -1,0 +1,45 @@
+name: Track Network Limits
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maximum_file_and_package:
+    name: Maximum file, package and native restart
+    runs-on: ubuntu-latest
+    env:
+      TRAIL_MATE_TRACK_PYTHON: .codex-build/reticulum-directory/venv/bin/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install browser dependencies
+        working-directory: site
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+      - name: Install native directory dependencies
+        run: |
+          python3 -m venv .codex-build/reticulum-directory/venv
+          .codex-build/reticulum-directory/venv/bin/python -m pip install -r tools/geocaching/interop-requirements.txt -r tools/geocaching/bridge-requirements.txt
+      - name: Verify maximum network file and complete package
+        run: node tests/site/track-large-network.browser.mjs
+      - name: Independently audit persisted signatures, files and receipts
+        run: .codex-build/reticulum-directory/venv/bin/python -m tools.tracks.verify_large_network_state --state .codex-build/hostlink-codec/track-large-network/state/directory/track-data > .codex-build/hostlink-codec/track-large-network/disk-audit.json
+      - name: Preserve diagnostics without identities or state databases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: track-network-limits
+          if-no-files-found: ignore
+          path: |
+            .codex-build/hostlink-codec/track-large-network/result.json
+            .codex-build/hostlink-codec/track-large-network/progress.json
+            .codex-build/hostlink-codec/track-large-network/disk-audit.json
+            .codex-build/hostlink-codec/track-large-network/*.log

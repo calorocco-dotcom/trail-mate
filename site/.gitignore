@@ -1,2 +1,4 @@
 node_modules/
 geocaching/dist/
+device/dist/
+tracks/dist/

@@ -154,9 +154,55 @@ void ReticulumAdapter::setGeocachingAnnouncementHandler(
     service_->setGeocachingAnnouncementHandler(handler, context);
 }
 
+DeviceAuthorResult ReticulumAdapter::readDeviceAuthorKey(uint8_t* public_key, uint32_t& generation) const
+{
+    return service_ ? service_->readDeviceAuthorKey(public_key, generation) : DeviceAuthorResult::Unavailable;
+}
+DeviceAuthorResult ReticulumAdapter::exportDeviceIdentityBackup(uint32_t generation, uint8_t* output, size_t capacity, size_t& written) const
+{
+    written = 0;
+    return service_ ? service_->exportDeviceIdentityBackup(generation, output, capacity, written) : DeviceAuthorResult::Unavailable;
+}
+DeviceIdentityRestoreResult ReticulumAdapter::restoreDeviceIdentity(const hostlink::management::IdentityRestoreView& request, uint8_t* work, size_t capacity)
+{
+    return service_ ? service_->restoreDeviceIdentity(request, work, capacity) : DeviceIdentityRestoreResult::Unavailable;
+}
+DeviceAuthorResult ReticulumAdapter::signTrackManifest(const uint8_t* raw, size_t size, uint32_t generation, track_sharing::ManifestView& view,
+                                                       uint8_t* workspace, size_t capacity, uint8_t* signature, size_t signature_capacity) const
+{
+    return service_ ? service_->signTrackManifest(raw, size, generation, view, workspace, capacity, signature, signature_capacity) : DeviceAuthorResult::Unavailable;
+}
+
+DeviceAuthorResult ReticulumAdapter::proveDeviceAuthor(const uint8_t* session, const uint8_t* challenge,
+                                                       uint32_t expected_generation, uint8_t* workspace, size_t capacity,
+                                                       uint8_t* public_key, uint32_t& generation, uint8_t* signature) const
+{
+    return service_ ? service_->proveDeviceAuthor(session, challenge, expected_generation, workspace, capacity,
+                                                  public_key, generation, signature)
+                    : DeviceAuthorResult::Unavailable;
+}
+
 bool ReticulumAdapter::getGeocachingAuthorKey(uint8_t out[64])
 {
     return service_->getGeocachingAuthorKey(out);
+}
+
+MeshSendResult ReticulumAdapter::sendTrackData(const uint8_t destination[16], lxmf::ByteSpan data,
+                                               bool response, std::array<uint8_t, 32>* accepted_hash)
+{
+    if (accepted_hash) accepted_hash->fill(0);
+    if (!service_) return MeshSendResult::fail(MeshOperationFailure::NotReady);
+    return service_->sendCustomDataToDestination(destination, "trailmate.track.v1", data, response, accepted_hash);
+}
+
+void ReticulumAdapter::setTrackDeliveryBinding(const lxmf::TrackDeliveryBinding* binding)
+{
+    if (service_) service_->setTrackDeliveryBinding(binding);
+}
+
+bool ReticulumAdapter::requestDirectoryPath(const uint8_t* destination)
+{
+    return service_ && service_->requestTrackDirectoryPath(destination);
 }
 
 bool ReticulumAdapter::signGeocachingRecord(lxmf::ByteSpan record, uint8_t* workspace, size_t workspace_capacity,

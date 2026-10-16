@@ -33,6 +33,7 @@
 #include "ui/screens/chat/chat_page_shell.h"
 #include "ui/screens/chat/chat_protocol_support.h"
 #include "ui/screens/contacts/contacts_filter_profile.h"
+#include "ui/screens/contacts/contacts_node_card_view.h"
 #include "ui/screens/contacts/contacts_page_input.h"
 #include "ui/screens/contacts/contacts_page_layout.h"
 #include "ui/screens/contacts/contacts_page_styles.h"
@@ -380,9 +381,6 @@ static lv_obj_t* create_bottom_bar_button(lv_obj_t* parent,
 void refresh_contacts_data()
 {
     refresh_contacts_data_impl();
-    CONTACTS_LOG("[Contacts] contacts=%u nearby=%u\n",
-                 (unsigned)g_contacts_state.contacts_list.size(),
-                 (unsigned)g_contacts_state.nearby_list.size());
 }
 
 // ---------------- Formatting helpers ----------------
@@ -426,53 +424,6 @@ static std::string format_time_status(uint32_t last_seen)
 
     // > 6 days: should be filtered out
     return ::ui::i18n::tr("Offline");
-}
-
-static std::string format_nearby_seen_age(uint32_t last_seen)
-{
-    if (last_seen == 0)
-    {
-        return ::ui::i18n::tr("Unknown");
-    }
-
-    const uint32_t now_secs = sys::epoch_seconds_now();
-    const uint32_t age_secs = now_secs >= last_seen ? now_secs - last_seen : 0;
-
-    if (age_secs < 3600)
-    {
-        const uint32_t minutes = age_secs / 60;
-        if (minutes == 1)
-        {
-            return ::ui::i18n::tr("1 min ago");
-        }
-        return ::ui::i18n::format("%u mins ago", static_cast<unsigned>(minutes));
-    }
-
-    if (age_secs < 86400)
-    {
-        const uint32_t hours = age_secs / 3600;
-        if (hours == 1)
-        {
-            return ::ui::i18n::tr("1 hour ago");
-        }
-        return ::ui::i18n::format("%u hours ago", static_cast<unsigned>(hours));
-    }
-
-    const uint32_t days = age_secs / 86400;
-    if (days == 1)
-    {
-        return ::ui::i18n::tr("1 day ago");
-    }
-    return ::ui::i18n::format("%u days ago", static_cast<unsigned>(days));
-}
-
-[[maybe_unused]] static std::string format_snr(float snr)
-{
-    if (snr == 0.0f)
-    {
-        return ::ui::i18n::tr("SNR -");
-    }
-    return ::ui::i18n::format("SNR %.0f", snr);
 }
 
 static bool node_protocol_to_mesh(chat::contacts::NodeProtocolType protocol, chat::MeshProtocol* out)
@@ -933,14 +884,8 @@ static void make_lxmf_short_name(const chat::ReticulumPeerIdentity& identity,
 
 static bool existing_contact_matches(uint32_t node_id)
 {
-    for (const auto& node : g_contacts_state.contacts_list)
-    {
-        if (node.node_id == node_id && node.is_contact)
-        {
-            return true;
-        }
-    }
-    return false;
+    return g_contacts_state.card_peer_valid && g_contacts_state.card_peer.node_id == node_id &&
+           g_contacts_state.card_peer.is_contact;
 }
 
 static bool contains_ci(const char* text, const char* query)
@@ -1032,20 +977,7 @@ static bool use_search_display_list_for_mode(ContactsMode mode)
 
 static const std::vector<chat::contacts::PeerDirectoryItem>* raw_list_for_mode(ContactsMode mode)
 {
-    switch (mode)
-    {
-    case ContactsMode::Contacts:
-        return &g_contacts_state.contacts_list;
-    case ContactsMode::Nearby:
-        return &g_contacts_state.nearby_list;
-    case ContactsMode::Groups:
-        return &g_contacts_state.reticulum_group_list;
-    case ContactsMode::Ignored:
-        return &g_contacts_state.ignored_list;
-    default:
-        break;
-    }
-    return nullptr;
+    return mode == ContactsMode::Groups ? &g_contacts_state.reticulum_group_list : nullptr;
 }
 
 static const std::vector<chat::contacts::PeerDirectoryItem>* selectable_list_for_mode(
@@ -1155,6 +1087,11 @@ static void apply_filter_panel_visibility()
     {
         return;
     }
+    if (lv_obj_has_flag(g_contacts_state.filter_panel, LV_OBJ_FLAG_IGNORE_LAYOUT))
+    {
+        contacts_input_on_ui_refreshed();
+        return;
+    }
     if (g_contacts_state.filter_panel_visible)
     {
         lv_obj_clear_flag(g_contacts_state.filter_panel, LV_OBJ_FLAG_HIDDEN);
@@ -1168,9 +1105,9 @@ static void apply_filter_panel_visibility()
 
 static void toggle_filter_panel_visibility()
 {
-    g_contacts_state.filter_panel_visible = !g_contacts_state.filter_panel_visible;
-    apply_filter_panel_visibility();
-    contacts_focus_to_list();
+    if (g_contacts_state.filter_panel && lv_obj_has_flag(g_contacts_state.filter_panel, LV_OBJ_FLAG_HIDDEN))
+        contacts_focus_to_filter();
+    else contacts_focus_to_list();
 }
 
 // ---------------- Panel creation (public API) ----------------
@@ -1372,25 +1309,7 @@ static void on_back_clicked(lv_event_t* /*e*/)
 
 static const chat::contacts::PeerDirectoryItem* get_selected_node()
 {
-    if (g_contacts_state.current_mode == ContactsMode::Broadcast ||
-        g_contacts_state.current_mode == ContactsMode::Team ||
-        g_contacts_state.current_mode == ContactsMode::Discover ||
-        g_contacts_state.current_mode == ContactsMode::Groups ||
-        g_contacts_state.current_mode == ContactsMode::Public)
-    {
-        return nullptr;
-    }
-    if (g_contacts_state.selected_index < 0)
-    {
-        return nullptr;
-    }
-    const auto* list = selectable_list_for_mode(g_contacts_state.current_mode);
-    if (!list ||
-        g_contacts_state.selected_index >= static_cast<int>(list->size()))
-    {
-        return nullptr;
-    }
-    return &(*list)[g_contacts_state.selected_index];
+    return uses_node_card() && g_contacts_state.card_peer_valid ? &g_contacts_state.card_peer : nullptr;
 }
 
 static const chat::contacts::PeerDirectoryItem* get_selected_reticulum_group()
@@ -1411,28 +1330,7 @@ static const chat::contacts::PeerDirectoryItem* get_selected_reticulum_group()
 
 static const chat::contacts::PeerDirectoryItem* find_node_by_id(uint32_t node_id)
 {
-    for (const auto& node : g_contacts_state.contacts_list)
-    {
-        if (node.node_id == node_id)
-        {
-            return &node;
-        }
-    }
-    for (const auto& node : g_contacts_state.nearby_list)
-    {
-        if (node.node_id == node_id)
-        {
-            return &node;
-        }
-    }
-    for (const auto& node : g_contacts_state.ignored_list)
-    {
-        if (node.node_id == node_id)
-        {
-            return &node;
-        }
-    }
-    return nullptr;
+    return g_contacts_state.card_peer_valid && g_contacts_state.card_peer.node_id == node_id ? &g_contacts_state.card_peer : nullptr;
 }
 
 static bool reticulum_identity_hash_present(
@@ -3037,14 +2935,22 @@ static void on_add_edit_save_clicked(lv_event_t* /*e*/)
         }
     }
 
-    auto contacts = g_contacts_state.contact_service->getContacts();
-    for (const auto& c : contacts)
+    std::vector<chat::contacts::PeerBrowseEntry> matches;
+    if (!g_contacts_state.contact_service->browsePeers(chat::MeshPeerDirectoryView::Contacts, nickname, matches).succeeded())
     {
-        if (c.node_id == g_contacts_state.modal_node_id)
+        ::ui::i18n::set_label_text(g_contacts_state.add_edit_error_label, "Contacts unavailable");
+        lv_obj_clear_flag(g_contacts_state.add_edit_error_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    chat::contacts::PeerDirectoryItem candidate{};
+    for (const auto& entry : matches)
+    {
+        if (g_contacts_state.card_index < g_contacts_state.card_entries.size() &&
+            entry.samePeer(g_contacts_state.card_entries[g_contacts_state.card_index]))
         {
             continue;
         }
-        if (c.display_name == nickname)
+        if (g_contacts_state.contact_service->readPeer(entry, candidate).succeeded() && candidate.display_name == nickname)
         {
             ::ui::i18n::set_label_text(g_contacts_state.add_edit_error_label, "Duplicate name not allowed");
             lv_obj_clear_flag(g_contacts_state.add_edit_error_label, LV_OBJ_FLAG_HIDDEN);
@@ -3317,6 +3223,14 @@ static const char* discovery_failure_message(chat::MeshOperationFailure failure,
     return fallback;
 }
 
+static size_t nearby_peer_count()
+{
+    std::vector<chat::contacts::PeerBrowseEntry> entries;
+    auto& service = app::messagingFacade().getContactService();
+    if (!service.browsePeers(chat::MeshPeerDirectoryView::Nearby, "", entries).succeeded()) return 0;
+    return entries.size();
+}
+
 static void execute_discovery_command(uint8_t command_index)
 {
     DiscoveryActionSpec spec{};
@@ -3349,7 +3263,7 @@ static void execute_discovery_command(uint8_t command_index)
     if (spec.command == DiscoveryActionCommand::ScanLocal)
     {
         refresh_contacts_data();
-        g_contacts_state.discover_scan_start_nearby = g_contacts_state.nearby_list.size();
+        g_contacts_state.discover_scan_start_nearby = nearby_peer_count();
         if (g_contacts_state.discover_scan_timer)
         {
             lv_timer_del(g_contacts_state.discover_scan_timer);
@@ -3398,7 +3312,7 @@ static void on_discovery_scan_done(lv_timer_t* timer)
     const size_t start_count = g_contacts_state.discover_scan_start_nearby;
     refresh_contacts_data();
     refresh_ui();
-    const size_t total = g_contacts_state.nearby_list.size();
+    const size_t total = nearby_peer_count();
     const size_t gained = (total > start_count) ? (total - start_count) : 0;
 
     const std::string msg =
@@ -3902,6 +3816,203 @@ static void open_action_menu_modal()
 
 // ---------------- UI refresh (public API) ----------------
 
+static void step_node_card(int direction)
+{
+    auto& state = g_contacts_state;
+    if (state.card_entries.empty()) return;
+    const int next = static_cast<int>(state.card_index) + direction;
+    if (next < 0 || next >= static_cast<int>(state.card_entries.size())) return;
+    state.card_index = static_cast<size_t>(next);
+    hydrate_node_card();
+    refresh_ui();
+}
+
+static void on_card_step(lv_event_t* event)
+{
+    step_node_card(static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event))));
+}
+
+static void on_card_details(lv_event_t*)
+{
+    const auto* peer = get_selected_node();
+    if (!peer) return;
+    if (is_reticulum_node(*peer)) open_reticulum_node_info_screen(*peer, g_contacts_state.root);
+    else open_node_info_screen_for_node(peer->node_id);
+}
+
+static void on_card_navigation(lv_event_t* event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_KEY)
+    {
+        const uint32_t key = lv_event_get_key(event);
+        if (key == LV_KEY_DOWN || key == LV_KEY_RIGHT) step_node_card(1);
+        else if (key == LV_KEY_UP || key == LV_KEY_LEFT) step_node_card(-1);
+        else if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE)
+        {
+            contacts_focus_to_filter();
+            lv_event_stop_processing(event);
+            lv_event_stop_bubbling(event);
+        }
+    }
+    else if (lv_event_get_code(event) == LV_EVENT_GESTURE)
+    {
+        auto* input = lv_indev_active();
+        if (!input) return;
+        const auto direction = lv_indev_get_gesture_dir(input);
+        if (direction == LV_DIR_TOP) step_node_card(1);
+        else if (direction == LV_DIR_BOTTOM) step_node_card(-1);
+    }
+}
+
+static void on_card_actions(lv_event_t* event)
+{
+    if (lv_event_get_target(event) == g_contacts_state.node_card && g_contacts_state.card_peer_valid)
+        on_list_item_clicked(event);
+}
+
+static void refresh_node_card_ui()
+{
+    auto& state = g_contacts_state;
+    if (!state.card_context_valid || state.card_mode != state.current_mode ||
+        std::strcmp(state.card_query, state.search_query) != 0) refresh_node_card_data();
+    const bool created = !state.node_card;
+    if (created)
+    {
+        lv_obj_clean(state.list_panel);
+        state.sub_container = nullptr;
+        state.bottom_container = nullptr;
+        state.empty_label = nullptr;
+        state.list_items.clear();
+        state.prev_btn = state.next_btn = state.back_btn = nullptr;
+        const auto view = card_view::create(state.list_panel, ::ui::page_profile::resolve_body_font(),
+                                            ::ui::page_profile::resolve_caption_font(), ::ui::page_profile::resolve_title_font());
+        auto* card = view.root;
+        state.node_card = view.root;
+        state.card_name = view.name;
+        state.card_identity = view.identity;
+        state.card_region = view.region;
+        state.card_distance = view.distance;
+        state.card_status = view.status;
+        state.card_counter = view.counter;
+        state.prev_btn = view.previous;
+        state.next_btn = view.next;
+        auto* details = view.details;
+        ::ui::i18n::set_label_text(lv_obj_get_child(details, 0), "Info");
+        lv_obj_set_user_data(card, nullptr);
+        lv_obj_add_event_cb(card, on_card_actions, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(card, on_card_navigation, LV_EVENT_KEY, nullptr);
+        lv_obj_add_event_cb(card, on_card_navigation, LV_EVENT_GESTURE, nullptr);
+        bind_page_shortcuts(card);
+        lv_obj_add_event_cb(state.prev_btn, on_card_step, LV_EVENT_CLICKED, reinterpret_cast<void*>(-1));
+        lv_obj_add_event_cb(state.next_btn, on_card_step, LV_EVENT_CLICKED, reinterpret_cast<void*>(1));
+        lv_obj_add_event_cb(details, on_card_details, LV_EVENT_CLICKED, nullptr);
+        state.list_items = {card, state.prev_btn, state.next_btn, details};
+    }
+    char text[96]{};
+    const auto& peer = state.card_peer;
+    if (!state.card_peer_valid)
+    {
+        ::ui::i18n::set_label_text(state.card_name, state.contacts_data_hydration_pending ? "Loading..." : "No nodes");
+        lv_label_set_text(state.card_identity, "");
+        lv_label_set_text(state.card_region, "");
+        lv_label_set_text(state.card_distance, "");
+        lv_label_set_text(state.card_status, "");
+    }
+    else
+    {
+        ::ui::i18n::set_content_label_text_raw(state.card_name, layout::preferred_node_display_name(peer).c_str());
+        const auto& entry = state.card_entries[state.card_index];
+        if (entry.kind == chat::MeshPeerIdentityKind::NodeId)
+            std::snprintf(text, sizeof(text), "MT !%08lx", static_cast<unsigned long>(entry.node_id));
+        else
+            std::snprintf(text, sizeof(text), "%s %02x%02x%02x...%02x%02x",
+                          entry.kind == chat::MeshPeerIdentityKind::PublicKey ? "MC Key" : "RT Dest",
+                          entry.identity_bytes[0], entry.identity_bytes[1], entry.identity_bytes[2],
+                          entry.identity_bytes[entry.identity_size - 2], entry.identity_bytes[entry.identity_size - 1]);
+        lv_label_set_text(state.card_identity, text);
+        namespace map_search = ::platform::ui::map_search;
+        if (peer.position.valid)
+        {
+            const bool moved = !state.card_region_coordinate_valid ||
+                               state.card_region_latitude != peer.position.latitude_i ||
+                               state.card_region_longitude != peer.position.longitude_i;
+            if (moved)
+            {
+                state.card_region_request = 0;
+                state.card_region_result.path[0] = 0;
+                state.card_region_latitude = peer.position.latitude_i;
+                state.card_region_longitude = peer.position.longitude_i;
+                state.card_region_coordinate_valid = true;
+            }
+            if (!state.card_region_request)
+                state.card_region_request = map_search::submitRegion(peer.position.latitude_i * 1e-7,
+                                                                     peer.position.longitude_i * 1e-7);
+            if (state.card_region_request && !map_search::pollRegion(state.card_region_request, state.card_region_result))
+            {
+                state.card_region_request = 0;
+                state.card_region_result.path[0] = 0;
+            }
+            if (state.card_region_result.path[0])
+            {
+                const std::string region = std::string("~ ") + state.card_region_result.path;
+                // Preserve the animation across periodic refreshes of the same path.
+                if (std::strcmp(lv_label_get_text(state.card_region), region.c_str()) != 0)
+                    ::ui::i18n::set_content_label_text_raw(state.card_region, region.c_str());
+            }
+            else ::ui::i18n::set_label_text(state.card_region, state.card_region_request &&
+                                                                       state.card_region_result.status == map_search::Status::Searching
+                                                                   ? "Location loading..."
+                                                                   : "Region unknown");
+        }
+        else
+        {
+            state.card_region_coordinate_valid = false;
+            state.card_region_request = 0;
+            state.card_region_result.path[0] = 0;
+            ::ui::i18n::set_label_text(state.card_region, "Position unknown");
+        }
+        const auto own = ::platform::ui::gps::get_data();
+        const double latitude = peer.position.latitude_i * 1e-7;
+        const double longitude = peer.position.longitude_i * 1e-7;
+        if (peer.position.valid && std::abs(latitude) <= 90.0 && std::abs(longitude) <= 180.0 &&
+            own.valid && std::isfinite(own.lat) && std::isfinite(own.lng) &&
+            std::abs(own.lat) <= 90.0 && std::abs(own.lng) <= 180.0)
+        {
+            constexpr double rad = 3.14159265358979323846 / 180.0;
+            const double dlat = (latitude - own.lat) * rad;
+            const double dlon = (longitude - own.lng) * rad;
+            const double a = std::sin(dlat / 2) * std::sin(dlat / 2) +
+                             std::cos(latitude * rad) * std::cos(own.lat * rad) *
+                                 std::sin(dlon / 2) * std::sin(dlon / 2);
+            const double meters = 6371000.0 * 2 * std::asin(std::sqrt(std::clamp(a, 0.0, 1.0)));
+            const auto distance = meters < 1000 ? ::ui::i18n::format("Distance %.0f m", meters) : ::ui::i18n::format("Distance %.1f km", meters / 1000);
+            std::snprintf(text, sizeof(text), "%s", distance.c_str());
+            lv_label_set_text(state.card_distance, text);
+        }
+        else ::ui::i18n::set_label_text(state.card_distance, own.valid ? "Distance unknown" : "My position unknown");
+        const auto age = format_time_status(peer.last_seen);
+        if (is_reticulum_node(peer))
+            std::snprintf(text, sizeof(text), "%s | %s", age.c_str(), ::ui::i18n::tr(peer.key_manually_verified ? "Verified" : "Unverified"));
+        else if (peer.position.valid && peer.position.timestamp && sys::epoch_seconds_now() > peer.position.timestamp &&
+                 sys::epoch_seconds_now() - peer.position.timestamp > 3600)
+            std::snprintf(text, sizeof(text), "%s | %s", age.c_str(), ::ui::i18n::tr("Old position"));
+        else if (peer.has_snr && std::isfinite(peer.snr))
+            std::snprintf(text, sizeof(text), "%s | SNR %.1f dB", age.c_str(), peer.snr);
+        else std::snprintf(text, sizeof(text), "%s", age.c_str());
+        lv_label_set_text(state.card_status, text);
+    }
+    std::snprintf(text, sizeof(text), "%u / %u", state.card_entries.empty() ? 0U : static_cast<unsigned>(state.card_index + 1),
+                  static_cast<unsigned>(state.card_entries.size()));
+    lv_label_set_text(state.card_counter, text);
+    if (state.card_index == 0) lv_obj_add_state(state.prev_btn, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.prev_btn, LV_STATE_DISABLED);
+    if (state.card_index + 1 >= state.card_entries.size()) lv_obj_add_state(state.next_btn, LV_STATE_DISABLED);
+    else lv_obj_clear_state(state.next_btn, LV_STATE_DISABLED);
+    refresh_filter_checked_state();
+    state.rendered_data_revision = state.contacts_data_revision;
+    if (created) contacts_input_on_ui_refreshed();
+}
+
 void refresh_ui()
 {
     if (g_contacts_state.list_panel == nullptr)
@@ -3913,6 +4024,22 @@ void refresh_ui()
         return;
     }
     s_refreshing_ui = true;
+    if (uses_node_card())
+    {
+        refresh_node_card_ui();
+        s_refreshing_ui = false;
+        return;
+    }
+    if (g_contacts_state.node_card)
+    {
+        lv_obj_clean(g_contacts_state.list_panel);
+        g_contacts_state.node_card = nullptr;
+        g_contacts_state.sub_container = g_contacts_state.bottom_container = nullptr;
+        g_contacts_state.prev_btn = g_contacts_state.next_btn = g_contacts_state.back_btn = nullptr;
+        g_contacts_state.list_items.clear();
+        g_contacts_state.card_context_valid = false;
+        refresh_contacts_data();
+    }
 
     lv_obj_t* active = lv_screen_active();
     if (!active)
@@ -3949,7 +4076,6 @@ void refresh_ui()
     {
         lv_obj_clear_flag(g_contacts_state.sub_container, LV_OBJ_FLAG_SCROLLABLE);
     }
-    ::ui::components::air_status_footer::refresh(g_contacts_state.air_status_footer);
 
     bool team_available = is_team_available() && chat_support::supports_team_chat();
     const bool reticulum_profile = uses_reticulum_filter_profile();
@@ -4007,25 +4133,6 @@ void refresh_ui()
         g_contacts_state.selected_index = -1;
     }
 
-    // Log nearby nodes if in nearby mode (unchanged)
-    if (g_contacts_state.current_mode == ContactsMode::Nearby)
-    {
-        CONTACTS_LOG("[Contacts] Nearby mode: %zu nodes\n", g_contacts_state.nearby_list.size());
-        for (size_t i = 0; i < g_contacts_state.nearby_list.size(); ++i)
-        {
-            const auto& node [[maybe_unused]] = g_contacts_state.nearby_list[i];
-            CONTACTS_LOG("  Node %zu: %s (last_seen=%lu, snr=%.1f)\n",
-                         i,
-                         node.display_name.c_str(),
-                         static_cast<unsigned long>(node.last_seen),
-                         node.snr);
-        }
-    }
-    else if (g_contacts_state.current_mode == ContactsMode::Ignored)
-    {
-        CONTACTS_LOG("[Contacts] Ignored mode: %zu nodes\n", g_contacts_state.ignored_list.size());
-    }
-
     // Ensure list containers exist (structure handled in layout)
     contacts::ui::layout::ensure_list_subcontainers();
 
@@ -4052,21 +4159,9 @@ void refresh_ui()
     std::vector<chat::contacts::PeerDirectoryItem> team_list;
     std::vector<chat::contacts::PeerDirectoryItem> discover_list;
     const std::vector<chat::contacts::PeerDirectoryItem>* current_list = nullptr;
-    if (g_contacts_state.current_mode == ContactsMode::Contacts)
-    {
-        current_list = &g_contacts_state.contacts_list;
-    }
-    else if (g_contacts_state.current_mode == ContactsMode::Nearby)
-    {
-        current_list = &g_contacts_state.nearby_list;
-    }
-    else if (g_contacts_state.current_mode == ContactsMode::Groups)
+    if (g_contacts_state.current_mode == ContactsMode::Groups)
     {
         current_list = &g_contacts_state.reticulum_group_list;
-    }
-    else if (g_contacts_state.current_mode == ContactsMode::Ignored)
-    {
-        current_list = &g_contacts_state.ignored_list;
     }
     else if (g_contacts_state.current_mode == ContactsMode::Team)
     {
@@ -4205,41 +4300,9 @@ void refresh_ui()
 
     const bool searchable_mode =
         is_searchable_contacts_mode(g_contacts_state.current_mode);
-    const bool empty_contact_data_mode =
-        g_contacts_state.current_mode == ContactsMode::Contacts ||
-        g_contacts_state.current_mode == ContactsMode::Nearby ||
-        g_contacts_state.current_mode == ContactsMode::Ignored;
-    const bool show_hydration_loading =
-        current_list->empty() && !search_active() && empty_contact_data_mode &&
-        g_contacts_state.contacts_data_hydration_pending;
-    const bool show_empty_data_hint =
-        current_list->empty() && !search_active() && empty_contact_data_mode &&
-        !g_contacts_state.contacts_data_hydration_pending;
-    const bool show_no_matches =
-        current_list->empty() && search_active() && searchable_mode;
-    if (show_hydration_loading || show_empty_data_hint || show_no_matches)
+    if (current_list->empty() && search_active() && searchable_mode)
     {
-        const char* label_text = "";
-        if (show_hydration_loading)
-        {
-            label_text = "Loading contacts...";
-        }
-        else if (show_no_matches)
-        {
-            label_text = "No matches";
-        }
-        else if (g_contacts_state.current_mode == ContactsMode::Nearby)
-        {
-            label_text = "No nearby nodes";
-        }
-        else if (g_contacts_state.current_mode == ContactsMode::Ignored)
-        {
-            label_text = "No ignored nodes";
-        }
-        else
-        {
-            label_text = "No contacts yet";
-        }
+        const char* label_text = "No matches";
         g_contacts_state.empty_label = lv_label_create(g_contacts_state.sub_container);
         ::ui::i18n::set_label_text(g_contacts_state.empty_label, label_text);
         contacts::ui::style::apply_label_muted(g_contacts_state.empty_label);
@@ -4254,29 +4317,11 @@ void refresh_ui()
         const auto& node = (*current_list)[i];
 
         std::string status_text;
-        if (g_contacts_state.current_mode == ContactsMode::Contacts)
-        {
-            status_text = format_time_status(node.last_seen);
-        }
-        else if (g_contacts_state.current_mode == ContactsMode::Nearby)
-        {
-            status_text = format_nearby_seen_age(node.last_seen);
-        }
-        else if (g_contacts_state.current_mode == ContactsMode::Groups)
+        if (g_contacts_state.current_mode == ContactsMode::Groups)
         {
             status_text = chat_support::supports_reticulum_destination_text()
                               ? ::ui::i18n::tr("Ready")
                               : ::ui::i18n::tr("Unavailable");
-        }
-        else if (g_contacts_state.current_mode == ContactsMode::Ignored)
-        {
-            status_text = ::ui::i18n::tr("Ignored");
-            const std::string seen = format_time_status(node.last_seen);
-            if (!seen.empty())
-            {
-                status_text += " / ";
-                status_text += seen;
-            }
         }
         else if (g_contacts_state.current_mode == ContactsMode::Team)
         {

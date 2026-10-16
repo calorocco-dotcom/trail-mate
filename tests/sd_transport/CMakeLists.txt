@@ -38,3 +38,26 @@ target_compile_definitions(sd_filesystem_test PRIVATE
 target_compile_options(sd_filesystem_test PRIVATE
     -include "${CMAKE_CURRENT_SOURCE_DIR}/stubs/host_clock.h")
 add_test(NAME sd_filesystem COMMAND sd_filesystem_test)
+
+# Use the production IDF block device with the same real SdFat libraries.
+set(IDF_SD_SOURCE "${REPO}/platform/esp/idf_common/src/sd_card_runtime_sdfat_adapter.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${IDF_SD_SOURCE}")
+file(READ "${IDF_SD_SOURCE}" IDF_SD_CONTENT)
+string(FIND "${IDF_SD_CONTENT}" "class SdmmcBlockDevice final" IDF_BLOCK_START)
+string(FIND "${IDF_SD_CONTENT}" "SdmmcBlockDevice s_block_device;" IDF_BLOCK_END)
+if(IDF_BLOCK_START LESS 0 OR IDF_BLOCK_END LESS IDF_BLOCK_START)
+    message(FATAL_ERROR "Cannot locate production IDF SDMMC block device")
+endif()
+math(EXPR IDF_BLOCK_LENGTH "${IDF_BLOCK_END}-${IDF_BLOCK_START}")
+string(SUBSTRING "${IDF_SD_CONTENT}" ${IDF_BLOCK_START} ${IDF_BLOCK_LENGTH} IDF_BLOCK_CONTENT)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/idf_sd_block_actual.inc" "${IDF_BLOCK_CONTENT}")
+add_executable(idf_sd_filesystem_test test_idf_sd_filesystem.cpp ${SDFAT_SOURCES})
+target_include_directories(idf_sd_filesystem_test PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}" "${REPO}/third_party/sdfat/src" stubs
+    "${STORAGE}/include" "${REPO}/platform/esp/common/include")
+target_compile_definitions(idf_sd_filesystem_test PRIVATE
+    TRAIL_MATE_SDFAT_SDMMC=1 USE_BLOCK_DEVICE_INTERFACE=1 SDFAT_FILE_TYPE=3
+    ENABLE_ARDUINO_FEATURES=0 ENABLE_ARDUINO_SERIAL=0 ENABLE_ARDUINO_STRING=0)
+target_compile_options(idf_sd_filesystem_test PRIVATE
+    -UNDEBUG -include "${CMAKE_CURRENT_SOURCE_DIR}/stubs/host_clock.h")
+add_test(NAME idf_sd_filesystem COMMAND idf_sd_filesystem_test)

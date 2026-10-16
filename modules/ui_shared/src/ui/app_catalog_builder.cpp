@@ -47,6 +47,11 @@
 #include "ui/screens/chat/chat_page_shell.h"
 #if TRAIL_MATE_ENABLE_CALCULATOR_APP
 #include "ui/screens/calculator/calculator_page_shell.h"
+#include "ui/screens/music/music_page_shell.h"
+namespace ui::assets
+{
+extern "C" const lv_image_dsc_t music;
+}
 #endif
 #if TRAIL_MATE_ENABLE_GEOCACHING_APP
 #include "ui/screens/geocaching/geocaching_page_shell.h"
@@ -74,7 +79,7 @@
 namespace
 {
 
-constexpr size_t kMaxMenuApps = 17;
+constexpr size_t kMaxMenuApps = 18;
 
 #define APP_CATALOG_LOG(...) std::printf("[UI][Catalog] " __VA_ARGS__)
 
@@ -243,6 +248,8 @@ ui::CallbackAppScreen s_calculator_app("calculator", "Calculator", CATALOG_ICON(
                                        calculator::ui::shell::enter,
                                        calculator::ui::shell::exit,
                                        &s_menu_host);
+ui::CallbackAppScreen s_music_app("music", "Music", &ui::assets::music,
+                                  ui::music_page::enter, ui::music_page::exit, &s_menu_host);
 #endif
 #if !defined(TRAIL_MATE_ENABLE_SSTV) || TRAIL_MATE_ENABLE_SSTV
 ui::CallbackAppScreen s_sstv_app("sstv", "SSTV", CATALOG_ICON(sstv),
@@ -504,6 +511,7 @@ AppCatalog build(const FeatureFlags& flags)
 #endif
 #if TRAIL_MATE_ENABLE_CALCULATOR_APP
         add(&s_calculator_app);
+        add(&s_music_app);
 #endif
         if (flags.profile == CatalogProfile::IdfDefault && flags.include_tracker)
         {

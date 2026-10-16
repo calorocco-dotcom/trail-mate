@@ -1,0 +1,16 @@
+import {C6_CONFIG_FIELDS} from '../device/src/config-c6-validation.js';
+const keys=['c6_companion',...Object.keys(C6_CONFIG_FIELDS)];
+const labels={
+ en:['C6 wireless companion','ESP-NOW enabled','ESP-NOW team discovery','ESP-NOW channel','ESP-NOW beacon interval (ms)','Wi-Fi enabled','Wi-Fi STA enabled','Wi-Fi AP enabled','Retain Wi-Fi credentials','STA SSID','STA password','AP SSID','AP password','STA channel','AP channel'],
+ 'zh-Hans':['C6 无线伴随芯片','启用 ESP-NOW','ESP-NOW 团队发现','ESP-NOW 信道','ESP-NOW 广播间隔（毫秒）','启用 Wi-Fi','启用 Wi-Fi STA','启用 Wi-Fi AP','保留 Wi-Fi 凭据','STA 网络名称','STA 密码','AP 网络名称','AP 密码','STA 信道','AP 信道'],
+ 'zh-Hant-TW':['C6 無線伴隨晶片','啟用 ESP-NOW','ESP-NOW 團隊探索','ESP-NOW 頻道','ESP-NOW 廣播間隔（毫秒）','啟用 Wi-Fi','啟用 Wi-Fi STA','啟用 Wi-Fi AP','保留 Wi-Fi 憑證','STA 網路名稱','STA 密碼','AP 網路名稱','AP 密碼','STA 頻道','AP 頻道'],
+ ja:['C6 無線コンパニオン','ESP-NOW を有効化','ESP-NOW チーム検出','ESP-NOW チャンネル','ESP-NOW ビーコン間隔（ms）','Wi-Fi を有効化','Wi-Fi STA を有効化','Wi-Fi AP を有効化','Wi-Fi 認証情報を保持','STA SSID','STA パスワード','AP SSID','AP パスワード','STA チャンネル','AP チャンネル'],
+ ko:['C6 무선 보조 칩','ESP-NOW 활성화','ESP-NOW 팀 검색','ESP-NOW 채널','ESP-NOW 비콘 간격(ms)','Wi-Fi 활성화','Wi-Fi STA 활성화','Wi-Fi AP 활성화','Wi-Fi 자격 증명 보관','STA SSID','STA 비밀번호','AP SSID','AP 비밀번호','STA 채널','AP 채널'],
+ ar:['شريحة C6 اللاسلكية المرافقة','تفعيل ESP-NOW','اكتشاف الفريق عبر ESP-NOW','قناة ESP-NOW','فاصل إشارات ESP-NOW (مللي ثانية)','تفعيل Wi-Fi','تفعيل Wi-Fi STA','تفعيل Wi-Fi AP','الاحتفاظ ببيانات اعتماد Wi-Fi','اسم شبكة STA','كلمة مرور STA','اسم شبكة AP','كلمة مرور AP','قناة STA','قناة AP'],
+ ru:['Беспроводной сопроцессор C6','Включить ESP-NOW','Поиск команды ESP-NOW','Канал ESP-NOW','Интервал маяка ESP-NOW (мс)','Включить Wi-Fi','Включить Wi-Fi STA','Включить Wi-Fi AP','Сохранять учётные данные Wi-Fi','SSID STA','Пароль STA','SSID AP','Пароль AP','Канал STA','Канал AP'],
+ de:['C6-Funkbegleiter','ESP-NOW aktivieren','ESP-NOW-Teamsuche','ESP-NOW-Kanal','ESP-NOW-Signalintervall (ms)','Wi-Fi aktivieren','Wi-Fi STA aktivieren','Wi-Fi AP aktivieren','Wi-Fi-Zugangsdaten behalten','STA-SSID','STA-Passwort','AP-SSID','AP-Passwort','STA-Kanal','AP-Kanal'],
+ es:['Coprocesador inalámbrico C6','Activar ESP-NOW','Descubrimiento de equipo ESP-NOW','Canal ESP-NOW','Intervalo de baliza ESP-NOW (ms)','Activar Wi-Fi','Activar Wi-Fi STA','Activar Wi-Fi AP','Conservar credenciales Wi-Fi','SSID STA','Contraseña STA','SSID AP','Contraseña AP','Canal STA','Canal AP'],
+ fr:['Coprocesseur sans fil C6','Activer ESP-NOW','Découverte d’équipe ESP-NOW','Canal ESP-NOW','Intervalle de balise ESP-NOW (ms)','Activer le Wi-Fi','Activer Wi-Fi STA','Activer Wi-Fi AP','Conserver les identifiants Wi-Fi','SSID STA','Mot de passe STA','SSID AP','Mot de passe AP','Canal STA','Canal AP'],
+ it:['Coprocessore wireless C6','Abilita ESP-NOW','Ricerca squadra ESP-NOW','Canale ESP-NOW','Intervallo beacon ESP-NOW (ms)','Abilita Wi-Fi','Abilita Wi-Fi STA','Abilita Wi-Fi AP','Conserva credenziali Wi-Fi','SSID STA','Password STA','SSID AP','Password AP','Canale STA','Canale AP'],
+};
+export function configC6Text(locale){const values=labels[locale];if(values?.length!==keys.length)throw Error('Incomplete C6 locale: '+locale);return Object.fromEntries(keys.map((key,index)=>[key,values[index]]));}

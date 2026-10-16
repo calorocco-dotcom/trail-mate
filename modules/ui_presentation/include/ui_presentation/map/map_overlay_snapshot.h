@@ -56,6 +56,9 @@ struct MapOverlayItem
     uint8_t icon = 0;
     bool selected = false;
     bool visible = true;
+    // Bit0: ordered path sample; bit1: disconnected from preceding sample.
+    // Uses the existing trailing padding rather than an additional point list.
+    uint8_t path_flags = 0;
 };
 
 struct MapOverlaySnapshot

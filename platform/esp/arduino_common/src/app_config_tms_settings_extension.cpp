@@ -1,5 +1,9 @@
 #include "platform/esp/arduino_common/app_config_tms_settings_extension.h"
+#include "app/tms_c6_config_extension.h"
 #include "platform/esp/arduino_common/app_config_tms_ble_extension.h"
+#if defined(ESP_PLATFORM) && !defined(ARDUINO)
+#include <sdkconfig.h>
+#endif
 
 #include "platform/ui/auto_reply_settings.h"
 #include "platform/ui/device_runtime.h"
@@ -63,6 +67,7 @@ enum Seen : uint32_t
     SeenGaugeFull = 1UL << 15U,
     SeenWifiEnabled = 1UL << 16U,
     SeenWifiCount = 1UL << 17U,
+    SeenRadioEnabled = 1UL << 18U,
 };
 
 constexpr uint32_t kRequiredBase = SeenScreenTimeout | SeenBrightness | SeenSpeakerVolume |
@@ -96,6 +101,7 @@ struct ParseState
     uint32_t gauge_design_mah = 1500U;
     uint32_t gauge_full_mah = 1500U;
     bool wifi_enabled = false;
+    bool radio_enabled = true;
     uint8_t wifi_profile_count = 0U;
     bool wifi_ssid_seen[::platform::ui::wifi::kMaxSavedProfileCount]{};
     bool wifi_password_seen[::platform::ui::wifi::kMaxSavedProfileCount]{};
@@ -103,6 +109,9 @@ struct ParseState
     uint64_t network_seen = 0U;
     uint32_t access_seen = 0U;
     ::chat::reticulum::ReticulumNetworkConfig network{};
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    tms::c6::Config companion{};
+#endif
 #if defined(ARDUINO_T_DECK_PRO) && defined(TRAIL_MATE_TDECK_PRO_A7682E)
     uint32_t cellular_seen = 0U;
     ::platform::ui::a7682e::Config cellular{};
@@ -120,10 +129,6 @@ static_assert(sizeof(ParseState) <= 4U * 1024U,
 // trusting EXT_RAM_ATTR: the final linked image is the authority on placement.
 ParseState* s_state_storage = nullptr;
 bool s_state_allocation_failed_logged = false;
-
-// Serial emission is sequential.  Locale, base64 strings, and timezone bytes
-// can share one small 192-byte buffer rather than reserving two at all times.
-uint8_t s_write_scratch[kTimezoneTzdefBytes]{};
 
 #define s_state (*s_state_storage)
 
@@ -562,6 +567,36 @@ bool valid_text_blob(const char* value, std::size_t length)
     return value != nullptr && std::memchr(value, '\0', length) == nullptr;
 }
 
+bool write_i32_setting(tms::RecordWriter& writer, const char* document_key,
+                       const char* ns, const char* store_key, int32_t fallback)
+{
+    int32_t value = 0;
+    const auto result = ::platform::ui::settings_store::read_int_into(ns, store_key, &value);
+    if (result == ::platform::ui::settings_store::ScalarReadResult::Missing) value = fallback;
+    else if (result != ::platform::ui::settings_store::ScalarReadResult::Ok) return false;
+    return writer.i32(document_key, value);
+}
+
+bool write_u32_setting(tms::RecordWriter& writer, const char* document_key,
+                       const char* ns, const char* store_key, uint32_t fallback)
+{
+    uint32_t value = 0;
+    const auto result = ::platform::ui::settings_store::read_uint_into(ns, store_key, &value);
+    if (result == ::platform::ui::settings_store::ScalarReadResult::Missing) value = fallback;
+    else if (result != ::platform::ui::settings_store::ScalarReadResult::Ok) return false;
+    return writer.u32(document_key, value);
+}
+
+bool write_bool_setting(tms::RecordWriter& writer, const char* document_key,
+                        const char* ns, const char* store_key, bool fallback)
+{
+    bool value = false;
+    const auto result = ::platform::ui::settings_store::read_bool_into(ns, store_key, &value);
+    if (result == ::platform::ui::settings_store::ScalarReadResult::Missing) value = fallback;
+    else if (result != ::platform::ui::settings_store::ScalarReadResult::Ok) return false;
+    return writer.boolean(document_key, value);
+}
+
 bool write_text_setting(tms::RecordWriter& writer,
                         const char* document_key,
                         const char* ns,
@@ -570,10 +605,15 @@ bool write_text_setting(tms::RecordWriter& writer,
                         std::size_t scratch_size)
 {
     std::size_t length = 0U;
-    if (!::platform::ui::settings_store::get_string_into(
-            ns, store_key, scratch, scratch_size, &length))
+    const auto result = ::platform::ui::settings_store::read_string_into(
+        ns, store_key, scratch, scratch_size, &length);
+    if (result == ::platform::ui::settings_store::StringReadResult::Missing)
     {
         scratch[0] = '\0';
+    }
+    else if (result != ::platform::ui::settings_store::StringReadResult::Ok)
+    {
+        return false;
     }
     return writer.text(document_key, scratch);
 }
@@ -583,13 +623,21 @@ bool write_blob_setting(tms::RecordWriter& writer,
                         const char* ns,
                         const char* store_key)
 {
+    if (!s_state_storage) return false;
+    // Emission owns the transient ParseState. Its timezone field can serve as
+    // scratch for one value at a time; no permanent 192-byte buffer is needed.
     std::size_t length = 0U;
-    if (!::platform::ui::settings_store::get_blob_into(
-            ns, store_key, s_write_scratch, sizeof(s_write_scratch), &length))
+    const auto result = ::platform::ui::settings_store::read_blob_into(
+        ns, store_key, s_state.timezone_tzdef, sizeof(s_state.timezone_tzdef), &length);
+    if (result == ::platform::ui::settings_store::BlobReadResult::Missing)
     {
         length = 0U;
     }
-    return writer.blob(document_key, s_write_scratch, length);
+    else if (result != ::platform::ui::settings_store::BlobReadResult::Ok)
+    {
+        return false;
+    }
+    return writer.blob(document_key, s_state.timezone_tzdef, length);
 }
 
 bool write_string_as_blob(tms::RecordWriter& writer,
@@ -598,35 +646,26 @@ bool write_string_as_blob(tms::RecordWriter& writer,
                           const char* store_key,
                           std::size_t maximum_length)
 {
-    if (maximum_length + 1U > sizeof(s_write_scratch))
+    if (!s_state_storage || maximum_length + 1U > sizeof(s_state.timezone_tzdef))
     {
         return false;
     }
     std::size_t length = 0U;
-    if (!::platform::ui::settings_store::get_string_into(
-            ns,
-            store_key,
-            reinterpret_cast<char*>(s_write_scratch),
-            maximum_length + 1U,
-            &length))
+    const auto result = ::platform::ui::settings_store::read_string_into(
+        ns, store_key, reinterpret_cast<char*>(s_state.timezone_tzdef),
+        maximum_length + 1U, &length);
+    if (result == ::platform::ui::settings_store::StringReadResult::Missing)
     {
         length = 0U;
     }
-    return writer.blob(document_key, s_write_scratch, length);
-}
-
-bool snapshot_wifi_profile(void*,
-                           std::size_t index,
-                           const ::platform::ui::wifi::Config& profile)
-{
-    if (index >= ::platform::ui::wifi::kMaxSavedProfileCount)
+    else if (result != ::platform::ui::settings_store::StringReadResult::Ok)
     {
         return false;
     }
-    s_state.wifi_profiles[index] = profile;
-    return true;
+    return writer.blob(document_key, s_state.timezone_tzdef, length);
 }
 
+// Board-specific configuration projection.
 #if defined(ARDUINO_T_DECK_PRO) && defined(TRAIL_MATE_TDECK_PRO_A7682E)
 enum CellularSeen : uint32_t
 {
@@ -691,6 +730,102 @@ bool write_cellular_records(tms::RecordWriter& writer)
 }
 #endif
 
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+bool write_c6_records(tms::RecordWriter& writer)
+{
+    namespace store = ::platform::ui::settings_store;
+    auto& c = s_state.companion;
+    constexpr const char* ns = "c6_companion";
+    c.seen = tms::c6::kComplete;
+    const auto boolean = [&](const char* key, bool fallback, bool& out)
+    {
+        const auto result = store::read_bool_into(ns, key, &out);
+        if (result == store::ScalarReadResult::Missing)
+        {
+            out = fallback;
+            return true;
+        }
+        return result == store::ScalarReadResult::Ok;
+    };
+    const auto integer = [&](const char* key, int32_t fallback, int32_t& out)
+    {
+        const auto result = store::read_int_into(ns, key, &out);
+        if (result == store::ScalarReadResult::Missing)
+        {
+            out = fallback;
+            return true;
+        }
+        return result == store::ScalarReadResult::Ok;
+    };
+    int32_t channel = 0, interval = 0, sta = 0, ap = 0;
+    if (!boolean("espnow_enabled", false, c.espnow_enabled) ||
+        !boolean("espnow_team_discovery", false, c.espnow_team_discovery) ||
+        !integer("espnow_channel", 0, channel) || !integer("espnow_beacon_interval_ms", 1000, interval) ||
+        !integer("wifi_sta_channel", 0, sta) || !integer("wifi_ap_channel", 1, ap)) return false;
+    if (channel < 0 || channel > 14 || interval < 1 || interval > 60000 || sta < 0 || sta > 14 || ap < 1 || ap > 14) return false;
+    c.espnow_channel = uint8_t(channel);
+    c.espnow_beacon_interval_ms = uint16_t(interval);
+    c.wifi_sta_channel = uint8_t(sta);
+    c.wifi_ap_channel = uint8_t(ap);
+    // Reuse an already-owned profile slot after the shared profiles emitted.
+    auto& shared = s_state.wifi_profiles[0];
+    if (!::platform::ui::wifi::load_config(shared)) return false;
+    if (!boolean("wifi_enabled", shared.enabled, c.wifi_enabled) ||
+        !boolean("wifi_sta_enabled", c.wifi_enabled, c.wifi_sta_enabled) ||
+        !boolean("wifi_ap_enabled", false, c.wifi_ap_enabled) ||
+        !boolean("wifi_persist_credentials", false, c.wifi_persist_credentials)) return false;
+    const auto text = [&](const char* key, char* out, size_t capacity, const char* fallback)
+    {
+        size_t length = 0;
+        const auto result = store::read_string_into(ns, key, out, capacity, &length);
+        if (result == store::StringReadResult::Ok) return true;
+        if (result != store::StringReadResult::Missing) return false;
+        if (std::strlen(fallback) >= capacity) return false;
+        std::memcpy(out, fallback, std::strlen(fallback) + 1);
+        return true;
+    };
+    return text("wifi_sta_ssid", c.wifi_sta_ssid, sizeof(c.wifi_sta_ssid), shared.ssid) &&
+           text("wifi_sta_password", c.wifi_sta_password, sizeof(c.wifi_sta_password), shared.password) &&
+           text("wifi_ap_ssid", c.wifi_ap_ssid, sizeof(c.wifi_ap_ssid), "TrailMate-C6") &&
+           text("wifi_ap_password", c.wifi_ap_password, sizeof(c.wifi_ap_password), "") && tms::c6::valid(c, shared.enabled) && tms::c6::write(c, writer);
+}
+bool apply_c6_records()
+{
+    namespace store = ::platform::ui::settings_store;
+    constexpr const char* ns = "c6_companion";
+    const auto& c = s_state.companion;
+    if (!c.seen) return true; // Existing TMSET7 documents migrate on next projection.
+    if (!tms::c6::valid(c, s_state.wifi_enabled)) return false;
+    store::ScopedChangeBatch batch;
+#define C6_PUT_BOOL(name)               \
+    store::put_bool(ns, #name, c.name); \
+    if (store::get_bool(ns, #name, !c.name) != c.name) return false
+#define C6_PUT_INT(name)               \
+    store::put_int(ns, #name, c.name); \
+    if (store::get_int(ns, #name, -1) != c.name) return false
+    C6_PUT_BOOL(espnow_enabled);
+    C6_PUT_BOOL(espnow_team_discovery);
+    C6_PUT_INT(espnow_channel);
+    C6_PUT_INT(espnow_beacon_interval_ms);
+    C6_PUT_BOOL(wifi_enabled);
+    C6_PUT_BOOL(wifi_sta_enabled);
+    C6_PUT_BOOL(wifi_ap_enabled);
+    C6_PUT_BOOL(wifi_persist_credentials);
+    C6_PUT_INT(wifi_sta_channel);
+    C6_PUT_INT(wifi_ap_channel);
+#undef C6_PUT_BOOL
+#undef C6_PUT_INT
+    // Caller-owned text scratch; no automatic credential array.
+    const auto text = [&](const char* key, const char* value)
+    {
+        size_t length = 0;
+        auto* scratch = reinterpret_cast<char*>(s_state.timezone_tzdef);
+        return store::put_string(ns, key, value) && store::get_string_into(ns, key, scratch, sizeof(s_state.timezone_tzdef), &length) && !std::strcmp(scratch, value);
+    };
+    return text("wifi_sta_ssid", c.wifi_sta_ssid) && text("wifi_sta_password", c.wifi_sta_password) &&
+           text("wifi_ap_ssid", c.wifi_ap_ssid) && text("wifi_ap_password", c.wifi_ap_password);
+}
+#endif
 } // namespace
 
 void beginRead(bool applying)
@@ -716,6 +851,10 @@ tms::RecordConsumeResult consumeRecord(void*, const tms::RecordReader& reader)
     {
         return tms::RecordConsumeResult::Invalid;
     }
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    const auto companion = tms::c6::consume(s_state.companion, reader);
+    if (companion != tms::RecordConsumeResult::Unhandled) return companion;
+#endif
     if (key_equals(reader, "ui.screen.timeout_ms"))
     {
         return mark_once(SeenScreenTimeout) && reader.u32(&s_state.screen_timeout_ms)
@@ -827,6 +966,12 @@ tms::RecordConsumeResult consumeRecord(void*, const tms::RecordReader& reader)
                    ? tms::RecordConsumeResult::Accepted
                    : tms::RecordConsumeResult::Invalid;
     }
+    if (key_equals(reader, "radio.enabled"))
+    {
+        return mark_once(SeenRadioEnabled) && reader.boolean(&s_state.radio_enabled)
+                   ? tms::RecordConsumeResult::Accepted
+                   : tms::RecordConsumeResult::Invalid;
+    }
     if (key_equals(reader, "wifi.profile_count"))
     {
         return mark_once(SeenWifiCount) &&
@@ -918,14 +1063,57 @@ tms::RecordConsumeResult consumeRecord(void*, const tms::RecordReader& reader)
     return tms::RecordConsumeResult::Unhandled;
 }
 
+bool write_base_scalar_settings()
+{
+    namespace store = ::platform::ui::settings_store;
+    // The scalar API is void. Compare read-back, with an unequal fallback,
+    // so a failed write/open cannot be reported as successful application.
+    // Equal existing values are sufficient; no extra retained buffers.
+    const auto integer = [](const char* ns, const char* key, int value)
+    {
+        store::put_int(ns, key, value);
+        return store::get_int(ns, key, value == 0 ? 1 : 0) == value;
+    };
+    const auto boolean = [](const char* ns, const char* key, bool value)
+    {
+        store::put_bool(ns, key, value);
+        return store::get_bool(ns, key, !value) == value;
+    };
+    const auto unsigned_integer = [](const char* ns, const char* key, uint32_t value)
+    {
+        store::put_uint(ns, key, value);
+        return store::get_uint(ns, key, value ^ UINT32_C(1)) == value;
+    };
+    return unsigned_integer(kSettingsNs, "screen_timeout", s_state.screen_timeout_ms) &&
+           integer(kSettingsNs, "screen_brightness", s_state.screen_brightness) &&
+           integer(kSettingsNs, "speaker_volume", s_state.speaker_volume) &&
+           (!(s_state.seen & SeenRadioEnabled) || boolean(kSettingsNs, "radio_enabled", s_state.radio_enabled)) &&
+           boolean(kSettingsNs, "vibration_enabled", s_state.vibration_enabled) &&
+           integer(kSettingsNs, "timezone_profile", s_state.timezone_profile) &&
+           integer(kSettingsNs, "timezone_offset", s_state.timezone_offset_minutes) &&
+           integer(kSettingsNs, "chat_message_alerts", s_state.message_alerts) &&
+           integer(kSettingsNs, "chat_contact_alerts", s_state.contact_alerts) &&
+           boolean(kSettingsNs, ::platform::ui::auto_reply::kEnabledKey, s_state.auto_reply_enabled) &&
+           boolean(kSettingsNs, "adv_debug", s_state.debug_logs_enabled) &&
+           unsigned_integer(kPowerNs, "gauge_design_mah", s_state.gauge_design_mah) &&
+           unsigned_integer(kPowerNs, "gauge_full_mah", s_state.gauge_full_mah);
+}
+
 bool finishDocument(void*, bool applying, uint16_t schema_version)
 {
     if (!s_state_storage)
     {
         return false;
     }
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    if (s_state.companion.seen && !tms::c6::valid(s_state.companion, s_state.wifi_enabled)) return false;
+#endif
     const bool contains_extension_records =
-        s_state.seen != 0U || s_state.network_seen != 0U || s_state.cellular_seen != 0U;
+        s_state.seen != 0U || s_state.network_seen != 0U || s_state.cellular_seen != 0U
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+        || s_state.companion.seen != 0U
+#endif
+        ;
     if (schema_version == 2U && !contains_extension_records)
     {
         // TMSET2 predates the full Settings projection.  Its AppConfig is
@@ -970,69 +1158,38 @@ bool finishDocument(void*, bool applying, uint16_t schema_version)
 
     s_state.enabled_imes[s_state.enabled_imes_len] = '\0';
     s_state.auto_reply_text[s_state.auto_reply_text_len] = '\0';
-    ::platform::ui::settings_store::put_uint(kSettingsNs,
-                                             "screen_timeout",
-                                             s_state.screen_timeout_ms);
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            "screen_brightness",
-                                            static_cast<int>(s_state.screen_brightness));
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            "speaker_volume",
-                                            static_cast<int>(s_state.speaker_volume));
-    ::platform::ui::settings_store::put_bool(kSettingsNs,
-                                             "vibration_enabled",
-                                             s_state.vibration_enabled);
-    bool ok = ::platform::ui::settings_store::put_string(
-                  kSettingsNs, "display_locale", s_state.locale) &&
-              ::platform::ui::settings_store::put_string(
-                  kSettingsNs, "enabled_imes", s_state.enabled_imes) &&
-              ::platform::ui::settings_store::put_blob(kSettingsNs,
-                                                       "timezone_tzdef",
-                                                       s_state.timezone_tzdef,
-                                                       s_state.timezone_tzdef_len);
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            "timezone_profile",
-                                            static_cast<int>(s_state.timezone_profile));
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            "timezone_offset",
-                                            static_cast<int>(s_state.timezone_offset_minutes));
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            "chat_message_alerts",
-                                            static_cast<int>(s_state.message_alerts));
-    ::platform::ui::settings_store::put_int(kSettingsNs,
-                                            "chat_contact_alerts",
-                                            static_cast<int>(s_state.contact_alerts));
-    ::platform::ui::settings_store::put_bool(kSettingsNs,
-                                             ::platform::ui::auto_reply::kEnabledKey,
-                                             s_state.auto_reply_enabled);
-    ok = ::platform::ui::settings_store::put_string(
-             kSettingsNs,
-             ::platform::ui::auto_reply::kTextKey,
-             s_state.auto_reply_text) &&
-         ok;
-    ::platform::ui::settings_store::put_bool(kSettingsNs,
-                                             "adv_debug",
-                                             s_state.debug_logs_enabled);
-    ::platform::ui::settings_store::put_uint(kPowerNs,
-                                             "gauge_design_mah",
-                                             s_state.gauge_design_mah);
-    ::platform::ui::settings_store::put_uint(kPowerNs,
-                                             "gauge_full_mah",
-                                             s_state.gauge_full_mah);
-    ok = ::platform::ui::wifi::replace_saved_profiles(
-             s_state.wifi_enabled, s_state.wifi_profiles, s_state.wifi_profile_count) &&
-         ok;
-    if (s_state.network_seen != 0U)
+    if (!write_base_scalar_settings())
     {
-        ok = ::platform::ui::reticulum_network_config::setFromTms(s_state.network) && ok;
+        return false;
+    }
+    if (!::platform::ui::settings_store::put_string(kSettingsNs, "display_locale", s_state.locale) ||
+        !::platform::ui::settings_store::put_string(kSettingsNs, "enabled_imes", s_state.enabled_imes) ||
+        !::platform::ui::settings_store::put_blob(kSettingsNs, "timezone_tzdef",
+                                                  s_state.timezone_tzdef, s_state.timezone_tzdef_len) ||
+        !::platform::ui::settings_store::put_string(kSettingsNs, ::platform::ui::auto_reply::kTextKey,
+                                                    s_state.auto_reply_text) ||
+        !::platform::ui::wifi::replace_saved_profiles(s_state.wifi_enabled, s_state.wifi_profiles,
+                                                      s_state.wifi_profile_count))
+    {
+        return false;
+    }
+    // Stop at the first failed owner. Do not apply later network/radio settings
+    // after a failed cache write; the original SD document can replay on reboot.
+    if (s_state.network_seen != 0U &&
+        !::platform::ui::reticulum_network_config::setFromTms(s_state.network))
+    {
+        return false;
     }
 #if defined(ARDUINO_T_DECK_PRO) && defined(TRAIL_MATE_TDECK_PRO_A7682E)
-    if (s_state.cellular_seen != 0U)
+    if (s_state.cellular_seen != 0U && !::platform::ui::a7682e::save_config(s_state.cellular))
     {
-        ok = ::platform::ui::a7682e::save_config(s_state.cellular) && ok;
+        return false;
     }
 #endif
-    return ok;
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    if (!apply_c6_records()) return false;
+#endif
+    return true;
 }
 
 bool writeRecords(void* context, tms::RecordWriter& writer)
@@ -1047,54 +1204,50 @@ bool writeRecords(void* context, tms::RecordWriter& writer)
     {
         return false;
     }
-    if (!writer.u32("ui.screen.timeout_ms", ::platform::ui::screen::timeout_ms()) ||
-        !writer.i32("ui.display.brightness",
-                    ::platform::ui::settings_store::get_int(
-                        kSettingsNs,
-                        "screen_brightness",
-                        static_cast<int>(::platform::ui::device::screen_brightness()))) ||
-        !writer.i32("ui.audio.speaker_volume",
-                    ::platform::ui::settings_store::get_int(kSettingsNs, "speaker_volume", 45)) ||
-        !writer.boolean("ui.haptics.vibration_enabled",
-                        ::platform::ui::settings_store::get_bool(
-                            kSettingsNs, "vibration_enabled", true)) ||
+    if (!write_u32_setting(writer, "ui.screen.timeout_ms", kSettingsNs,
+                           "screen_timeout", ::platform::ui::screen::timeout_ms()) ||
+        !write_i32_setting(writer, "ui.display.brightness", kSettingsNs,
+                           "screen_brightness", ::platform::ui::device::screen_brightness()) ||
+        !write_i32_setting(writer, "ui.audio.speaker_volume", kSettingsNs,
+                           "speaker_volume", 45) ||
+        !write_bool_setting(writer, "radio.enabled", kSettingsNs, "radio_enabled", true) ||
+        !write_bool_setting(writer, "ui.haptics.vibration_enabled", kSettingsNs,
+                            "vibration_enabled", true) ||
         !write_text_setting(writer,
                             "ui.locale",
                             kSettingsNs,
                             "display_locale",
-                            reinterpret_cast<char*>(s_write_scratch),
+                            reinterpret_cast<char*>(s_state.timezone_tzdef),
                             kLocaleBytes) ||
         !write_string_as_blob(writer,
                               "ui.ime.enabled",
                               kSettingsNs,
                               "enabled_imes",
                               kEnabledImesBytes - 1U) ||
-        !writer.i32("ui.timezone.profile", ::platform::ui::time::timezone_profile_id()) ||
-        !writer.i32("ui.timezone.offset_minutes", ::platform::ui::time::timezone_offset_min()) ||
+        !write_i32_setting(writer, "ui.timezone.profile", kSettingsNs,
+                           "timezone_profile", ::platform::ui::time::timezone_profile_id()) ||
+        // Snapshot the saved offset, not a date-dependent DST result. City
+        // profiles keep their effective runtime calculation independently.
+        !write_i32_setting(writer, "ui.timezone.offset_minutes", kSettingsNs,
+                           "timezone_offset", ::platform::ui::time::timezone_offset_min()) ||
         !write_blob_setting(writer,
                             "ui.timezone.tzdef",
                             kSettingsNs,
                             "timezone_tzdef") ||
-        !writer.i32("chat.alerts.message",
-                    ::platform::ui::settings_store::get_int(kSettingsNs, "chat_message_alerts", 1)) ||
-        !writer.i32("chat.alerts.contact",
-                    ::platform::ui::settings_store::get_int(kSettingsNs, "chat_contact_alerts", 1)) ||
-        !writer.boolean("chat.auto_reply.enabled",
-                        ::platform::ui::settings_store::get_bool(
-                            kSettingsNs,
-                            ::platform::ui::auto_reply::kEnabledKey,
-                            false)) ||
+        !write_i32_setting(writer, "chat.alerts.message", kSettingsNs,
+                           "chat_message_alerts", 1) ||
+        !write_i32_setting(writer, "chat.alerts.contact", kSettingsNs,
+                           "chat_contact_alerts", 1) ||
+        !write_bool_setting(writer, "chat.auto_reply.enabled", kSettingsNs,
+                            ::platform::ui::auto_reply::kEnabledKey, false) ||
         !write_string_as_blob(writer,
                               "chat.auto_reply.text",
                               kSettingsNs,
                               ::platform::ui::auto_reply::kTextKey,
                               kAutoReplyBytes) ||
-        !writer.boolean("debug.sd_logs_enabled",
-                        ::platform::ui::settings_store::get_bool(kSettingsNs, "adv_debug", false)) ||
-        !writer.u32("power.gauge.design_mah",
-                    ::platform::ui::settings_store::get_uint(kPowerNs, "gauge_design_mah", 1500U)) ||
-        !writer.u32("power.gauge.full_mah",
-                    ::platform::ui::settings_store::get_uint(kPowerNs, "gauge_full_mah", 1500U)) ||
+        !write_bool_setting(writer, "debug.sd_logs_enabled", kSettingsNs, "adv_debug", false) ||
+        !write_u32_setting(writer, "power.gauge.design_mah", kPowerNs, "gauge_design_mah", 1500U) ||
+        !write_u32_setting(writer, "power.gauge.full_mah", kPowerNs, "gauge_full_mah", 1500U) ||
         !write_network_records(writer, *config))
     {
         return false;
@@ -1102,8 +1255,9 @@ bool writeRecords(void* context, tms::RecordWriter& writer)
 
     bool wifi_enabled = false;
     std::size_t wifi_count = 0U;
-    if (!::platform::ui::wifi::visit_saved_profiles(
-            &wifi_enabled, &wifi_count, snapshot_wifi_profile, nullptr) ||
+    if (!::platform::ui::wifi::read_saved_profiles_into(
+            &wifi_enabled, &wifi_count, s_state.wifi_profiles,
+            ::platform::ui::wifi::kMaxSavedProfileCount) ||
         wifi_count > ::platform::ui::wifi::kMaxSavedProfileCount ||
         !writer.boolean("wifi.enabled", wifi_enabled) ||
         !writer.u8("wifi.profile_count", static_cast<uint8_t>(wifi_count)))
@@ -1129,6 +1283,9 @@ bool writeRecords(void* context, tms::RecordWriter& writer)
     {
         return false;
     }
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    if (!write_c6_records(writer)) return false;
 #endif
     return ble_extension::writeRecords(writer);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lvgl.h"
+#include "ui/components/bottom_bar.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -47,6 +48,11 @@ struct Adapter
     bool (*handle_list_enter)(void* ctx, lv_obj_t* focused) = nullptr;
     void (*on_column_changed)(void* ctx, FocusColumn column) = nullptr;
 
+    // Optional bottom-menu presentation; business activation stays in Adapter.
+    lv_obj_t* filter_panel = nullptr;
+    lv_obj_t* bottom_bar = nullptr;
+    void (*build_info)(lv_obj_t* parent) = nullptr;
+
     BackPlacement filter_top_back_placement = BackPlacement::Leading;
     BackPlacement list_top_back_placement = BackPlacement::None;
 };
@@ -59,6 +65,10 @@ struct Binding
     lv_indev_t* encoder = nullptr;
     FocusColumn column = FocusColumn::Filter;
     bool bound = false;
+    bottom_bar::Menu menu{};
+    lv_obj_t* menu_bar = nullptr;
+    lv_obj_t* info_button = nullptr;
+    bool owns_menu_bar = false;
 };
 
 void init(Binding* binding, const Adapter& adapter);
@@ -66,6 +76,7 @@ void cleanup(Binding* binding);
 void on_ui_refreshed(Binding* binding);
 void focus_filter(Binding* binding);
 void focus_list(Binding* binding);
+void show_submenu(Binding* binding, lv_obj_t* content);
 lv_group_t* get_group(const Binding* binding);
 
 class Controller

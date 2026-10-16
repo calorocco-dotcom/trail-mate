@@ -1,12 +1,15 @@
 #include "lvgl.h"
 #include "ui/app_runtime.h"
 #include "ui/menu/menu_runtime.h"
+#include "ui/screens/agenda/agenda_page_shell.h"
 #include "ui/screens/calculator/calculator_page_runtime.h"
 #include "ui/screens/contacts/contacts_page_runtime.h"
 #include "ui/screens/energy_sweep/energy_sweep_page_runtime.h"
 #include "ui/screens/extensions/extensions_page_runtime.h"
+#include "ui/screens/geocaching/geocaching_page_shell.h"
 #include "ui/screens/gnss/gnss_skyplot_page_runtime.h"
 #include "ui/screens/gps/gps_page_runtime.h"
+#include "ui/screens/music/music_page_shell.h"
 #include "ui/screens/network/network_page_shell.h"
 #include "ui/screens/settings/settings_page_runtime.h"
 #include "ui/screens/sstv/sstv_page_runtime.h"
@@ -24,11 +27,23 @@ void preview_power_enter();
 void preview_power_exit();
 void preview_chat_enter(int page);
 void preview_chat_exit();
+void preview_bind_music();
+void preview_select_page(int page);
+void preview_enter_agenda(lv_obj_t* parent);
 
 void preview_exit_page()
 {
     switch (current_page)
     {
+    case 20:
+        geocaching::ui::shell::exit(nullptr, lv_screen_active());
+        break;
+    case 21:
+        ui::agenda::page::exit(nullptr, lv_screen_active());
+        break;
+    case 19:
+        ui::music_page::exit(nullptr, lv_screen_active());
+        break;
     case 0:
         calculator::ui::runtime::exit(lv_screen_active());
         break;
@@ -89,10 +104,26 @@ void preview_exit_page()
 extern "C" EMSCRIPTEN_KEEPALIVE void native_open_page(int page)
 {
     preview_exit_page();
+    preview_select_page(page);
     lv_group_remove_all_objs(app_g);
+    lv_group_set_editing(app_g, false);
     if (page != 10 && page != 17 && page != 18) ui::menu_runtime::setScene(ui::menu_runtime::Scene::App);
     switch (page)
     {
+    case 20:
+    {
+        static const ui::page::Host host{nullptr, [](void*)
+                                         { ui_request_exit_to_menu(); }};
+        geocaching::ui::shell::enter(const_cast<ui::page::Host*>(&host), lv_screen_active());
+        break;
+    }
+    case 21:
+        preview_enter_agenda(lv_screen_active());
+        break;
+    case 19:
+        preview_bind_music();
+        ui::music_page::enter(nullptr, lv_screen_active());
+        break;
     case 0:
         calculator::ui::runtime::enter(nullptr, lv_screen_active());
         break;

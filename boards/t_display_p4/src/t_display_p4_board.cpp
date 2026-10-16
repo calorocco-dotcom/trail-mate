@@ -114,6 +114,10 @@ TickType_t radio_tx_timeout_ticks(size_t len)
 
 bool ensure_external_3v3_power_control()
 {
+    // SD and keyboard startup can run alongside audio/motion preparation.
+    // Serialize both initial acquisition and subsequent voltage confirmation.
+    static std::mutex mutex;
+    const std::lock_guard<std::mutex> lock(mutex);
     if (s_external_3v3_ldo_handle != nullptr)
     {
         const esp_err_t err =
@@ -156,23 +160,19 @@ bool ensure_external_3v3_power_control()
     return true;
 }
 
-bool configure_l76k_update_rate(uart_port_t port)
+bool configure_l76k_update_rate(uart_port_t port, uint32_t baud_rate)
 {
-    // T-Display-P4 uses L76K.  Keep the vendor driver's 5 Hz baseline
-    // (PCAS02,200) without relying on an Arduino-only GNSS implementation.
-    constexpr char kBody[] = "PCAS02,200";
+    // Full multi-constellation NMEA at 5 Hz exceeds a 9600 baud UART. Keep
+    // the factory-rate fallback readable; use the vendor 5 Hz rate at 115200.
+    const char* body = baud_rate <= 9600 ? "PCAS02,1000" : "PCAS02,200";
     uint8_t checksum = 0;
-    for (const char value : kBody)
+    for (const char* value = body; *value != '\0'; ++value)
     {
-        if (value == '\0')
-        {
-            break;
-        }
-        checksum ^= static_cast<uint8_t>(value);
+        checksum ^= static_cast<uint8_t>(*value);
     }
 
     char command[24] = {};
-    const int length = std::snprintf(command, sizeof(command), "$%s*%02X\r\n", kBody, checksum);
+    const int length = std::snprintf(command, sizeof(command), "$%s*%02X\r\n", body, checksum);
     if (length <= 0 || static_cast<size_t>(length) >= sizeof(command))
     {
         return false;
@@ -1073,20 +1073,27 @@ bool TDisplayP4Board::expanderPinMode(int pin, bool output)
     }
 
     uint8_t* cfg_cache = (location.port == 0) ? &expander_config_port0_ : &expander_config_port1_;
+    uint8_t next_config = *cfg_cache;
     if (output)
     {
-        *cfg_cache = static_cast<uint8_t>(*cfg_cache & ~static_cast<uint8_t>(1u << location.bit));
+        next_config = static_cast<uint8_t>(next_config & ~static_cast<uint8_t>(1u << location.bit));
     }
     else
     {
-        *cfg_cache = static_cast<uint8_t>(*cfg_cache | static_cast<uint8_t>(1u << location.bit));
+        next_config = static_cast<uint8_t>(next_config | static_cast<uint8_t>(1u << location.bit));
     }
 
     const uint8_t payload[2] = {
         static_cast<uint8_t>((location.port == 0) ? kExpanderRegConfig0 : kExpanderRegConfig1),
-        *cfg_cache,
+        next_config,
     };
-    return guard.transmit(payload, sizeof(payload), kI2cTimeoutMs) == ESP_OK;
+    if (guard.transmit(payload, sizeof(payload), kI2cTimeoutMs) != ESP_OK)
+    {
+        expander_ready_ = false; // Re-read the physical latch after an uncertain transfer.
+        return false;
+    }
+    *cfg_cache = next_config;
+    return true;
 }
 
 bool TDisplayP4Board::expanderWrite(int pin, bool high)
@@ -1110,20 +1117,27 @@ bool TDisplayP4Board::expanderWrite(int pin, bool high)
     }
 
     uint8_t* out_cache = (location.port == 0) ? &expander_output_port0_ : &expander_output_port1_;
+    uint8_t next_output = *out_cache;
     if (high)
     {
-        *out_cache = static_cast<uint8_t>(*out_cache | static_cast<uint8_t>(1u << location.bit));
+        next_output = static_cast<uint8_t>(next_output | static_cast<uint8_t>(1u << location.bit));
     }
     else
     {
-        *out_cache = static_cast<uint8_t>(*out_cache & ~static_cast<uint8_t>(1u << location.bit));
+        next_output = static_cast<uint8_t>(next_output & ~static_cast<uint8_t>(1u << location.bit));
     }
 
     const uint8_t payload[2] = {
         static_cast<uint8_t>((location.port == 0) ? kExpanderRegOutput0 : kExpanderRegOutput1),
-        *out_cache,
+        next_output,
     };
-    return guard.transmit(payload, sizeof(payload), kI2cTimeoutMs) == ESP_OK;
+    if (guard.transmit(payload, sizeof(payload), kI2cTimeoutMs) != ESP_OK)
+    {
+        expander_ready_ = false;
+        return false;
+    }
+    *out_cache = next_output;
+    return true;
 }
 
 bool TDisplayP4Board::expanderRead(int pin, bool* out_high) const
@@ -1258,7 +1272,7 @@ bool TDisplayP4Board::prepareGpsRuntime(uint32_t baud_rate)
     {
         return false;
     }
-    if (!configure_l76k_update_rate(static_cast<uart_port_t>(gpsUart().port)))
+    if (!configure_l76k_update_rate(static_cast<uart_port_t>(gpsUart().port), effective_baud_rate))
     {
         ESP_LOGW(kTag, "L76K update-rate initialization failed; continuing with receiver defaults");
     }
@@ -1459,6 +1473,11 @@ bool TDisplayP4Board::isRadioOnline() const
     return ensureRadioReady() && radio().isOnline();
 }
 
+bool TDisplayP4Board::quiesceForExternalStorage()
+{
+    return !radio().isOnline() || radio().standby();
+}
+
 int TDisplayP4Board::transmitRadio(const uint8_t* data, size_t len)
 {
     if (!ensureRadioReady())
@@ -1614,7 +1633,8 @@ bool TDisplayP4Board::initializeI2cBuses()
     if (system_i2c_handle_ == nullptr)
     {
         i2c_master_bus_config_t sys_cfg = {};
-        sys_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+        static_assert(profile().sys_i2c.port == LP_I2C_NUM_0);
+        sys_cfg.lp_source_clk = LP_I2C_SCLK_DEFAULT;
         sys_cfg.sda_io_num = static_cast<gpio_num_t>(systemI2c().sda);
         sys_cfg.scl_io_num = static_cast<gpio_num_t>(systemI2c().scl);
         sys_cfg.i2c_port = systemI2c().port;
@@ -1679,21 +1699,13 @@ bool TDisplayP4Board::initializeExpander()
         return false;
     }
 
-    if (!read_reg(kExpanderRegOutput0, &expander_output_port0_))
+    if (!read_reg(kExpanderRegOutput0, &expander_output_port0_) ||
+        !read_reg(kExpanderRegOutput1, &expander_output_port1_) ||
+        !read_reg(kExpanderRegConfig0, &expander_config_port0_) ||
+        !read_reg(kExpanderRegConfig1, &expander_config_port1_))
     {
-        expander_output_port0_ = 0x00;
-    }
-    if (!read_reg(kExpanderRegOutput1, &expander_output_port1_))
-    {
-        expander_output_port1_ = 0x00;
-    }
-    if (!read_reg(kExpanderRegConfig0, &expander_config_port0_))
-    {
-        expander_config_port0_ = 0xFF;
-    }
-    if (!read_reg(kExpanderRegConfig1, &expander_config_port1_))
-    {
-        expander_config_port1_ = 0xFF;
+        ESP_LOGE(kTag, "Failed to read XL9535 state; refusing to change unknown output latches");
+        return false;
     }
 
     expander_ready_ = true;
@@ -1720,7 +1732,8 @@ bool TDisplayP4Board::runColdBootPowerSequence()
         !expanderWriteActive(io.p4_vcca, true, p.p4_vcca_active_high) ||
         !expanderWriteActive(io.power_5v, true, p.power_5v_active_high) ||
         !expanderWriteActive(io.screen_rst, true, !p.screen_reset_active_low) ||
-        !expanderWriteActive(io.touch_rst, true, !p.touch_reset_active_low))
+        !expanderWriteActive(io.touch_rst, true, !p.touch_reset_active_low) ||
+        !expanderWrite(io.ethernet_rst, false))
     {
         ESP_LOGE(kTag, "Failed to preload P4 power/reset output levels");
         return false;
@@ -1733,27 +1746,24 @@ bool TDisplayP4Board::runColdBootPowerSequence()
         !expanderPinMode(io.power_5v, true) ||
         !expanderPinMode(io.power_3v3, true) ||
         !expanderPinMode(io.gps_wake, true) ||
-        !expanderPinMode(io.c6_enable, true))
+        !expanderPinMode(io.c6_enable, true) ||
+        !expanderPinMode(io.ethernet_rst, true))
     {
         return false;
     }
 
     // Keep the board rails stable. LilyGO documents that switching the P4 V1.0
     // 3.3 V rail off can leave peripherals mis-reset or lock P4 in download mode.
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    (void)expanderWriteActive(io.screen_rst, false, !p.screen_reset_active_low);
-    (void)expanderWriteActive(io.touch_rst, false, !p.touch_reset_active_low);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    (void)expanderWriteActive(io.screen_rst, true, !p.screen_reset_active_low);
-    (void)expanderWriteActive(io.touch_rst, true, !p.touch_reset_active_low);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    (void)expanderWriteActive(io.screen_rst, false, !p.screen_reset_active_low);
-    (void)expanderWriteActive(io.touch_rst, false, !p.touch_reset_active_low);
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    (void)expanderPinMode(io.ethernet_rst, true);
-    (void)expanderWrite(io.ethernet_rst, true);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    if (!expanderWriteActive(io.screen_rst, false, !p.screen_reset_active_low) ||
+        !expanderWriteActive(io.touch_rst, false, !p.touch_reset_active_low))
+    {
+        ESP_LOGE(kTag, "Failed to release P4 display/touch reset");
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(120));
+    // No Ethernet driver owns the PHY in this product. Hold it in reset until
+    // an actual Ethernet owner initializes the RMII pins and clock.
     return true;
 }
 

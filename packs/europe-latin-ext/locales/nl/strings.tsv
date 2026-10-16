@@ -828,3 +828,59 @@ No saved waypoints	Geen opgeslagen routepunten
 Saved waypoint	Opgeslagen routepunt
 Waypoint unavailable	Routepunt niet beschikbaar
 Reticulum	Reticulum
+Image memory unavailable	Onvoldoende geheugen voor afbeeldingen
+Image cache needs checking. Download again.	De afbeeldingscache moet worden gecontroleerd. Download opnieuw.
+Off route %.0fm	Buiten route %.0fm
+Route position unavailable	Routepositie niet beschikbaar
+Route storage unavailable	Routeopslag niet beschikbaar
+Route: waiting for GPS	Route: wachten op GPS
+Route position ambiguous	Routepositie is dubbelzinnig
+Route end (estimated)	Route-einde (geschat)
+Route %u%% | %s left	Route %u%% | nog %s
+Matching route...	Route vergelijken…
+Distance %.0f m	Afstand %.0f m
+Distance %.1f km	Afstand %.1f km
+Position unknown	Positie onbekend
+Region unknown	Administratief gebied onbekend
+Location loading...	Locatie zoeken…
+Distance unknown	Afstand onbekend
+My position unknown	Eigen positie onbekend
+No nodes	Geen knooppunten
+Old position	Verouderde positie
+Contacts unavailable	Contacten niet beschikbaar
+Map Help	Kaarthulp
+Map layer: %s	Kaartlaag: %s
+Show contours	Hoogtelijnen tonen
+Hide contours	Hoogtelijnen verbergen
+Search POI	Plaatsen zoeken
+Load navigation	Navigatie laden
+Load track	Track laden
+No saved navigation	Geen opgeslagen navigatie
+Help	Hulp
+Menu	Menu
+Navigation	Navigatie
+Nav	Nav.
+New navigation	Nieuwe navigatie
+Current location	Huidige locatie
+Use current location	Huidige locatie gebruiken
+Choose destination	Bestemming kiezen
+Calculate route	Route berekenen
+Save and preview	Opslaan en bekijken
+Calculating route...	Route berekenen...
+Route ready: %.1f km	Route gereed: %.1f km
+No TMAP routing data	Geen TMAP-routegegevens
+No path found	Geen pad gevonden
+Outside routing coverage	Buiten het routenetwerk
+Navigation memory limit	Geheugenlimiet voor navigatie bereikt
+Navigation unavailable	Navigatie niet beschikbaar
+Origin	Vertrekpunt
+Destination	Bestemming
+Tap the origin to search for a place	Tik op het vertrekpunt om een plaats te zoeken
+Search unavailable	Zoeken niet beschikbaar
+Cancelled	Geannuleerd
+No team	Geen teamleden
+View	Bekijken
+Current	Huidig
+Contours	Hoogtelijnen
+Load	Laden
+Unload	Ontladen

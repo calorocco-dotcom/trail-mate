@@ -1,0 +1,5 @@
+// Firmware stores these char fields as u8 in TMSET7, not decimal user inputs.
+// APRS table/overlay definitions: https://www.aprs.org/symbols/symbolsX.txt
+export function configurationCharacter(value){return value===0?'':Number.isInteger(value)&&value>=33&&value<=126?String.fromCharCode(value):'0x'+value.toString(16).toUpperCase().padStart(2,'0');}
+export function encodeConfigurationCharacter(value){if(value==='')return 0;if(typeof value!=='string'||! /^[\x21-\x7e]$/.test(value))throw Object.assign(Error('Invalid character'),{code:'CONFIG_CHARACTER'});return value.charCodeAt(0);}
+export function configurationCharacterChoices(key,text,table){return key==='aprs.symbol_table'?[{value:0,label:text.unset},{value:47,label:text.primary+' · /'},{value:92,label:text.alternate+' · \\'},...'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(character=>({value:character.charCodeAt(0),label:text.overlay+' · '+character}))]:[{value:0,label:text.unset},...Array.from({length:94},(_,index)=>{const character=String.fromCharCode(index+33),name=table===47?text.symbolNames?.[character]:undefined;return {value:index+33,label:name?name+' · '+character:character};})];}

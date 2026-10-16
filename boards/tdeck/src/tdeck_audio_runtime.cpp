@@ -8,6 +8,7 @@
 #include <cstdio>
 
 #include "pins_arduino.h"
+#include "platform/audio/audio_focus.h"
 #include "platform/esp/common/memory_budget.h"
 #include "platform/ui/audio/pager_notification_tone.h"
 
@@ -266,6 +267,8 @@ bool TDeckAudioRuntime::playCodec2Voice(const uint8_t* encoded_media,
         std::printf("[TDeck][Audio] voice rejected reason=memory_budget\n");
         return false;
     }
+    platform::audio::FocusScope focus(platform::audio::FocusOwner::VoiceMessage);
+    if (!focus) return false;
     if (audio_busy_.test_and_set(std::memory_order_acquire))
     {
         std::printf("[TDeck][Audio] voice rejected reason=audio_busy\n");
@@ -391,6 +394,39 @@ bool TDeckAudioRuntime::isReady() const
     return ready_.load(std::memory_order_acquire) &&
            !faulted_.load(std::memory_order_acquire);
 }
+bool TDeckAudioRuntime::beginMusic(uint32_t sample_rate)
+{
+    if (!isReady() || platform::audio::music_blocked() || music_active_ || audio_busy_.test_and_set(std::memory_order_acquire)) return false;
+    if (i2s_set_sample_rates(kSpeakerI2sPort, sample_rate) != ESP_OK)
+    {
+        audio_busy_.clear(std::memory_order_release);
+        return false;
+    }
+    music_active_ = true;
+    return true;
+}
+bool TDeckAudioRuntime::writeMusic(const int16_t* mono, std::size_t samples)
+{
+    if (!music_active_ || !mono) return false;
+    for (std::size_t offset = 0; offset < samples;)
+    {
+        const auto count = std::min<std::size_t>(kFramesPerChunk, samples - offset);
+        for (std::size_t i = 0; i < count; i++) pcm_[2 * i] = pcm_[2 * i + 1] = mono[offset + i];
+        std::size_t written = 0;
+        const auto bytes = count * 2 * sizeof(int16_t);
+        if (i2s_write(kSpeakerI2sPort, pcm_.data(), bytes, &written, pdMS_TO_TICKS(100)) != ESP_OK || written != bytes) return false;
+        offset += count;
+    }
+    return true;
+}
+void TDeckAudioRuntime::endMusic()
+{
+    if (!music_active_) return;
+    i2s_zero_dma_buffer(kSpeakerI2sPort);
+    (void)i2s_set_sample_rates(kSpeakerI2sPort, ::platform::ui::audio::pager_notification::kPlaybackSampleRateHz);
+    music_active_ = false;
+    audio_busy_.clear(std::memory_order_release);
+}
 
 void TDeckAudioRuntime::taskEntry(void* context)
 {
@@ -411,6 +447,8 @@ void TDeckAudioRuntime::taskLoop()
         {
             continue;
         }
+        platform::audio::FocusScope focus(platform::audio::FocusOwner::Notification);
+        if (!focus) continue;
         if (audio_busy_.test_and_set(std::memory_order_acquire))
         {
             std::printf("[TDeck][Audio] tone dropped voice_playback_active\n");

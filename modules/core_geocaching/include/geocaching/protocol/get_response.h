@@ -4,6 +4,22 @@
 
 namespace geocaching::protocol
 {
+// Caller must authenticate the directory and match the local destination first.
+// Only explicit cache absence qualifies, never missing revision/timeout/other errors.
+inline bool decodeGetNotFound(ByteView response, const RequestId& expected, size_t response_budget)
+{
+    if (!response.data || response_budget < 512 || response_budget > kMaxApplicationBytes || response.size > response_budget) return false;
+    CmpReader reader(response);
+    size_t fields = 0;
+    uint64_t value = 0;
+    ByteView request;
+    std::string_view reason;
+    return reader.array(fields, 6) && fields == 6 && reader.unsignedInteger(value) && value == 1 &&
+           reader.unsignedInteger(value) && value == 1 && reader.unsignedInteger(value) && value == 3 &&
+           reader.binary(request, 16) && request.size == 16 && !std::memcmp(request.data, expected.bytes.data(), 16) &&
+           reader.unsignedInteger(value) && value == 404 && reader.array(fields, 3) && fields == 3 &&
+           reader.text(reason, 32) && reason == "not_found" && reader.nil() && reader.nil() && reader.finished();
+}
 struct GetResponseView
 {
     ByteView signed_cache;

@@ -28,7 +28,8 @@
   comp.compression FAQ.
 --*/
 
-UInt32 BZ2_crc32Table[256] = {
+/* Trail Mate: immutable lookup data belongs in flash, not internal DRAM. */
+const UInt32 BZ2_crc32Table[256] = {
 
    /*-- Ugly, innit? --*/
 

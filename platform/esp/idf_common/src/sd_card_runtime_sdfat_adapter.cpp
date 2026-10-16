@@ -1,9 +1,13 @@
 #include "platform/esp/idf_common/sd_card_runtime_sdfat_adapter.h"
 
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
+#include "platform/esp/arduino_common/storage/sd_file_lifetime.h"
+#include "platform/esp/arduino_common/storage/sd_transfer_policy.h"
+#include "platform/esp/common/storage/mount_io_state.h"
 
 #include "esp_attr.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -65,13 +69,16 @@ SdCardInfo s_info{};
 sdmmc_card_t* s_card = nullptr;
 sdmmc_host_t s_host = SDMMC_HOST_DEFAULT();
 sdmmc_host_runtime::SlotOwner s_owner = sdmmc_host_runtime::SlotOwner::None;
-bool s_mounted = false;
+platform::esp::storage::MountIoState s_mounted;
+using SdIoErrorScope = platform::esp::storage::MountIoErrorScope;
 std::atomic<uint32_t> s_media_session{1};
 volatile bool s_external_block_owner_active = false;
 SemaphoreHandle_t s_storage_mutex = nullptr;
 uint32_t s_last_sd_io_log_ms = 0;
 uint32_t s_suppressed_sd_io_logs = 0;
-alignas(4) DRAM_ATTR uint8_t s_dma_sector[kSdSectorSize];
+// Shared under SdRuntimeBusGuard, never allocated on an ESP task stack. Match
+// L2's bounded bounce batches; P4 additionally needs cache-line alignment.
+alignas(64) DRAM_ATTR uint8_t s_dma_sector[SdmmcSdTransferPolicy::dma_buffer_bytes];
 
 uint32_t now_ms()
 {
@@ -256,6 +263,10 @@ bool sd_mutation_blocked_by_external_owner(const char* op,
 
 oflag_t sdfat_open_flags(const char* mode)
 {
+    if (mode && (std::strcmp(mode, "wx+") == 0 || std::strcmp(mode, "w+x") == 0))
+    {
+        return O_RDWR | O_CREAT | O_EXCL;
+    }
     if (mode == nullptr || std::strcmp(mode, "r") == 0 || std::strcmp(mode, "rb") == 0)
     {
         return O_RDONLY;
@@ -297,53 +308,38 @@ class SdmmcBlockDevice final : public FsBlockDeviceInterface
 
     bool readSector(Sector_t sector, uint8_t* dst) override
     {
-        if (!card_ || !dst)
-        {
-            return false;
-        }
-        const esp_err_t err = sdmmc_read_sectors(card_, s_dma_sector, sector, 1);
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(kTag,
-                     "raw read sector=%lu failed: %s",
-                     static_cast<unsigned long>(sector),
-                     esp_err_to_name(err));
-            return false;
-        }
-        std::memcpy(dst, s_dma_sector, kSdSectorSize);
-        return true;
+        return readSectors(sector, dst, 1);
     }
 
     bool readSectors(Sector_t sector, uint8_t* dst, size_t ns) override
     {
-        if (!card_ || (!dst && ns > 0))
+        if (!validTransfer(sector, dst, ns))
         {
+            s_mounted.markFailure();
             return false;
         }
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || \
-    defined(TRAIL_MATE_ESP_BOARD_TAB5)
-        if (canUseMultiSectorDma(dst, ns))
+        while (ns != 0)
         {
-            const esp_err_t err = sdmmc_read_sectors(card_, dst, sector, ns);
+            size_t batch = std::min(ns, SdmmcSdTransferPolicy::max_direct_sectors);
+            const bool direct = canUseMultiSectorDma(dst, batch);
+            if (!direct) batch = std::min<size_t>(ns, sizeof(s_dma_sector) / kSdSectorSize);
+            uint8_t* target = direct ? dst : s_dma_sector;
+            const esp_err_t err = sdmmc_read_sectors(card_, target, sector, batch);
             if (err != ESP_OK)
             {
+                s_mounted.markFailure();
                 ESP_LOGW(kTag,
                          "raw multi-read sector=%lu count=%u failed: %s",
                          static_cast<unsigned long>(sector),
-                         static_cast<unsigned>(ns),
+                         static_cast<unsigned>(batch),
                          esp_err_to_name(err));
                 return false;
             }
-            return true;
-        }
-#endif
-        for (size_t i = 0; i < ns; ++i)
-        {
-            if (!readSector(sector + static_cast<Sector_t>(i),
-                            dst + (i * kSdSectorSize)))
-            {
-                return false;
-            }
+            const size_t bytes = batch * kSdSectorSize;
+            if (!direct) std::memcpy(dst, target, bytes);
+            dst += bytes;
+            sector += static_cast<Sector_t>(batch);
+            ns -= batch;
         }
         return true;
     }
@@ -353,67 +349,62 @@ class SdmmcBlockDevice final : public FsBlockDeviceInterface
         return card_ ? static_cast<Sector_t>(card_->csd.capacity) : 0;
     }
 
-    bool syncDevice() override { return card_ != nullptr; }
+    bool syncDevice() override
+    {
+        if (!card_) s_mounted.markFailure();
+        return card_ != nullptr;
+    }
 
     bool writeSector(Sector_t sector, const uint8_t* src) override
     {
-        if (!card_ || !src)
-        {
-            return false;
-        }
-        std::memcpy(s_dma_sector, src, kSdSectorSize);
-        const esp_err_t err = sdmmc_write_sectors(card_, s_dma_sector, sector, 1);
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(kTag,
-                     "raw write sector=%lu failed: %s",
-                     static_cast<unsigned long>(sector),
-                     esp_err_to_name(err));
-            return false;
-        }
-        return true;
+        return writeSectors(sector, src, 1);
     }
 
     bool writeSectors(Sector_t sector, const uint8_t* src, size_t ns) override
     {
-        if (!card_ || (!src && ns > 0))
+        if (!validTransfer(sector, src, ns))
         {
+            s_mounted.markFailure();
             return false;
         }
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || \
-    defined(TRAIL_MATE_ESP_BOARD_TAB5)
-        if (canUseMultiSectorDma(src, ns))
+        while (ns != 0)
         {
-            const esp_err_t err = sdmmc_write_sectors(card_, src, sector, ns);
+            size_t batch = std::min(ns, SdmmcSdTransferPolicy::max_direct_sectors);
+            const bool direct = canUseMultiSectorDma(src, batch);
+            if (!direct) batch = std::min<size_t>(ns, sizeof(s_dma_sector) / kSdSectorSize);
+            const size_t bytes = batch * kSdSectorSize;
+            if (!direct) std::memcpy(s_dma_sector, src, bytes);
+            const esp_err_t err = sdmmc_write_sectors(card_, direct ? src : s_dma_sector, sector, batch);
             if (err != ESP_OK)
             {
+                s_mounted.markFailure();
                 ESP_LOGW(kTag,
                          "raw multi-write sector=%lu count=%u failed: %s",
                          static_cast<unsigned long>(sector),
-                         static_cast<unsigned>(ns),
+                         static_cast<unsigned>(batch),
                          esp_err_to_name(err));
                 return false;
             }
-            return true;
-        }
-#endif
-        for (size_t i = 0; i < ns; ++i)
-        {
-            if (!writeSector(sector + static_cast<Sector_t>(i),
-                             src + (i * kSdSectorSize)))
-            {
-                return false;
-            }
+            src += bytes;
+            sector += static_cast<Sector_t>(batch);
+            ns -= batch;
         }
         return true;
     }
 
   private:
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || \
-    defined(TRAIL_MATE_ESP_BOARD_TAB5)
+    bool validTransfer(Sector_t sector, const void* buffer, size_t count) const
+    {
+        const auto address = reinterpret_cast<uintptr_t>(buffer);
+        return card_ != nullptr && (buffer != nullptr || count == 0) &&
+               sector <= card_->csd.capacity && count <= card_->csd.capacity - sector &&
+               count <= SIZE_MAX / kSdSectorSize &&
+               (count == 0 || count * kSdSectorSize - 1 <= UINTPTR_MAX - address);
+    }
+
     bool canUseMultiSectorDma(const void* buffer, size_t sector_count) const
     {
-        if (!card_ || !buffer || sector_count < 2 ||
+        if (!card_ || !buffer || sector_count == 0 ||
             sector_count > (SIZE_MAX / kSdSectorSize) ||
             card_->host.check_buffer_alignment == nullptr)
         {
@@ -425,7 +416,6 @@ class SdmmcBlockDevice final : public FsBlockDeviceInterface
             buffer,
             sector_count * kSdSectorSize);
     }
-#endif
 
     sdmmc_card_t* card_ = nullptr;
 };
@@ -709,6 +699,7 @@ SdFileReadResult sd_read_file(const char* path,
     const char* normalized = normalize_sd_path(path);
     const uint32_t start_ms = sd_io_begin("map_file_read", normalized, capacity);
     SdFileReadResult result{};
+    const uint32_t session = sd_media_session();
 
     auto finish = [&](SdFileReadStatus status,
                       std::size_t bytes_read,
@@ -745,17 +736,22 @@ SdFileReadResult sd_read_file(const char* path,
         {
             return finish(SdFileReadStatus::Busy, 0, 0, -2);
         }
+        if (session != sd_media_session() || s_external_block_owner_active || s_info.backend != SdCardBackend::SdFat)
+            return finish(SdFileReadStatus::Unavailable, 0, 0, -3);
+        const SdIoErrorScope io_error(s_mounted);
 
         file = s_volume.open(normalized, O_RDONLY);
+        if (io_error.error()) return finish(SdFileReadStatus::IoError, 0, 0, -6);
         if (!file)
         {
             return finish(SdFileReadStatus::Missing, 0, 0, -1);
         }
 
         file_size = file.fileSize();
+        if (io_error.error()) return finish(SdFileReadStatus::IoError, 0, 0, -6);
         if (file_size == 0 || file_size > capacity)
         {
-            file.close();
+            if (!file.close() || io_error.error()) return finish(SdFileReadStatus::IoError, 0, file_size, -6);
             return finish(SdFileReadStatus::Invalid, 0, file_size, -5);
         }
     }
@@ -765,7 +761,7 @@ SdFileReadResult sd_read_file(const char* path,
     while (total_read < target_size)
     {
         const std::size_t chunk_size =
-            std::min<std::size_t>(2048U, target_size - total_read);
+            std::min<std::size_t>(SdmmcSdTransferPolicy::file_slice_bytes, target_size - total_read);
         int bytes_read = -1;
         {
             SdRuntimeBusGuard guard("sd_map_file_read_chunk");
@@ -773,8 +769,11 @@ SdFileReadResult sd_read_file(const char* path,
             {
                 return finish(SdFileReadStatus::Busy, total_read, file_size, -2);
             }
+            if (session != sd_media_session() || s_external_block_owner_active)
+                return finish(SdFileReadStatus::Unavailable, total_read, file_size, -3);
+            const SdIoErrorScope io_error(s_mounted);
             bytes_read = file.read(buffer + total_read, chunk_size);
-            if (bytes_read <= 0)
+            if (bytes_read <= 0 || io_error.error() || static_cast<size_t>(bytes_read) > chunk_size)
             {
                 file.close();
                 return finish(SdFileReadStatus::IoError, total_read, file_size, -6);
@@ -790,7 +789,10 @@ SdFileReadResult sd_read_file(const char* path,
         {
             return finish(SdFileReadStatus::Busy, total_read, file_size, -2);
         }
-        file.close();
+        if (session != sd_media_session() || s_external_block_owner_active)
+            return finish(SdFileReadStatus::Unavailable, total_read, file_size, -3);
+        const SdIoErrorScope io_error(s_mounted);
+        if (!file.close() || io_error.error()) return finish(SdFileReadStatus::IoError, total_read, file_size, -6);
     }
 
     return finish(SdFileReadStatus::Ready, total_read, file_size, 0);
@@ -821,6 +823,11 @@ bool sd_is_directory(const char* path)
 
 bool sd_mkdir(const char* path)
 {
+    return sd_mkdir(path, sd_media_session());
+}
+
+bool sd_mkdir(const char* path, uint32_t expected_session)
+{
     const char* normalized = normalize_sd_path(path);
     const uint32_t start_ms = sd_io_begin("mkdir", normalized);
     if (sd_mutation_blocked_by_external_owner("mkdir", normalized, start_ms))
@@ -834,9 +841,15 @@ bool sd_mkdir(const char* path)
         sd_io_end("mkdir", normalized, start_ms, false, 0, -2);
         return false;
     }
+    if (expected_session != sd_media_session() || !s_mounted || sd_external_block_owner_active())
+    {
+        sd_io_end("mkdir", normalized, start_ms, false, 0, -1);
+        return false;
+    }
     if (s_info.backend == SdCardBackend::SdFat)
     {
-        result = s_volume.mkdir(normalized, true) || s_volume.exists(normalized);
+        const SdIoErrorScope io_error(s_mounted);
+        result = (s_volume.mkdir(normalized, true) || s_volume.exists(normalized)) && !io_error.error();
         sd_io_end("mkdir", normalized, start_ms, result);
         return result;
     }
@@ -871,6 +884,11 @@ bool sd_rmdir(const char* path)
 
 bool sd_remove(const char* path)
 {
+    return sd_remove(path, sd_media_session());
+}
+
+bool sd_remove(const char* path, uint32_t expected_session)
+{
     const char* normalized = normalize_sd_path(path);
     const uint32_t start_ms = sd_io_begin("remove", normalized);
     if (sd_mutation_blocked_by_external_owner("remove", normalized, start_ms))
@@ -884,6 +902,11 @@ bool sd_remove(const char* path)
         sd_io_end("remove", normalized, start_ms, false, 0, -2);
         return false;
     }
+    if (expected_session != sd_media_session() || s_external_block_owner_active)
+    {
+        sd_io_end("remove", normalized, start_ms, false, 0, -1);
+        return false;
+    }
     if (s_info.backend == SdCardBackend::SdFat)
     {
         result = s_volume.remove(normalized);
@@ -895,6 +918,11 @@ bool sd_remove(const char* path)
 }
 
 bool sd_rename(const char* old_path, const char* new_path)
+{
+    return sd_rename(old_path, new_path, sd_media_session());
+}
+
+bool sd_rename(const char* old_path, const char* new_path, uint32_t expected_session)
 {
     const char* normalized_old = normalize_sd_path(old_path);
     const char* normalized_new = normalize_sd_path(new_path);
@@ -910,6 +938,11 @@ bool sd_rename(const char* old_path, const char* new_path)
         sd_io_end("rename", normalized_old, start_ms, false, 0, -2);
         return false;
     }
+    if (expected_session != sd_media_session() || s_external_block_owner_active)
+    {
+        sd_io_end("rename", normalized_old, start_ms, false, 0, -1);
+        return false;
+    }
     if (s_info.backend == SdCardBackend::SdFat)
     {
         result = s_volume.rename(normalized_old, normalized_new);
@@ -923,15 +956,34 @@ bool sd_rename(const char* old_path, const char* new_path)
 class SdRuntimeFile::Impl
 {
   public:
+    struct PreviousLayoutBudget
+    {
+        FsFile file;
+        SdCardBackend backend;
+        char path[128];
+        char mode[8];
+    };
     FsFile sdfat_file;
+    uint32_t session = 0;
     SdCardBackend backend = SdCardBackend::None;
     char path[128]{};
-    char mode[8]{};
 };
 
 SdRuntimeFile::SdRuntimeFile()
     : impl_(new (std::nothrow) Impl())
 {
+    static_assert(sizeof(Impl) <= sizeof(Impl::PreviousLayoutBudget), "IDF file session must not grow its heap object");
+}
+
+SdRuntimeFile::SdRuntimeFile(SdRuntimeMemoryPolicy policy) : impl_(nullptr)
+{
+    if (policy == SdRuntimeMemoryPolicy::Default)
+    {
+        impl_ = new (std::nothrow) Impl();
+        return;
+    }
+    void* memory = heap_caps_malloc(sizeof(Impl), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory) impl_ = new (memory) Impl();
 }
 
 SdRuntimeFile::~SdRuntimeFile()
@@ -956,7 +1008,6 @@ bool SdRuntimeFile::open(const char* path, const char* mode, uint32_t expected_s
 
     const char* normalized = normalize_sd_path(path);
     copy_path(impl_->path, sizeof(impl_->path), normalized);
-    copy_path(impl_->mode, sizeof(impl_->mode), mode ? mode : "r");
     const uint32_t start_ms = sd_io_begin("file_open", impl_->path);
     if (open_mode_mutates(mode) &&
         sd_mutation_blocked_by_external_owner("file_open", impl_->path, start_ms))
@@ -979,6 +1030,7 @@ bool SdRuntimeFile::open(const char* path, const char* mode, uint32_t expected_s
     {
         impl_->sdfat_file = s_volume.open(normalized, sdfat_open_flags(mode));
         impl_->backend = impl_->sdfat_file ? SdCardBackend::SdFat : SdCardBackend::None;
+        impl_->session = expected_session;
         sd_io_end("file_open", impl_->path, start_ms, impl_->backend == SdCardBackend::SdFat);
         return impl_->backend == SdCardBackend::SdFat;
     }
@@ -997,7 +1049,7 @@ void SdRuntimeFile::close()
     {
         const uint32_t start_ms = sd_io_begin("file_close", impl_->path);
         SdRuntimeBusGuard guard("sd_file_close");
-        if (guard.locked())
+        if (guard.locked() && is_open())
         {
             impl_->sdfat_file.close();
             sd_io_end("file_close", impl_->path, start_ms, true);
@@ -1007,14 +1059,16 @@ void SdRuntimeFile::close()
             sd_io_end("file_close", impl_->path, start_ms, false, 0, -2);
         }
     }
+    abandon_sd_file(impl_->sdfat_file);
     impl_->backend = SdCardBackend::None;
+    impl_->session = 0;
     impl_->path[0] = '\0';
-    impl_->mode[0] = '\0';
 }
 
 bool SdRuntimeFile::is_open() const
 {
-    return impl_ != nullptr && impl_->backend != SdCardBackend::None;
+    return impl_ != nullptr && impl_->backend != SdCardBackend::None &&
+           impl_->session == sd_media_session() && !s_external_block_owner_active;
 }
 
 int SdRuntimeFile::available() const
@@ -1026,7 +1080,7 @@ int SdRuntimeFile::available() const
     if (impl_->backend == SdCardBackend::SdFat)
     {
         SdRuntimeBusGuard guard("sd_file_available");
-        if (!guard.locked())
+        if (!guard.locked() || !is_open())
         {
             return 0;
         }
@@ -1052,6 +1106,7 @@ int SdRuntimeFile::read(void* buffer, std::size_t bytes_to_read)
             sd_io_end("file_read", impl_->path, start_ms, false, bytes_to_read, -2);
             return -1;
         }
+        if (!is_open()) return -1;
         const int result = impl_->sdfat_file.read(buffer, bytes_to_read);
         sd_io_end("file_read", impl_->path, start_ms, result >= 0, bytes_to_read, result);
         return result;
@@ -1068,7 +1123,7 @@ int SdRuntimeFile::read_byte()
     if (impl_->backend == SdCardBackend::SdFat)
     {
         SdRuntimeBusGuard guard("sd_file_read_byte");
-        if (!guard.locked())
+        if (!guard.locked() || !is_open())
         {
             return -1;
         }
@@ -1092,6 +1147,7 @@ std::size_t SdRuntimeFile::read_bytes(char* buffer, std::size_t bytes_to_read)
             sd_io_end("file_read_bytes", impl_->path, start_ms, false, bytes_to_read, -2);
             return 0;
         }
+        if (!is_open()) return 0;
         int result = impl_->sdfat_file.read(buffer, bytes_to_read);
         sd_io_end("file_read_bytes", impl_->path, start_ms, result >= 0, bytes_to_read, result);
         return result > 0 ? static_cast<std::size_t>(result) : 0;
@@ -1119,6 +1175,7 @@ std::size_t SdRuntimeFile::write(const void* buffer, std::size_t bytes_to_write)
             sd_io_end("file_write", impl_->path, start_ms, false, bytes_to_write, -2);
             return 0;
         }
+        if (!is_open()) return 0;
         const std::size_t result = impl_->sdfat_file.write(buffer, bytes_to_write);
         sd_io_end("file_write", impl_->path, start_ms, result == bytes_to_write, bytes_to_write, result);
         return result;
@@ -1183,6 +1240,7 @@ bool SdRuntimeFile::seek(uint64_t offset)
             read_busy_ = s_storage_mutex != nullptr;
             return false;
         }
+        if (!is_open()) return false;
         return impl_->sdfat_file.seekSet(offset);
     }
     return false;
@@ -1197,7 +1255,7 @@ uint64_t SdRuntimeFile::position() const
     if (impl_->backend == SdCardBackend::SdFat)
     {
         SdRuntimeBusGuard guard("sd_file_position");
-        if (!guard.locked())
+        if (!guard.locked() || !is_open())
         {
             return 0;
         }
@@ -1221,6 +1279,7 @@ uint64_t SdRuntimeFile::size() const
             read_busy_ = s_storage_mutex != nullptr;
             return 0;
         }
+        if (!is_open()) return 0;
         return impl_->sdfat_file.fileSize();
     }
     return 0;
@@ -1245,6 +1304,7 @@ bool SdRuntimeFile::flush()
             sd_io_end("file_flush", impl_->path, start_ms, false, 0, -2);
             return false;
         }
+        if (!is_open()) return false;
         const bool result = impl_->sdfat_file.sync();
         sd_io_end("file_flush", impl_->path, start_ms, result);
         return result;
@@ -1255,14 +1315,32 @@ bool SdRuntimeFile::flush()
 class SdRuntimeDir::Impl
 {
   public:
+    struct PreviousLayoutBudget
+    {
+        FsFile dir;
+        SdCardBackend backend;
+        char path[128];
+    };
     FsFile sdfat_dir;
-    SdCardBackend backend = SdCardBackend::None;
+    uint32_t session = 0;
     char path[128]{};
 };
 
 SdRuntimeDir::SdRuntimeDir()
     : impl_(new (std::nothrow) Impl())
 {
+    static_assert(sizeof(Impl) <= sizeof(Impl::PreviousLayoutBudget), "Directory session must reuse cached backend/padding");
+}
+
+SdRuntimeDir::SdRuntimeDir(SdRuntimeMemoryPolicy policy) : impl_(nullptr)
+{
+    if (policy == SdRuntimeMemoryPolicy::Default)
+    {
+        impl_ = new (std::nothrow) Impl();
+        return;
+    }
+    void* memory = heap_caps_malloc(sizeof(Impl), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory) impl_ = new (memory) Impl();
 }
 
 SdRuntimeDir::~SdRuntimeDir()
@@ -1273,31 +1351,7 @@ SdRuntimeDir::~SdRuntimeDir()
 
 bool SdRuntimeDir::open(const char* path)
 {
-    close();
-    if (impl_ == nullptr)
-    {
-        return false;
-    }
-    const char* normalized = normalize_sd_path(path);
-    copy_path(impl_->path, sizeof(impl_->path), normalized);
-    const uint32_t start_ms = sd_io_begin("dir_open", impl_->path);
-    SdRuntimeBusGuard guard("sd_dir_open");
-    if (!guard.locked())
-    {
-        sd_io_end("dir_open", impl_->path, start_ms, false, 0, -2);
-        return false;
-    }
-    if (s_info.backend == SdCardBackend::SdFat)
-    {
-        impl_->sdfat_dir = s_volume.open(normalized, O_RDONLY);
-        impl_->backend =
-            (impl_->sdfat_dir && impl_->sdfat_dir.isDir()) ? SdCardBackend::SdFat
-                                                           : SdCardBackend::None;
-        sd_io_end("dir_open", impl_->path, start_ms, impl_->backend == SdCardBackend::SdFat);
-        return impl_->backend == SdCardBackend::SdFat;
-    }
-    sd_io_end("dir_open", impl_->path, start_ms, false, 0, -1);
-    return false;
+    return open_read_status(path, sd_media_session()) == SdFileReadStatus::Ready;
 }
 
 SdFileReadStatus SdRuntimeDir::open_read_status(const char* path, uint32_t expected_session)
@@ -1310,10 +1364,12 @@ SdFileReadStatus SdRuntimeDir::open_read_status(const char* path, uint32_t expec
     if (!guard.locked()) return SdFileReadStatus::Busy;
     if (expected_session != sd_media_session() || sd_external_block_owner_active() ||
         s_info.backend != SdCardBackend::SdFat) return SdFileReadStatus::Unavailable;
+    const SdIoErrorScope io_error(s_mounted);
     impl_->sdfat_dir = s_volume.open(normalized, O_RDONLY);
+    if (io_error.error()) return SdFileReadStatus::IoError;
     if (!impl_->sdfat_dir) return SdFileReadStatus::Missing;
     if (!impl_->sdfat_dir.isDir()) return SdFileReadStatus::Invalid;
-    impl_->backend = SdCardBackend::SdFat;
+    impl_->session = expected_session;
     return SdFileReadStatus::Ready;
 }
 
@@ -1323,11 +1379,11 @@ void SdRuntimeDir::close()
     {
         return;
     }
-    if (impl_->backend == SdCardBackend::SdFat)
+    if (impl_->sdfat_dir)
     {
         const uint32_t start_ms = sd_io_begin("dir_close", impl_->path);
         SdRuntimeBusGuard guard("sd_dir_close");
-        if (guard.locked())
+        if (guard.locked() && is_open())
         {
             impl_->sdfat_dir.close();
             sd_io_end("dir_close", impl_->path, start_ms, true);
@@ -1337,69 +1393,72 @@ void SdRuntimeDir::close()
             sd_io_end("dir_close", impl_->path, start_ms, false, 0, -2);
         }
     }
-    impl_->backend = SdCardBackend::None;
+    abandon_sd_file(impl_->sdfat_dir);
+    impl_->session = 0;
     impl_->path[0] = '\0';
 }
 
 bool SdRuntimeDir::is_open() const
 {
-    return impl_ != nullptr && impl_->backend != SdCardBackend::None;
+    return impl_ && impl_->sdfat_dir && impl_->session == sd_media_session() &&
+           s_info.backend == SdCardBackend::SdFat && !s_external_block_owner_active;
 }
 
 bool SdRuntimeDir::read_next(char* name, std::size_t name_size, bool* is_dir)
 {
-    if (!is_open() || name == nullptr || name_size == 0)
-    {
-        return false;
-    }
-    name[0] = '\0';
-    if (is_dir != nullptr)
-    {
-        *is_dir = false;
-    }
-
-    if (impl_->backend == SdCardBackend::SdFat)
-    {
-        const uint32_t start_ms = sd_io_begin("dir_read", impl_->path);
-        SdRuntimeBusGuard guard("sd_dir_read");
-        if (!guard.locked())
-        {
-            sd_io_end("dir_read", impl_->path, start_ms, false, 0, -2);
-            return false;
-        }
-        FsFile entry = impl_->sdfat_dir.openNextFile(O_RDONLY);
-        if (!entry)
-        {
-            sd_io_end("dir_read", impl_->path, start_ms, true, 0, 0);
-            return false;
-        }
-        entry.getName(name, name_size);
-        if (is_dir != nullptr)
-        {
-            *is_dir = entry.isDir();
-        }
-        entry.close();
-        sd_io_end("dir_read", impl_->path, start_ms, true, 0, name[0] != '\0' ? 1 : 0);
-        return name[0] != '\0';
-    }
-
-    return false;
+    return read_next_status(name, name_size, is_dir) == SdDirReadStatus::Entry;
 }
 
 SdDirReadStatus SdRuntimeDir::read_next_status(char* name, std::size_t name_size, bool* is_dir)
 {
+    return read_next_info(name, name_size, is_dir, nullptr, nullptr);
+}
+
+SdDirReadStatus SdRuntimeDir::read_next_info(char* name, std::size_t name_size, bool* is_dir,
+                                             uint64_t* file_size, uint64_t* next_position)
+{
+    if (file_size) *file_size = 0;
+    if (next_position) *next_position = 0;
     if (!name || !name_size) return SdDirReadStatus::Invalid;
     name[0] = 0;
     if (is_dir) *is_dir = false;
     SdRuntimeBusGuard guard("sd_tmap_dir_read");
     if (!guard.locked()) return SdDirReadStatus::Busy;
     if (!is_open() || sd_external_block_owner_active()) return SdDirReadStatus::Unavailable;
+    const SdIoErrorScope io_error(s_mounted);
     FsFile entry = impl_->sdfat_dir.openNextFile(O_RDONLY);
-    if (!entry) return impl_->sdfat_dir.getError() ? SdDirReadStatus::IoError : SdDirReadStatus::End;
-    if (!entry.getName(name, name_size)) return SdDirReadStatus::IoError;
-    if (is_dir) *is_dir = entry.isDir();
-    entry.close();
+    if (!entry) return io_error.error() || impl_->sdfat_dir.getError() ? SdDirReadStatus::IoError : SdDirReadStatus::End;
+    const bool named = entry.getName(name, name_size);
+    const bool directory = entry.isDir();
+    const uint64_t bytes = directory ? 0 : entry.fileSize();
+    const uint64_t position = impl_->sdfat_dir.curPosition();
+    const bool closed = entry.close();
+    if (!named || !closed || io_error.error())
+    {
+        name[0] = 0;
+        return SdDirReadStatus::IoError;
+    }
+    if (is_dir) *is_dir = directory;
+    if (file_size) *file_size = bytes;
+    if (next_position) *next_position = position;
     return name[0] ? SdDirReadStatus::Entry : SdDirReadStatus::IoError;
+}
+
+bool SdRuntimeDir::seek_read_position(uint64_t position)
+{
+    return seek_read_status(position) == SdFileReadStatus::Ready;
+}
+
+SdFileReadStatus SdRuntimeDir::seek_read_status(uint64_t position)
+{
+    if (position % 32 || !impl_) return SdFileReadStatus::Invalid;
+    SdRuntimeBusGuard guard("sd_dir_seek");
+    if (!guard.locked()) return SdFileReadStatus::Busy;
+    if (!is_open()) return SdFileReadStatus::Unavailable;
+    const SdIoErrorScope io_error(s_mounted);
+    const bool result = impl_->sdfat_dir.seekSet(position);
+    if (io_error.error()) return SdFileReadStatus::IoError;
+    return result ? SdFileReadStatus::Ready : SdFileReadStatus::Invalid;
 }
 
 bool sd_read_raw(uint32_t lba, uint8_t* buffer)

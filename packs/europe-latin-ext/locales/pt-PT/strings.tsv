@@ -828,3 +828,59 @@ No saved waypoints	Sem pontos guardados
 Saved waypoint	Ponto guardado
 Waypoint unavailable	Ponto indisponível
 Reticulum	Reticulum
+Image memory unavailable	Memória insuficiente para imagens
+Image cache needs checking. Download again.	A cache de imagens precisa de verificação. Transfira-as novamente.
+Off route %.0fm	Fora do percurso %.0fm
+Route position unavailable	Posição no percurso indisponível
+Route storage unavailable	Armazenamento do percurso indisponível
+Route: waiting for GPS	Percurso: a aguardar GPS
+Route position ambiguous	Posição no percurso ambígua
+Route end (estimated)	Fim do percurso (estimado)
+Route %u%% | %s left	Percurso %u%% | faltam %s
+Matching route...	A verificar o percurso…
+Distance %.0f m	Distância %.0f m
+Distance %.1f km	Distância %.1f km
+Position unknown	Posição desconhecida
+Region unknown	Região administrativa desconhecida
+Location loading...	A procurar localização…
+Distance unknown	Distância desconhecida
+My position unknown	A minha posição é desconhecida
+No nodes	Sem nós
+Old position	Posição antiga
+Contacts unavailable	Contactos indisponíveis
+Map Help	Ajuda do mapa
+Map layer: %s	Camada do mapa: %s
+Show contours	Mostrar curvas de nível
+Hide contours	Ocultar curvas de nível
+Search POI	Pesquisar locais
+Load navigation	Carregar navegação
+Load track	Carregar percurso
+No saved navigation	Sem navegações guardadas
+Help	Ajuda
+Menu	Menu
+Navigation	Navegação
+Nav	Nav.
+New navigation	Nova navegação
+Current location	Localização atual
+Use current location	Usar localização atual
+Choose destination	Escolher destino
+Calculate route	Calcular percurso
+Save and preview	Guardar e pré-visualizar
+Calculating route...	A calcular percurso...
+Route ready: %.1f km	Percurso pronto: %.1f km
+No TMAP routing data	Sem dados de navegação TMAP
+No path found	Não foi encontrado um caminho
+Outside routing coverage	Fora da cobertura de percursos
+Navigation memory limit	Limite de memória da navegação
+Navigation unavailable	Navegação indisponível
+Origin	Origem
+Destination	Destino
+Tap the origin to search for a place	Toque na origem para procurar um local
+Search unavailable	Pesquisa indisponível
+Cancelled	Cancelado
+No team	Sem membros da equipa
+View	Ver
+Current	Atual
+Contours	Curvas de nível
+Load	Carregar
+Unload	Descarregar

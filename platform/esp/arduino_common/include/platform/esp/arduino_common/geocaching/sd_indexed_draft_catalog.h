@@ -1,4 +1,5 @@
 #pragma once
+#include "geocaching/storage/confirmed_publication.h"
 #include "geocaching/storage/draft_catalog.h"
 #include "platform/esp/arduino_common/geocaching/sd_index_get.h"
 #include "platform/esp/arduino_common/geocaching/sd_index_scan.h"
@@ -14,8 +15,9 @@ namespace platform::esp::arduino_common::geocaching
 class SdIndexedDraftCatalog
 {
   public:
-    SdIndexedDraftCatalog(const ::geocaching::storage::VolumeInstance& volume, ::geocaching::protocol::RecordCrypto& crypto)
-        : volume_(volume), crypto_(crypto) {}
+    SdIndexedDraftCatalog(const ::geocaching::storage::VolumeInstance& volume, ::geocaching::protocol::RecordCrypto& crypto,
+                          uint8_t* verification = nullptr, size_t verification_capacity = 0)
+        : volume_(volume), crypto_(crypto), verification_(verification), verification_capacity_(verification_capacity) {}
     bool begin(const ::geocaching::storage::IndexRootView& root, size_t offset, ::geocaching::storage::DraftCatalogPage& page,
                uint8_t* frame, size_t capacity)
     {
@@ -166,20 +168,37 @@ class SdIndexedDraftCatalog
                     acknowledged_ = false;
                     if (state_ == 4)
                     {
-                        // Decode the response identity before reusing the frame
-                        // for its task, then compare it with that task below.
-                        protocol::CmpReader ack(outgoing.terminal_data);
-                        uint64_t value = 0;
-                        ByteView bytes;
-                        if (ack.array(fields, 6) && ack.unsignedInteger(value) && ack.unsignedInteger(value) && ack.unsignedInteger(value) &&
-                            ack.binary(bytes, 16) && ack.unsignedInteger(value) && ack.array(fields, 7) && ack.binary(bytes, 32) && bytes.size == 32)
+                        protocol::CmpReader marker(outgoing.terminal_data);
+                        size_t terminal_fields = 0;
+                        if (marker.array(terminal_fields, 6) && terminal_fields == 4)
                         {
-                            std::memcpy(ack_id_.bytes.data(), bytes.data, 32);
-                            if (ack.unsignedInteger(value) && ack.binary(bytes, 32) && bytes.size == 32)
+                            auto verified = ::platform::memory::PsramPtr<protocol::VerifiedRecordView>(::platform::memory::createPsram<protocol::VerifiedRecordView>());
+                            if (!verified || !verification_ || verifyConfirmedPublication(row.key, outgoing.request, outgoing.terminal_data, crypto_, verification_, verification_capacity_, *verified) != protocol::VerificationResult::Valid)
                             {
-                                std::memcpy(ack_hash_.bytes.data(), bytes.data, 32);
-                                protocol::PublishDisposition disposition;
-                                acknowledged_ = protocol::decodePublishResponse(outgoing.terminal_data, request, ack_id_, ack_hash_, record.revision, record.state, disposition);
+                                unavailable_ = true;
+                                return IndexGetStep::Invalid;
+                            }
+                            ack_id_ = verified->id;
+                            ack_hash_ = verified->hash;
+                            acknowledged_ = true;
+                        }
+                        else
+                        {
+                            // Decode the response identity before reusing the frame
+                            // for its task, then compare it with that task below.
+                            protocol::CmpReader ack(outgoing.terminal_data);
+                            uint64_t value = 0;
+                            ByteView bytes;
+                            if (ack.array(fields, 6) && ack.unsignedInteger(value) && ack.unsignedInteger(value) && ack.unsignedInteger(value) &&
+                                ack.binary(bytes, 16) && ack.unsignedInteger(value) && ack.array(fields, 7) && ack.binary(bytes, 32) && bytes.size == 32)
+                            {
+                                std::memcpy(ack_id_.bytes.data(), bytes.data, 32);
+                                if (ack.unsignedInteger(value) && ack.binary(bytes, 32) && bytes.size == 32)
+                                {
+                                    std::memcpy(ack_hash_.bytes.data(), bytes.data, 32);
+                                    protocol::PublishDisposition disposition;
+                                    acknowledged_ = protocol::decodePublishResponse(outgoing.terminal_data, request, ack_id_, ack_hash_, record.revision, record.state, disposition);
+                                }
                             }
                         }
                     }
@@ -235,6 +254,8 @@ class SdIndexedDraftCatalog
     uint8_t state_ = 0;
     bool requests_ = false, changed_ = false, intent_ = false, acknowledged_ = false;
     bool unavailable_ = false;
+    uint8_t* verification_ = nullptr;
+    size_t verification_capacity_ = 0;
 };
 static_assert(sizeof(SdIndexedDraftCatalog) <= (sizeof(void*) == 4 ? 256 : 320), "Catalog scan owns metadata only");
 } // namespace platform::esp::arduino_common::geocaching

@@ -33,11 +33,40 @@ set(TRAILMATE_ESP_IDF_CORE_HOSTLINK_SOURCES
     "${TRAILMATE_ROOT}/modules/core_hostlink/src/c6_frame_codec.cpp")
 
 set(TRAILMATE_ESP_IDF_CORE_SYS_SOURCES
+    "${TRAILMATE_ROOT}/platform/esp/common/src/resource_lock.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/platform/audio/media_volume.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/platform/radio/radio_power.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/platform/audio/audio_focus.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/app/app_facade_access.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/app/tms_config_codec.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/screen_power_state_machine.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/reticulum_call_runtime.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/sys/clock.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/timezone_profile.cpp")
+
+set(TRAILMATE_ESP_IDF_AGENDA_WIDGET_SOURCES
+    "${TRAILMATE_ROOT}/platform/esp/common/src/agenda_widget_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/storage/agenda_file_store.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/agenda_clock.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/agenda_query.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/agenda_service.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/event_codec.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/recurrence.cpp")
+
+set(TRAILMATE_ESP_IDF_CORE_MUSIC_SOURCES
+    "${TRAILMATE_ROOT}/platform/esp/common/src/quick_controls_runtime.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/catalog.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/decoder.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/id3.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/lyrics.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/player.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/playlists.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/storage.cpp"
+    "${TRAILMATE_ROOT}/modules/music_image/src/cover_decoder.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_audio.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_output.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_storage.cpp")
 
 set(TRAILMATE_ESP_IDF_CORE_DEVICE_SOURCES
     "${TRAILMATE_ROOT}/modules/core_device/src/device/capability_types.cpp")
@@ -123,6 +152,7 @@ set(TRAILMATE_ESP_IDF_CORE_CHAT_SOURCES
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/channel.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/config.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/device_ui.pb.cpp"
+    "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/localonly.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/mesh.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/module_config.pb.cpp"
     "${TRAILMATE_ROOT}/modules/core_chat/generated/meshtastic/mqtt.pb.cpp"
@@ -161,6 +191,13 @@ set(TRAILMATE_ESP_IDF_CORE_PHONE_SOURCES
     "${TRAILMATE_ROOT}/modules/core_phone/src/meshtastic/meshtastic_phone_session.cpp")
 
 set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/music.c"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_state.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_page_shell.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_page_input.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_page_layout.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_controls_widget.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_music_widget.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/Chat.c"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/alert.c"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/AreaCleared.c"
@@ -208,8 +245,6 @@ set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/src/map_overlay/map_overlay_projector.cpp"
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/src/map_tiles/filesystem_map_tile_source.cpp"
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/src/map_tiles/tmap_map_tile_source.cpp"
-    "${TRAILMATE_ROOT}/modules/core_tmap/src/reader.cpp"
-    "${TRAILMATE_ROOT}/modules/core_tmap/src/search.cpp"
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/src/map_tiles/map_tile_geometry.cpp"
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/src/map_tiles/map_tile_async_runtime.cpp"
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/src/map_tiles/map_tile_render_queue.cpp"
@@ -225,6 +260,8 @@ set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/shortcut_help_modal.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/two_pane_layout.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/two_pane_nav.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/bottom_bar.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/dialog_frame.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/components/two_pane_styles.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/formatters.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/loop_shell.cpp"
@@ -236,6 +273,7 @@ set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/fonts/font_utils.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/i18n/resource_pack_registry.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_compass_widget.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_agenda_widget.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_gps_widget.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_mesh_widget.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_recent_widget.cpp"
@@ -340,6 +378,7 @@ set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/team/team_page_transfer_leader_action.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_components.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_input.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_navigation_dialog.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_layout.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_runtime.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/tracker/tracker_page_shell.cpp"
@@ -456,6 +495,11 @@ set(TRAILMATE_ESP_IDF_UI_LVGL_UX_PACK_SOURCES
 set(TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/platform/esp/boards/src/board_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_tasks.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_config_sd_tms_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_config_tms_settings_extension.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/app_config_tms_ble_extension.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/geocaching/browse_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/geocaching/request_dispatcher.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/voice/vmp_control_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/voice/vmp_pager_audio.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/voice/vmp_pager_session.cpp"
@@ -477,6 +521,7 @@ set(TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/sdmmc_host_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/gps_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/lv_helper.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/idf_common/src/lvgl_memory.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_device_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_map_diagnostics.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_firmware_update_runtime.cpp"
@@ -490,6 +535,9 @@ set(TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_reticulum_group_config_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_reticulum_network_config_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_route_storage.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_navigation_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/route_png_cache.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/route_png_codec.c"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/ui/screens/team/team_ui_store.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_settings_store.cpp"
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_sstv_runtime.cpp"
@@ -604,7 +652,8 @@ list(APPEND TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/third_party/bzip2/src/crctable.c"
     "${TRAILMATE_ROOT}/third_party/bzip2/src/decompress.c"
     "${TRAILMATE_ROOT}/third_party/bzip2/src/huffman.c"
-    "${TRAILMATE_ROOT}/third_party/bzip2/src/randtable.c")
+    "${TRAILMATE_ROOT}/third_party/bzip2/src/randtable.c"
+    "${TRAILMATE_ROOT}/third_party/yxml/yxml.c")
 
 set(TRAILMATE_ESP_IDF_TAB5_BOARD_SOURCES
     "${TRAILMATE_ROOT}/boards/tab5/src/codec_compat.cpp"
@@ -621,10 +670,15 @@ set(TRAILMATE_ESP_IDF_T_DISPLAY_P4_BOARD_SOURCES
     "${TRAILMATE_ROOT}/boards/t_display_p4/src/t_display_p4_board.cpp")
 
 set(TRAILMATE_ESP_IDF_FINAL_INCLUDE_DIRS
+    "${TRAILMATE_ROOT}/third_party/yxml"
     "${TRAILMATE_ROOT}/third_party/rweather_crypto"
     "${TRAILMATE_ROOT}/apps/esp32_lvgl/src"
     "${TRAILMATE_ROOT}/modules/core_hostlink/include"
+    "${TRAILMATE_ROOT}/modules/core_track_sharing/include"
     "${TRAILMATE_ROOT}/modules/core_sys/include"
+    "${TRAILMATE_ROOT}/modules/core_agenda/include"
+    "${TRAILMATE_ROOT}/modules/core_music/include"
+    "${TRAILMATE_ROOT}/modules/music_image/include"
     "${TRAILMATE_ROOT}/modules/core_chat/include"
     "${TRAILMATE_ROOT}/modules/core_chat/generated"
     "${TRAILMATE_ROOT}/modules/core_chat/third_party/nanopb"
@@ -645,7 +699,6 @@ set(TRAILMATE_ESP_IDF_FINAL_INCLUDE_DIRS
     "${TRAILMATE_ROOT}/modules/ui_lvgl_core/include"
     "${TRAILMATE_ROOT}/modules/ui_lvgl_ux_packs/include"
     "${TRAILMATE_ROOT}/modules/ui_map_runtime/include"
-    "${TRAILMATE_ROOT}/modules/core_tmap/include"
     "${TRAILMATE_ROOT}/modules/ui_presentation/include"
     "${TRAILMATE_ROOT}/modules/ui_shared/include"
     "${TRAILMATE_ROOT}/modules/ui_mono/include"

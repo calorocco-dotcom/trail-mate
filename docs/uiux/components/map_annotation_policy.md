@@ -1,97 +1,197 @@
-# 地图标注策略：全级别无字底图方案
+# Map Annotation Policy: Text-Free Base Maps at All Zoom Levels
 
-状态：2026-09-15 用户已同意本方案，正在实施。当前已交付验证包仍是 z1–15 带字、z16–18 无字加点状 POI；本规格不是当前固件的完成声明。
+Status: approved by the user on 2026-09-15 and under implementation. The delivered
+verification package still contains labels at z1–15 and uses text-free tiles
+with point POIs at z16–18. This specification is not a statement that the next
+firmware implementation is complete.
 
-## 需求与对象边界
+## Requirements and object boundaries
 
-用户接受在标注规则合理的前提下，将 z1–18 全部改成无字瓦片。z16–18 道路名称是必要信息；当前图标密集、名称稀疏和先出现后消失的行为需要一起解决。
+The user accepts text-free tiles at every level from z1 to z18, provided the
+annotation rules are reasonable. Road names are essential at z16–18. Dense
+icons, sparse names and labels appearing before disappearing must be addressed
+together.
 
-- 地理数据：源数据存在的道路、聚落、区域、设施及兴趣点。数据存在不等于每个缩放级别都应显示。
-- 地图标注：地理对象的名称及屏幕表现，分为地名/区域名、道路名、点状 POI 名称与图标。道路不能退化成“只在道路中点放一个普通 POI”。
-- 显示资格：按类别、缩放级别及用户预设确定，不由内存分配成功与否决定。
-- 排布结果：在给定屏幕上满足可读性和稳定性的标注集合。名称未排下不代表数据缺失，不能由此删除数据或标记底图缺失。
-- 资源上限：约束候选、缓存和绘制成本，不充当类别筛选规则。
+- Geographic data: roads, settlements, regions, facilities and POIs present in
+  the source. An object's existence does not require display at every zoom.
+- Map annotations: names and screen presentation of geographic objects,
+  including place/region names, road names, and point-POI names/icons. Roads
+  must not be reduced to one ordinary POI at the road's midpoint.
+- Display eligibility: determined by category, zoom and user preset, rather
+  than whether a memory allocation succeeds.
+- Layout result: annotations that are readable and stable on the given screen.
+  A name that does not fit is not missing data; do not delete its source or
+  mark the base map as missing.
+- Resource limits: bound candidate, cache and drawing costs rather than serving
+  as category filters.
 
-始终复用共享地图视口、坐标投影、后台空间瓦片读取、事件/代际机制和资源生命周期。固件工作在 `feat/wio-tracker-l2`；不新建页面私有加载链路。
+Reuse the shared map viewport, coordinate projection, background spatial-tile
+reads, event/generation mechanism and resource lifecycle. Firmware work is on
+`feat/wio-tracker-l2`; do not create a page-private loading pipeline.
 
-## 默认逐级显示资格
+## Default zoom-level eligibility
 
-下表是初始样式方案。名称必须来自数据，行政级别/道路等级/人口或重要性用于分层；不是对所有数据源完整性的保证。具备资格仍需通过屏幕布局。
+This table defines the initial style. Names must come from data. Administrative
+level, road class, population or importance determine hierarchy; the table does
+not guarantee complete coverage from every source. Eligible annotations must
+still pass screen layout.
 
-| z | 地名、区域与点状 POI | 道路标注 |
-|---|---|---|
-| 1 | 大洲、主要国家；区域包可保留一个选区定位地名 | 无 |
-| 2 | 国家、主要首都 | 无 |
-| 3 | 国家、首都及少量重要城市 | 无 |
-| 4 | 省/州级区域、省会及重要城市 | 无 |
-| 5 | 主要城市、重要大型湖泊/山系 | 无 |
-| 6 | 城市、主要县级城市及大型自然地标 | 无 |
-| 7 | 县级聚落与重要城镇 | 少量重要高速/国道编号 |
-| 8 | 城镇及重要乡镇；少量大型景区定位名 | 高速/国道编号，保持稀疏 |
-| 9 | 乡镇、大村庄、重要山峰与景区 | 主要干线编号 |
-| 10 | 村庄；重要登山入口、营地、避难所等户外目的地 | 重要干线编号或简短名称 |
-| 11 | 村庄、重要自然地标；主要户外服务设施 | 干线名称、编号 |
-| 12 | 社区/片区、主要公园；医院、主要停车场及户外设施 | 城市主干道、主要道路名称 |
-| 13 | 社区、公园、景点；交通枢纽及主要公共设施 | 主次干道名称 |
-| 14 | 街区/村庄、公园；常用公共设施与户外服务点 | 主次干道、重要支路名称 |
-| 15 | 街区、重要建筑/目的地；水源、厕所、停车等实用 POI | 支路、主要居民街道名称 |
-| 16 | 当前附近有意义的命名设施、景点及户外 POI | 主干道和普通有名街道必须具备显示资格；优先保证可见道路的名称 |
-| 17 | 更细的附近设施、入口、小公园、建筑/目的地名称 | 普通街道、小路及有名称的步行通道 |
-| 18 | 门前/路口级别设施、入口、命名建筑和微观地标 | 服务道路、支路、步行路径等有名称的细部道路 |
+| z | Places, regions and point POIs | Road annotations |
+| --- | --- | --- |
+| 1 | Continents and major countries; a regional package may retain one place name locating its selected area | None |
+| 2 | Countries and major capitals | None |
+| 3 | Countries, capitals and a few important cities | None |
+| 4 | Province/state regions, their capitals and important cities | None |
+| 5 | Major cities and important large lakes/mountain ranges | None |
+| 6 | Cities, major county-level cities and large natural landmarks | None |
+| 7 | County-level settlements and important towns | A few important motorway/national-road numbers |
+| 8 | Towns and important townships; a few names locating large scenic areas | Sparse motorway/national-road numbers |
+| 9 | Townships, large villages, important peaks and scenic areas | Major trunk-road numbers |
+| 10 | Villages and important outdoor destinations, such as trailheads, camps and shelters | Important trunk-road numbers or short names |
+| 11 | Villages, important natural landmarks and major outdoor service facilities | Trunk-road names/numbers |
+| 12 | Neighbourhoods/districts, major parks, hospitals, major parking and outdoor facilities | Urban arterial and major-road names |
+| 13 | Neighbourhoods, parks, attractions, transport hubs and major public facilities | Primary/secondary road names |
+| 14 | Blocks/villages, parks, commonly used public facilities and outdoor service points | Primary/secondary roads and important side-road names |
+| 15 | Blocks and important buildings/destinations; practical POIs such as water, toilets and parking | Side-road and major residential-street names |
+| 16 | Relevant nearby named facilities, attractions and outdoor POIs | Arterial roads and ordinary named streets must be eligible; prioritize names of visible roads |
+| 17 | Finer nearby facilities, entrances, small parks and named buildings/destinations | Ordinary streets, paths and named pedestrian passages |
+| 18 | Facilities and entrances at doorway/intersection scale, named buildings and small landmarks | Named service roads, side roads, pedestrian paths and other detailed roads |
 
-用户位置、当前路线、选中的目的地使用原有导航覆盖层，优先级独立于一般地理标注。普通医院/应急设施不应仅凭类别在国家尺度挤掉国家或城市名。
+The user position, current route and selected destination use the existing
+navigation overlays, with priority independent of ordinary geographic labels.
+Ordinary hospitals/emergency facilities must not displace country or city names
+at country scale solely because of their category.
 
-区域 PBF 不等于全球地名数据。z1–3 的国家/首都展示需要有对应数据源；仅有云南 PBF 时可显示真实选区定位地名，不能伪造全球覆盖。需要全球概览时，Center 要另行准备轻量地名数据，仍不依赖第三方成品栅格瓦片。
+A regional PBF is not a global place-name dataset. Country/capital display at
+z1–3 requires an appropriate source. A Yunnan-only PBF may show a real place name
+locating the selected area, but must not imply global coverage. If a global
+overview is needed, Center must prepare lightweight place-name data separately,
+without relying on third-party finished raster tiles.
 
-## 解决图标密、文字稀的问题
+## Addressing dense icons and sparse text
 
-1. 道路名和地区名直接作为文字布局，不先创建图标占位。
-2. 有名称的 POI 将“小图标 + 名称”作为一个组合候选进行布局。尚未选中的候选图标不能阻挡其他候选的文字。
-3. 无名厕所、停车等类别图标只补充实用信息，不无条件铺满屏幕。同类密集点优先选择有用的代表，必要时用带数量的聚合表示；不同语义类别不盲目混成一个点。
-4. 名称太长时进行 UTF-8 安全省略并保留可识别前缀，不因超过固定宽度就直接全部删除；不放大图标，不使用滚动文字。
-5. 先完成碰撞布局再确定显示集合；被拒绝的候选释放位置后，允许后续合适候选补位。去掉“先取前 48 个，再避碰且不补位”的流程。
-6. 道路、地名和 POI 有初始显示预算，未使用的预算允许其他类别使用。避免 48 个图标挤占空间而只剩几条名称。
-7. 图标初始试用 10–12 px，常规文字试用 14–16 px，均为需要实机确认的样式参数。根据用户补充要求，所有道路、地名和 POI 文字必须透明背景，不绘制白色/米白色底板，也不绘制白色描边或光晕。可读性依靠字号、字重、颜色和避碰。
+1. Lay out road and region names directly as text without reserving an icon first.
+2. Treat a named POI's small icon and name as one combined layout candidate.
+   Icons for unselected candidates must not block other candidates' text.
+3. Unnamed category icons, such as toilets and parking, supplement practical
+   information rather than filling the screen unconditionally. For dense points
+   of one category, select useful representatives or use a count-bearing cluster
+   when necessary. Do not indiscriminately merge different semantic categories.
+4. Ellipsize long names safely at UTF-8 boundaries, retaining a recognizable
+   prefix. Do not discard the entire name solely for exceeding a fixed width.
+   Do not enlarge icons or use scrolling text.
+5. Resolve collisions before choosing the displayed set. Once a rejected
+   candidate releases its position, allow later suitable candidates to fill it.
+   Remove the process that selects the first 48 entries, rejects collisions and
+   never fills the resulting gaps.
+6. Give roads, places and POIs initial display budgets, allowing other categories
+   to use unspent capacity. Avoid 48 icons occupying space while only a few names
+   remain.
+7. Initially try 10–12 px icons and 14–16 px regular text. These parameters require
+   physical-device confirmation. The user's additional requirement is that all
+   road, place and POI text have transparent backgrounds: no white/off-white
+   backing panels and no white outlines or halos. Readability depends on font
+   size, weight, color and collision avoidance.
 
-Pager 480×222 上，初始排布目标为：低级别约 4–10 条有效文字，中级别约 10–18 条，高级别约 20–30 条总文字。高级别可先为道路名预留约 6–10 条机会，其余给地名与 POI。它们是有足够数据且空间允许时的调试目标，不是承诺或强制填满的数量；实际地图视口比整屏小，最终应按可用面积及实机耗时调整。
+For Pager at 480×222, initial layout targets are approximately 4–10 useful labels
+at low zoom, 10–18 at middle zoom and 20–30 total at high zoom. At high zoom,
+initially reserve approximately 6–10 opportunities for road names, with the
+remainder for places and POIs. These are debugging targets when data and space
+permit, not promised or mandatory counts. The actual map viewport is smaller
+than the screen; adjust to usable area and measured device timings.
 
-## 道路名称的数据与布局
+The user's density adjustment on 2026-10-15 raises the zoom-band named-label
+budgets from 8/16/24/32 to 11/22/34/45 (approximately 40%). POI reservation rises
+from 12 to 17 while road/place reservations and collision avoidance stay intact.
+The existing 48-placement frame, 192-candidate cap, snapshot buffers and draw
+objects are not enlarged. Actual visible counts still depend on source coverage
+and available non-overlapping space; this is not a guarantee of 40% more labels
+in every viewport. The runtime and native replay use the same budget function.
 
-- Center 保存道路身份、名称/编号、道路等级、缩放资格、简化线段和多个候选位置。
-- 仅合并拓扑连续且语义一致的同名路段；不能把不同地区同名道路合并。
-- 候选位置覆盖长道路的多个部分，使道路中点在视野外时，视野内路段仍能显示名称。
-- 设备只处理视野附近的简化候选；文字位置与道路匹配，始终保持屏幕可读方向，不继承底图整体旋转。
-- 同一路段名称去重，并控制沿道路重复标注的屏幕间距；文字应完整落在可用视口内。
-- “z16–18 道路名重要”通过显示资格与布局预算体现，不通过把某几条道路名称硬编码成例外实现。
+## Road-name data and layout
 
-## 时间稳定性与失败语义
+- Center retains road identity, name/number, road class, zoom eligibility,
+  simplified segments and multiple candidate positions.
+- Merge same-name segments only when topologically continuous and semantically
+  consistent. Do not merge same-name roads from different regions.
+- Cover multiple parts of long roads with candidate positions, so a visible
+  segment can show its name while the midpoint is outside the viewport.
+- The device processes only simplified candidates near the viewport. Position
+  text to match the road while keeping a readable screen orientation; do not
+  inherit rotation of the entire base map.
+- Deduplicate names of the same road segment and control repeated labels'
+  screen spacing along roads. Text must fit entirely inside the usable viewport.
+- Express the importance of z16–18 road names through eligibility and layout
+  budgets, not hardcoded exceptions for a few named roads.
 
-- 使用稳定地理对象 ID 保持上一轮选择。仍合格、仍在视野内、没有实质冲突的标注优先保留。
-- 新候选只有在重要性明显更高或出现足够可用空间时替换旧候选；不能因中心距离差一两像素反复互换。
-- 邻近瓦片异步到达时合并更新。静止视野的数据逐渐加载不应持续让已显示名称闪现、消失。
-- 仅在视野/级别、相关数据、字体度量或样式变化时重新排布；普通重绘复用已有结果。
-- PSRAM 分配失败或暂时读取失败时，在旧内容仍对应当前视野/级别的前提下保留可用结果并延后更新。不得将错误状态当作“当前没有标注”。旧视野或旧级别的内容不能为了防闪而永久保留。
+## Temporal stability and failure semantics
 
-## Center、数据包与内存
+- Preserve the previous selection through stable geographic object IDs.
+  Prefer retaining labels that remain eligible, visible and free of substantive
+  conflicts.
+- Replace an existing label only when a new candidate is substantially more
+  important or enough usable space becomes available. A one- or two-pixel
+  difference in distance from the center must not cause repeated swapping.
+- Merge neighbouring tiles as they arrive asynchronously. Gradual loading of
+  a stationary view must not continually flash or remove existing names.
+- Recompute layout only when the viewport/zoom, relevant data, font metrics or
+  style changes. Ordinary redraws reuse the existing result.
+- On PSRAM allocation or temporary read failure, retain usable old results and
+  defer updates only while they still match the current view/zoom. An error
+  must not mean that there are no annotations. Do not retain content for an old
+  view/zoom indefinitely merely to avoid flicker.
 
-- 默认方案调整为“全无字底图 + 地图标注”。地名、道路名、点状 POI 分别配置；关闭设施 POI 不应把道路名一起关掉。
-- 提供户外/城市预设及各组最小/最大级别，默认规则覆盖 18 级；不要求用户逐个维护 18×所有类别的开关。
-- 城市预设可加入公共交通、学校、公园、命名目的地等；商店/餐饮等生活类 POI 由预设及类别选择控制，不承诺当前 9 类提取器已经具备这些能力。
-- 扩展现有空间索引载荷，使统一地图标注管线能区分地名、道路和点状 POI。具体磁盘版本与迁移方式需随实现验证，不把旧 POI 文件和新标注文件变成两个同时生效的权威来源。
-- 同一份缩放/样式规则用于 Center 标注预览、导出和设备消费；在线预览背景不能冒充本地最终无字底图效果。
-- 字体资源覆盖所有导出标注名称，包含道路与地名；通过既有字体包机制加载。复制到 SD 的交付包需携带缺失的必要资源，不能依赖手工修补昆明专用字表。
-- PBF 几何处理、简化、候选生成与级别分类放在 Center；设备不解析全区域路网，不建立常驻大对象或道路全量表。
-- 缓存、候选和布局缓冲按需使用有硬预算的 PSRAM，复用后台读取 scratch；保持单个绘制层，不增加图标/文字控件池或额外整屏画布。
-- 内存预算和显示密度分开：先改善布局算法，再按真实设备成本决定候选上限，不用简单调大 48/20 代替修正。
+## Center, packages and memory
 
-## 实施顺序与验收
+- Change the default to text-free base maps plus map annotations. Configure
+  places, road names and point POIs separately; disabling facility POIs must not
+  also disable road names.
+- Provide outdoor/urban presets and minimum/maximum zoom for each group.
+  Defaults cover all 18 levels; users should not manage 18 times every category
+  of switches individually.
+- Urban presets may include public transport, schools, parks and named
+  destinations. Presets/category choices control shops, food and similar POIs.
+  Do not claim the current nine-category extractor already provides all of them.
+- Extend the existing spatial-index payload so one annotation pipeline can
+  distinguish places, roads and point POIs. Verify the disk version/migration
+  with the implementation. Do not make old POI files and new annotation files
+  simultaneous authoritative sources.
+- Apply the same zoom/style rules to Center preview, export and device
+  consumption. An online preview background must not stand in for the final
+  local text-free base map.
+- Font resources must cover every exported annotation name, including roads
+  and places, using the existing font-pack mechanism. The SD delivery package
+  must include missing required resources instead of depending on a manually
+  patched Kunming-specific character list.
+- Keep PBF geometry processing, simplification, candidate generation and zoom
+  classification in Center. The device does not parse the entire area's road
+  network or retain large objects/full road tables.
+- Use PSRAM for caches, candidates and layout buffers on demand with hard
+  budgets. Reuse background-read scratch storage, retain a single drawing layer,
+  and do not add icon/text widget pools or another full-screen canvas.
+- Separate memory budgets from display density: improve layout first, then set
+  candidate limits using actual device costs. Raising 48/20 alone is not a fix.
 
-1. 先打通道路、地区名从 PBF 到统一标注索引，再到共享地图绘制层的完整路径。
-2. 修正文字组合布局、长名称省略、补位和稳定选择；明确失败时的保留/清空行为。
-3. 接入逐级规则与 Center 预设、预览和字体资源打包。
-4. 标注链路具备覆盖能力后，才生成 z1–18 全无字的下一版验证包，避免先删掉低级别文字而没有动态标注补上。
-5. 用同一个昆明范围验证 z1–18；特别检查 z16–18 的普通街道名，长道路跨瓦片/视口边缘，同名道路去重，密集设施及长名称。
-6. 静止地图逐步加载、轻微定位抖动、平移、缩放、出入页面、字体延迟加载和受限内存场景均需验证。记录候选数、实际道路/地名/POI 文字数与拒绝原因。
-7. 检查原生 RAM/PSRAM 高水位、单次布局耗时、绘制耗时与任务栈。主机测试不能替代这些实机性能测量。
+## Implementation order and acceptance
 
-用户已同意逐级规则与改进方向，并明确禁止文字底板和白色描边。字号与密度参数仍需设备验证，本文不表示上述下一版功能已经交付。
+1. Complete the path from PBF road/region names to the unified annotation index
+   and shared map drawing layer.
+2. Fix combined text layout, long-name ellipsis, gap filling and stable selection;
+   define what is retained or cleared after failure.
+3. Integrate zoom rules, Center presets/preview and font-resource packaging.
+4. Only after the annotation pipeline has the required coverage, generate the
+   next z1–18 text-free verification package. Do not remove low-zoom text before
+   dynamic annotations can replace it.
+5. Verify z1–18 on the same Kunming area, particularly ordinary street names at
+   z16–18, long roads crossing tiles/viewport edges, same-road deduplication,
+   dense facilities and long names.
+6. Verify gradual loading of a stationary map, small location jitter, panning,
+   zooming, page entry/exit, delayed fonts and constrained memory. Record
+   candidate counts, actual road/place/POI label counts and rejection reasons.
+7. Measure native RAM/PSRAM high-water marks, layout/drawing times and task stacks.
+   Host tests cannot replace these measurements on physical hardware.
+
+The user approved the zoom rules and improvement direction, and explicitly
+prohibited text backing panels and white outlines. Font sizes and density still
+need device validation. This document does not state that the next implementation
+has been delivered.

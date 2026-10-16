@@ -24,6 +24,7 @@ extern "C"
         TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_RETICULUM_CALL = 2,
         TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_WALKIE = 3,
         TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_SSTV = 4,
+        TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_MUSIC = 5,
     } trail_mate_t_display_p4_audio_owner_t;
 
     bool trail_mate_t_display_p4_audio_is_ready(void);
@@ -37,6 +38,9 @@ extern "C"
                                                   const int16_t* pcm,
                                                   size_t sample_count);
     void trail_mate_t_display_p4_audio_set_volume_percent(uint8_t volume_percent);
+    bool trail_mate_t_display_p4_audio_set_session_volume(trail_mate_t_display_p4_audio_owner_t owner, uint8_t volume_percent);
+    bool trail_mate_t_display_p4_audio_set_input_gain(trail_mate_t_display_p4_audio_owner_t owner,
+                                                      float gain_db);
 
 #ifdef __cplusplus
 }

@@ -60,6 +60,9 @@ class QueryClient
   public:
     explicit QueryClient(QueryClientPort& port) : port_(port), directories_(directory_entries_.data(), directory_entries_.size()) {}
     static constexpr uint64_t kReplyTimeoutMs = 120000;
+    static constexpr size_t kDirectoryCapacity = 4;
+    size_t directoryCount() const { return directories_.size(); }
+    const DirectoryEntry* directory(size_t index) const { return index < directories_.size() ? &directory_entries_[index] : nullptr; }
     QueryClient(const QueryClient&) = delete;
     QueryClient& operator=(const QueryClient&) = delete;
     bool observe(const Destination& discovery, const Destination& derived_delivery,
@@ -268,7 +271,7 @@ class QueryClient
     QueryClientPhase after_persist_ = QueryClientPhase::Idle;
     uint8_t pending_max_items_ = 0;
     QueryClientPort& port_;
-    std::array<DirectoryEntry, 4> directory_entries_{};
+    std::array<DirectoryEntry, kDirectoryCapacity> directory_entries_{};
     DirectoryPool directories_;
     DirectoryEntry* selected_ = nullptr;
     protocol::QueryRegion region_;

@@ -1,0 +1,14 @@
+const labels={
+ en:['The original KML is kept separately. Editing and saving change the draft, while original downloads and draft backups keep the imported bytes. Both count toward browser storage.','This draft has no separate original. You can download its current KML, but it cannot reconstruct the initial source file.'],
+ 'zh-Hans':['原始 KML 独立保留。编辑和保存只改变草稿，原稿下载与草稿备份保留导入时的字节；两份内容均计入浏览器存储容量。','此草稿没有独立原稿。可以下载当前 KML，但不能据此恢复最初的来源文件。'],
+ 'zh-Hant-TW':['原始 KML 獨立保留。編輯與儲存只變更草稿，原稿下載與草稿備份保留匯入時的位元組；兩份內容均計入瀏覽器儲存容量。','此草稿沒有獨立原稿。可下載目前 KML，但不能據此還原最初的來源檔案。'],
+ ja:['元のKMLを別に保持します。編集・保存は下書きだけを変更し、元ファイルのダウンロードとバックアップは読み込み時のバイトを保持します。両方が保存容量に含まれます。','この下書きには別の元ファイルがありません。現在のKMLは取得できますが、初期の入力ファイルは復元できません。'],
+ ko:['원본 KML을 따로 보관합니다. 편집과 저장은 초안만 바꾸며 원본 다운로드와 초안 백업은 가져온 바이트를 보존합니다. 두 파일 모두 브라우저 저장 용량에 포함됩니다.','이 초안에는 별도 원본이 없습니다. 현재 KML은 다운로드할 수 있지만 최초 소스 파일을 복원할 수는 없습니다.'],
+ ar:['يُحفظ KML الأصلي منفصلًا. يغيّر التحرير والحفظ المسودة فقط، ويحتفظ تنزيل الأصل والنسخ الاحتياطي ببايتات الاستيراد. يُحتسب الملفان ضمن مساحة المتصفح.','لا أصل منفصل لهذه المسودة. يمكنك تنزيل KML الحالي، لكنه لا يعيد بناء ملف المصدر الأول.'],
+ ru:['Исходный KML хранится отдельно. Правки и сохранение меняют черновик, а скачивание оригинала и резервная копия сохраняют импортированные байты. Оба файла учитываются в хранилище браузера.','У черновика нет отдельного оригинала. Текущий KML можно скачать, но первоначальный источник восстановить нельзя.'],
+ de:['Das ursprüngliche KML bleibt separat. Bearbeiten und Speichern ändern den Entwurf; Originaldownload und Sicherung behalten die importierten Bytes. Beide zählen zum Browserspeicher.','Dieser Entwurf hat kein separates Original. Das aktuelle KML ist herunterladbar, kann die ursprüngliche Quelldatei aber nicht wiederherstellen.'],
+ es:['El KML original se conserva aparte. Editar y guardar cambia el borrador; descargar el original y hacer una copia conserva los bytes importados. Ambos cuentan en el almacenamiento.','Este borrador no tiene original separado. Puede descargar el KML actual, pero no reconstruir el archivo inicial.'],
+ fr:['Le KML original est conservé séparément. Modifier et enregistrer change le brouillon ; le téléchargement original et la sauvegarde gardent les octets importés. Les deux comptent dans le stockage.','Ce brouillon n’a pas d’original séparé. Le KML actuel peut être téléchargé, mais ne permet pas de reconstruire le fichier initial.'],
+ it:['Il KML originale resta separato. Modifica e salvataggio cambiano la bozza; download originale e backup conservano i byte importati. Entrambi contano nello spazio del browser.','Questa bozza non ha un originale separato. Puoi scaricare il KML attuale, ma non ricostruire il file iniziale.'],
+};
+export function kmlOriginalText(locale){const values=labels[locale];if(!values||values.length!==2)throw Error('Incomplete original KML translations');return{help:values[0],legacy:values[1]};}

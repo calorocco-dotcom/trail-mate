@@ -1,3 +1,4 @@
+#include "ui/support/overlay_path_segments.h"
 #include "ui/widgets/map/map_viewport.h"
 #include "ui_presentation/map/map_marker_cache.h"
 #include <cassert>
@@ -19,6 +20,7 @@ struct RuntimeImpl
 {
     Widgets widgets;
     Model model;
+    ui::map::MapOverlaySnapshot overlay{};
     struct
     {
         bool valid = true;

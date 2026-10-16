@@ -27,7 +27,7 @@ int main()
     assert(profile.large_touch_hitbox);
     assert(profile.show_top_bar);
     assert(profile.max_columns == 4);
-    assert(profile.card_width == 104);
+    assert(profile.card_width == 140);
     assert(profile.card_height == 112);
     assert(profile.grid_top_offset == 34);
     return 0;

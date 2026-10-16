@@ -69,6 +69,12 @@ This affects artifact size, not the identity of the page source being compiled.
 
 ## Verification
 
+Optional P4 TFT/AMOLED targets use the same production pages at 1168×540 and
+1232×568. Configure with `TRAIL_MATE_PREVIEW_P4=ON` and firmware LVGL 9.5.0,
+then build `trailmate_p4_tft` and `trailmate_p4_amoled`. See the
+[P4 layout and dashboard report](../../docs/engineering/t-display-p4-ui-audit.md)
+for frame capture, navigation checks and lifecycle stress reproduction.
+
 `tests/site/native-ui.test.mjs` instantiates the generated WebAssembly, exercises
 real calculator controls, checks the second function layer and DEG/RAD, and
 enters/exits 19 page states for all three profiles. Browser checks additionally cover

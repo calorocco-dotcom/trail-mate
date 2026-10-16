@@ -1,0 +1,137 @@
+import {chromium} from '../../site/node_modules/playwright/index.mjs';
+import {build} from '../../site/node_modules/esbuild/lib/main.js';
+import assert from 'node:assert/strict';import http from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {decodeTrackJobBinding,encodeTrackJobBinding} from '../../site/tracks/src/job-binding.js';
+import {locales} from '../../site/i18n/registry.js';
+import {trackTaskText} from '../../site/i18n/track-task-labels.js';
+import {trackHistoryText} from '../../site/i18n/track-history-labels.js';
+const bundle=await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';
+import {TrackTaskStatus} from './site/tracks/src/track-task-status.jsx';import {encodeTrackJobBinding} from './site/tracks/src/job-binding.js';
+import {TrackHistory} from './site/tracks/src/track-history.jsx';
+import {ManagementCopyProvider} from './site/i18n/management-copy.jsx';
+import {OPERATION} from './site/device/src/management-protocol.js';
+import {Identity} from '@reticulum/core';import {authorProofMessage} from './site/device/src/author-identity.js';
+import {saveTrackDraft,readTrackDraft,saveTrackDraftPublicationPlan,saveTrackDraftJobBinding,removeTrackDraft} from './site/tracks/src/draft-store.js';
+import {createTrackPublicationPlan} from './site/tracks/src/publication-create.js';import {decode} from './site/geocaching/src/protocol.js';
+import './site/tracks/src/tracks.css';import './site/styles.css';
+const actualRoot=createRoot(document.getElementById('root')),bin=(n,v)=>new Uint8Array(n).fill(v);
+let fixtureLocale='zh-Hans',currentElement;
+const root={render(element){currentElement=element;actualRoot.render(React.createElement(ManagementCopyProvider,{locale:fixtureLocale},element));}};
+globalThis.setTestLocale=locale=>{fixtureLocale=locale;root.render(currentElement);};
+const binding={operationId:bin(16,1),objectId:bin(32,2),revisionHash:bin(32,3),generation:7,revision:1,directory:bin(16,4),directoryEpoch:bin(16,5),authorHash:bin(32,6),fileHash:bin(32,7),fileBytes:100};
+globalThis.calls=0;globalThis.releases=0;
+globalThis.mount=mode=>root.render(React.createElement(TrackTaskStatus,{session:{id:bin(16,8),async request(){++globalThis.calls;throw Error('测试设备已断开');}},
+operations:Object.values(OPERATION),draft:{id:'fixture',version:1,...(mode==='empty'?{}:{jobBinding:encodeTrackJobBinding(binding).buffer})},
+disabled:mode==='disabled',acquire:()=>({}),release:()=>{++globalThis.releases;}}));
+globalThis.setupAuthenticated=async()=>{
+ const identity=await Identity.generate(),publicKey=await identity.getPublicKey();
+ const join=(...parts)=>{const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let offset=0;for(const p of parts){out.set(p,offset);offset+=p.length;}return out;};
+ const nameHash=(await Identity.fullHash(new TextEncoder().encode('lxmf.delivery'))).slice(0,10);
+ const destination=await Identity.truncatedHash(join(nameHash,identity.identityHash)),info=[publicKey,identity.identityHash,destination,7];
+ const source=new TextEncoder().encode('<kml xmlns="http://www.opengis.net/kml/2.2"><Placemark><LineString><coordinates>120,30 120.01,30.01</coordinates></LineString></Placemark></kml>');
+ let draft=await saveTrackDraft(source,{name:'任务进度测试'});
+ const plan=await createTrackPublicationPlan(source,{verified:true,publicKey,generation:7},{title:draft.name});
+ await saveTrackDraftPublicationPlan(draft.id,draft.version,plan);const record=decode(plan.manifest,4096);
+ const domain=value=>new TextEncoder().encode(value+'\\0');
+ const saved={...binding,operationId:plan.operationId,objectId:await Identity.fullHash(join(domain('TrailMate.Track.ID.v1'),publicKey,record[2])),
+ revisionHash:await Identity.fullHash(join(domain('TrailMate.Track.Revision.v1'),plan.manifest)),authorHash:await Identity.fullHash(publicKey),fileHash:plan.fileHash,fileBytes:plan.fileBytes};
+ await saveTrackDraftJobBinding(draft.id,draft.version,saved);draft=await readTrackDraft(draft.id);
+ globalThis.jobCalls=0;globalThis.jobWaiting=false;globalThis.holdJob=true;
+ globalThis.cancelCalls=0;
+ const session={id:bin(16,8),async request(op,body){
+  if(op===OPERATION.AUTHOR_INFO)return info;
+  if(op===OPERATION.AUTHOR_PROVE)return [...info,await identity.sign(authorProofMessage(this.id,body[0],publicKey,7))];
+  if(op===OPERATION.JOB_CANCEL){++globalThis.cancelCalls;
+   if(body[0].some((byte,i)=>byte!==saved.operationId[i])||body[1]!==7||body[2]!==1)throw Error('wrong cancellation binding');
+   return [saved.operationId,saved.objectId,saved.revisionHash,7,1,saved.directory,saved.directoryEpoch,saved.fileHash,saved.fileBytes,32,6,3,saved.authorHash,0];}
+  if(op!==OPERATION.JOB_GET)throw Error('unexpected command');
+  const second=globalThis.jobCalls++>0;
+  if(second&&globalThis.holdJob){globalThis.jobWaiting=true;await new Promise(resolve=>globalThis.resumeJob=resolve);globalThis.jobWaiting=false;}
+  return [saved.operationId,saved.objectId,saved.revisionHash,7,1,saved.directory,saved.directoryEpoch,saved.fileHash,saved.fileBytes,second?saved.fileBytes:32,second?4:1,second?3:2,saved.authorHash,second?0:1];
+ }};
+ globalThis.restartJob=()=>{globalThis.jobCalls=0;globalThis.holdJob=false;};
+ globalThis.mountHistory=async()=>{await removeTrackDraft(draft.id,draft.version);globalThis.restartJob();
+  root.render(React.createElement(TrackHistory,{session,operations:Object.values(OPERATION),acquire:()=>({}),release:()=>++globalThis.releases}));};
+ root.render(React.createElement(TrackTaskStatus,{session,operations:Object.values(OPERATION),draft,acquire:()=>({}),release:()=>++globalThis.releases}));
+};`,resolveDir:process.cwd()},bundle:true,write:false,outdir:'.codex-build/hostlink-codec',format:'iife',platform:'browser',nodePaths:[process.cwd()+'/site/node_modules'],loader:{'.svg':'dataurl','.png':'dataurl','.jpg':'dataurl','.webp':'dataurl','.woff':'dataurl','.woff2':'dataurl','.ttf':'dataurl'}});
+const server=http.createServer((req,res)=>res.end('<!doctype html><meta charset="utf-8"><div id="root"></div>'));
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const browser=await chromium.launch({channel:process.env.TRAIL_MATE_TEST_BROWSER_CHANNEL,headless:true});
+try{
+ const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.addScriptTag({content:bundle.outputFiles.find(file=>file.path.endsWith('.js')).text});
+ const css=bundle.outputFiles.find(file=>file.path.endsWith('.css'));if(css)await page.addStyleTag({content:css.text});
+ await page.evaluate(()=>mount('empty'));await page.getByText('当前草稿还没有保存的提交任务。').waitFor();
+ await page.evaluate(()=>mount('disabled'));await page.getByRole('button',{name:'查询原任务'}).waitFor();assert.equal(await page.getByRole('button',{name:'查询原任务'}).isDisabled(),true);
+ await page.evaluate(()=>mount('ready'));await page.getByRole('button',{name:'查询原任务'}).click();await page.getByText(trackTaskText('zh-Hans').error,{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>calls),1);assert.equal(await page.evaluate(()=>releases),1);
+ assert.equal(await page.getByRole('button',{name:'查询原任务'}).isDisabled(),false);
+ assert.equal(await page.getByLabel('操作 ID').inputValue(),'01'.repeat(16));
+ await page.evaluate(()=>setupAuthenticated());await page.getByRole('button',{name:'查询原任务'}).click();
+ await page.waitForFunction(()=>jobWaiting);
+ assert.equal(await page.getByRole('progressbar').getAttribute('value'),'32');
+ const waitingCalls=await page.evaluate(()=>jobCalls),waitingReleases=await page.evaluate(()=>releases);
+ const waitingOperation=await page.getByLabel('操作 ID').inputValue();
+ for(const locale of locales){
+  const text=trackTaskText(locale.id);await page.evaluate(id=>setTestLocale(id),locale.id);
+  await page.getByRole('button',{name:text.pause,exact:true}).waitFor();
+  assert.equal(await page.getByRole('progressbar').getAttribute('aria-label'),text.progress);
+  assert.equal(await page.getByLabel(text.operationId,{exact:true}).inputValue(),waitingOperation);
+  assert.equal(await page.getByLabel(text.operationId,{exact:true}).getAttribute('dir'),'ltr');
+  assert.equal(await page.evaluate(()=>jobCalls),waitingCalls);assert.equal(await page.evaluate(()=>releases),waitingReleases);
+ }
+ await page.evaluate(()=>setTestLocale('zh-Hans'));
+ await page.getByRole('button',{name:'暂停等待'}).click();await page.evaluate(()=>resumeJob());
+ await page.getByText('已暂停网页等待，设备任务没有取消。',{exact:true}).waitFor();
+ assert.equal(await page.getByRole('progressbar').getAttribute('value'),'32');
+ await page.evaluate(()=>restartJob());await page.getByRole('button',{name:'查询原任务'}).click();
+ await page.getByText('目录已确认此版本。',{exact:true}).waitFor();
+ const progress=await page.getByRole('progressbar').evaluate(node=>({value:node.value,max:node.max}));assert.equal(progress.value,progress.max);
+ assert.equal(await page.getByRole('button',{name:'取消设备任务'}).isDisabled(),true);
+ await page.setViewportSize({width:375,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=375),true);
+ await page.evaluate(()=>mountHistory());await page.waitForFunction(()=>document.querySelector('select')?.options.length===2);
+ const key=await page.getByLabel('选择历史任务').locator('option').nth(1).getAttribute('value');
+ await page.getByLabel('选择历史任务').selectOption(key);await page.getByRole('button',{name:'查询原任务'}).click();
+ await page.getByText('目录已确认此版本。',{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=375),true);
+ const selectedHistory=await page.getByLabel('选择历史任务').inputValue(),historyCalls=await page.evaluate(()=>jobCalls);
+ for(const locale of locales){const text=trackHistoryText(locale.id);await page.evaluate(id=>setTestLocale(id),locale.id);await page.getByRole('button',{name:text.export,exact:true}).waitFor();assert.equal(await page.getByLabel(text.select,{exact:true}).inputValue(),selectedHistory);assert.equal(await page.evaluate(()=>jobCalls),historyCalls);}
+ await page.evaluate(()=>setTestLocale('zh-Hans'));
+ const operation=await page.getByLabel('操作 ID').inputValue(),callsBefore=await page.evaluate(()=>jobCalls);
+ const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'导出任务绑定'}).click();
+ const download=await downloadPromise,exportedBytes=await readFile(await download.path()),exported=decodeTrackJobBinding(new Uint8Array(exportedBytes));
+ assert.equal(Array.from(exported.operationId,b=>b.toString(16).padStart(2,'0')).join(''),operation);
+ assert.equal(download.suggestedFilename(),`trailmate-task-${operation}.tmjob`);
+ page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'删除本地历史'}).click();
+ await page.waitForFunction(()=>document.querySelector('select')?.options.length===1);
+ await page.getByText(trackHistoryText('zh-Hans').removed,{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>jobCalls),callsBefore);
+ const fileInput=page.getByLabel('任务绑定文件');
+ await fileInput.setInputFiles({name:download.suggestedFilename(),mimeType:'application/octet-stream',buffer:exportedBytes});
+ await page.waitForFunction(()=>document.querySelector('select')?.options.length===2);
+ await page.getByText(trackHistoryText('zh-Hans').imported,{exact:true}).waitFor();
+ await page.getByRole('button',{name:'查询原任务'}).waitFor();assert.equal(await page.getByText('目录已确认此版本。',{exact:true}).count(),0);
+ assert.equal(await page.evaluate(()=>jobCalls),callsBefore);
+ await fileInput.setInputFiles({name:download.suggestedFilename(),mimeType:'application/octet-stream',buffer:exportedBytes});
+ await page.waitForFunction(()=>document.querySelector('select')?.options.length===2);
+ const changed=encodeTrackJobBinding({...exported,directoryEpoch:new Uint8Array(16).fill(99)});
+ await fileInput.setInputFiles({name:'changed.tmjob',mimeType:'application/octet-stream',buffer:Buffer.from(changed)});
+ await page.getByText('已有不同任务绑定，不能覆盖原操作',{exact:true}).waitFor();
+ await fileInput.setInputFiles({name:'large.tmjob',mimeType:'application/octet-stream',buffer:Buffer.alloc(513)});
+ await page.getByText('任务绑定文件超过大小限制',{exact:true}).waitFor();
+ await page.evaluate(()=>setTestLocale('en'));await page.getByText(trackHistoryText('en').oversize,{exact:true}).waitFor();
+ await page.evaluate(()=>setTestLocale('zh-Hans'));
+ assert.equal(await page.evaluate(()=>jobCalls),callsBefore);
+ await fileInput.setInputFiles({name:'invalid.tmjob',mimeType:'application/octet-stream',buffer:Buffer.alloc(32)});
+ await page.getByText(trackHistoryText('zh-Hans').invalid,{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>jobCalls),callsBefore);
+ await page.evaluate(()=>{restartJob();holdJob=true;});await page.getByRole('button',{name:'查询原任务'}).click();await page.waitForFunction(()=>jobWaiting);
+ await page.getByRole('button',{name:'暂停等待'}).click();await page.evaluate(()=>resumeJob());await page.getByText('已暂停网页等待，设备任务没有取消。',{exact:true}).waitFor();
+ page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'取消设备任务'}).click();
+ await page.getByText('设备已持久化取消，任务停止执行。',{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>cancelCalls),1);assert.equal(await page.getByRole('button',{name:'取消设备任务'}).isDisabled(),true);
+ await page.evaluate(()=>setTestLocale('en'));await page.getByText(trackTaskText('en').cancelPersisted,{exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:trackTaskText('en').cancel,exact:true}).isDisabled(),true);
+ assert.equal(await page.evaluate(()=>cancelCalls),1);
+ console.log('Track task status UI browser test passed');
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

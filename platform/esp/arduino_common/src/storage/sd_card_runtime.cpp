@@ -451,6 +451,10 @@ bool sd_mutation_blocked_by_external_owner(const char* op,
 
 oflag_t sdfat_open_flags(const char* mode)
 {
+    if (mode && (std::strcmp(mode, "wx+") == 0 || std::strcmp(mode, "w+x") == 0))
+    {
+        return O_RDWR | O_CREAT | O_EXCL;
+    }
     if (mode == nullptr || std::strcmp(mode, "r") == 0 || std::strcmp(mode, "rb") == 0)
     {
         return O_RDONLY;
@@ -1266,6 +1270,11 @@ bool sd_is_directory(const char* path)
 
 bool sd_mkdir(const char* path)
 {
+    return sd_mkdir(path, sd_media_session());
+}
+
+bool sd_mkdir(const char* path, uint32_t expected_session)
+{
     const char* normalized = normalize_sd_path(path);
     const uint32_t start_ms = sd_io_begin("mkdir", normalized);
     if (sd_mutation_blocked_by_external_owner("mkdir", normalized, start_ms))
@@ -1280,6 +1289,11 @@ bool sd_mkdir(const char* path)
     if (!guard.locked())
     {
         sd_io_end("mkdir", normalized, start_ms, false, 0, -2);
+        return false;
+    }
+    if (expected_session != sd_media_session() || expected_session == s_faulted_media_session.load() || sd_external_block_owner_active())
+    {
+        sd_io_end("mkdir", normalized, start_ms, false, 0, -1);
         return false;
     }
     if (s_info.backend == SdCardBackend::SdFat)
@@ -1322,6 +1336,11 @@ bool sd_rmdir(const char* path)
 
 bool sd_remove(const char* path)
 {
+    return sd_remove(path, sd_media_session());
+}
+
+bool sd_remove(const char* path, uint32_t expected_session)
+{
     const char* normalized = normalize_sd_path(path);
     const uint32_t start_ms = sd_io_begin("remove", normalized);
     if (sd_mutation_blocked_by_external_owner("remove", normalized, start_ms))
@@ -1336,6 +1355,11 @@ bool sd_remove(const char* path)
     if (!guard.locked())
     {
         sd_io_end("remove", normalized, start_ms, false, 0, -2);
+        return false;
+    }
+    if (expected_session != sd_media_session() || s_external_block_owner_active)
+    {
+        sd_io_end("remove", normalized, start_ms, false, 0, -1);
         return false;
     }
     if (s_info.backend == SdCardBackend::SdFat)
@@ -1417,6 +1441,17 @@ class SdRuntimeFile::Impl
 SdRuntimeFile::SdRuntimeFile()
     : impl_(psram_preferred_object<Impl>())
 {
+}
+
+SdRuntimeFile::SdRuntimeFile(SdRuntimeMemoryPolicy policy) : impl_(nullptr)
+{
+    if (policy == SdRuntimeMemoryPolicy::Default)
+    {
+        impl_ = psram_preferred_object<Impl>();
+        return;
+    }
+    void* memory = heap_caps_malloc(sizeof(Impl), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory) impl_ = new (memory) Impl();
 }
 
 SdRuntimeFile::~SdRuntimeFile()
@@ -1937,6 +1972,7 @@ bool SdRuntimeFile::seek(uint64_t offset)
 
 uint64_t SdRuntimeFile::position() const
 {
+    read_busy_ = false;
     if (!is_open())
     {
         return 0;
@@ -1946,6 +1982,7 @@ uint64_t SdRuntimeFile::position() const
         SdRuntimeOperationGuard guard("sd_file_position");
         if (!guard.locked() || !is_open())
         {
+            read_busy_ = !guard.locked() && (guard.status() == sys::runtime::BusAcquireStatus::Busy || guard.status() == sys::runtime::BusAcquireStatus::TimedOut);
             return 0;
         }
         return impl_->sdfat_file.curPosition();
@@ -2016,6 +2053,17 @@ class SdRuntimeDir::Impl
 SdRuntimeDir::SdRuntimeDir()
     : impl_(psram_preferred_object<Impl>())
 {
+}
+
+SdRuntimeDir::SdRuntimeDir(SdRuntimeMemoryPolicy policy) : impl_(nullptr)
+{
+    if (policy == SdRuntimeMemoryPolicy::Default)
+    {
+        impl_ = psram_preferred_object<Impl>();
+        return;
+    }
+    void* memory = heap_caps_malloc(sizeof(Impl), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory) impl_ = new (memory) Impl();
 }
 
 SdRuntimeDir::~SdRuntimeDir()
@@ -2114,6 +2162,14 @@ bool SdRuntimeDir::read_next(char* name, std::size_t name_size, bool* is_dir)
 
 SdDirReadStatus SdRuntimeDir::read_next_status(char* name, std::size_t name_size, bool* is_dir)
 {
+    return read_next_info(name, name_size, is_dir, nullptr, nullptr);
+}
+
+SdDirReadStatus SdRuntimeDir::read_next_info(char* name, std::size_t name_size, bool* is_dir,
+                                             uint64_t* file_size, uint64_t* next_position)
+{
+    if (file_size) *file_size = 0;
+    if (next_position) *next_position = 0;
     if (name == nullptr || name_size == 0)
     {
         return SdDirReadStatus::Invalid;
@@ -2123,7 +2179,7 @@ SdDirReadStatus SdRuntimeDir::read_next_status(char* name, std::size_t name_size
     {
         *is_dir = false;
     }
-    if (!is_open()) return SdDirReadStatus::Unavailable;
+    if (!is_open() || sd_external_block_owner_active()) return SdDirReadStatus::Unavailable;
 
     if (impl_->backend == SdCardBackend::SdFat)
     {
@@ -2134,6 +2190,7 @@ SdDirReadStatus SdRuntimeDir::read_next_status(char* name, std::size_t name_size
             sd_io_end("dir_read", impl_->path, start_ms, false, 0, -2);
             return SdDirReadStatus::Busy;
         }
+        const SdIoErrorScope io_error;
         if (impl_->retry_pending)
         {
             // Reopen to clear SdFat's sticky read-error bit, then restore the
@@ -2164,7 +2221,7 @@ SdDirReadStatus SdRuntimeDir::read_next_status(char* name, std::size_t name_size
             sd_io_end("dir_read", impl_->path, start_ms, !failed, 0, failed ? -1 : 0);
             return failed ? SdDirReadStatus::IoError : SdDirReadStatus::End;
         }
-        entry.getName(name, name_size);
+        const bool named = entry.getName(name, name_size);
         if (guard.busStatus() == sys::runtime::BusAcquireStatus::Busy || guard.busStatus() == sys::runtime::BusAcquireStatus::TimedOut)
         {
             impl_->retry_position = position;
@@ -2176,12 +2233,43 @@ SdDirReadStatus SdRuntimeDir::read_next_status(char* name, std::size_t name_size
         {
             *is_dir = entry.isDir();
         }
-        entry.close();
+        const uint64_t bytes = entry.isDir() ? 0 : entry.fileSize();
+        const uint64_t next = impl_->sdfat_dir.curPosition();
+        const bool closed = entry.close();
+        if (!named || !closed || io_error.error())
+        {
+            name[0] = 0;
+            sd_io_end("dir_read", impl_->path, start_ms, false, 0, -1);
+            return SdDirReadStatus::IoError;
+        }
+        if (file_size) *file_size = bytes;
+        if (next_position) *next_position = next;
         sd_io_end("dir_read", impl_->path, start_ms, true, 0, name[0] != '\0' ? 1 : 0);
         return name[0] != '\0' ? SdDirReadStatus::Entry : SdDirReadStatus::IoError;
     }
 
     return SdDirReadStatus::Unavailable;
+}
+
+bool SdRuntimeDir::seek_read_position(uint64_t position)
+{
+    return seek_read_status(position) == SdFileReadStatus::Ready;
+}
+
+SdFileReadStatus SdRuntimeDir::seek_read_status(uint64_t position)
+{
+    if (!impl_ || position % 32) return SdFileReadStatus::Invalid;
+    SdRuntimeOperationGuard guard("sd_dir_seek");
+    if (!guard.locked()) return SdFileReadStatus::Busy;
+    if (!is_open() || sd_external_block_owner_active()) return SdFileReadStatus::Unavailable;
+    const SdIoErrorScope io_error;
+    const bool sought = impl_->sdfat_dir.seekSet(position);
+    if (guard.busStatus() == sys::runtime::BusAcquireStatus::Busy ||
+        guard.busStatus() == sys::runtime::BusAcquireStatus::TimedOut) return SdFileReadStatus::Busy;
+    if (io_error.error()) return SdFileReadStatus::IoError;
+    if (!sought) return SdFileReadStatus::Invalid;
+    impl_->retry_pending = false;
+    return SdFileReadStatus::Ready;
 }
 
 bool sd_read_raw(uint32_t lba, uint8_t* buffer)

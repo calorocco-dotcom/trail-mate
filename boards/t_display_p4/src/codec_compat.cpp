@@ -1,6 +1,7 @@
 #include "boards/t_display_p4/codec_compat.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace boards::t_display_p4
 {
@@ -23,6 +24,11 @@ int CodecCompat::open(uint8_t bits_per_sample, uint8_t channels, uint32_t sample
         return -1;
     }
     open_ = true;
+    if (!trail_mate_t_display_p4_audio_set_input_gain(owner_, gain_db_))
+    {
+        close();
+        return -1;
+    }
     apply_output_level();
     return 0;
 }
@@ -92,9 +98,9 @@ int CodecCompat::getVolume() const
 
 void CodecCompat::setGain(float db_value)
 {
-    // The P4 codec owner configures microphone gain when opening the session.
-    // Retain the service-level value so the common contract remains truthful.
-    gain_db_ = db_value;
+    if (!std::isfinite(db_value)) return;
+    const float gain = std::clamp(db_value, 0.0f, 42.0f);
+    if (!open_ || trail_mate_t_display_p4_audio_set_input_gain(owner_, gain)) gain_db_ = gain;
 }
 
 float CodecCompat::getGain() const

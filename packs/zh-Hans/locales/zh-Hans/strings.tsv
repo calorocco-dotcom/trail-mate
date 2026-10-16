@@ -828,3 +828,59 @@ No saved waypoints	没有已保存的航点
 Saved waypoint	已保存航点
 Waypoint unavailable	航点不可用
 Reticulum	Reticulum 网络
+Image memory unavailable	图片内存不足
+Image cache needs checking. Download again.	图片缓存需要核对，请重新下载。
+Off route %.0fm	偏离线路 %.0fm
+Route position unavailable	线路位置不可用
+Route storage unavailable	线路存储不可用
+Route: waiting for GPS	线路：等待定位
+Route position ambiguous	线路位置有多解
+Route end (estimated)	估计到达线路终点
+Route %u%% | %s left	线路 %u%% | 剩余 %s
+Matching route...	正在匹配线路…
+Distance %.0f m	距离 %.0f 米
+Distance %.1f km	距离 %.1f 公里
+Position unknown	位置未知
+Region unknown	行政区未知
+Location loading...	正在查询位置…
+Distance unknown	距离未知
+My position unknown	本机位置未知
+No nodes	暂无节点
+Old position	旧位置
+Contacts unavailable	联系人暂不可用
+Map Help	地图帮助
+Map layer: %s	地图图层：%s
+Show contours	显示等高线
+Hide contours	隐藏等高线
+Search POI	搜索兴趣点
+Load navigation	加载导航
+Load track	加载轨迹
+No saved navigation	暂无已保存的导航
+Help	帮助
+Menu	菜单
+Navigation	导航
+Nav	导航
+New navigation	新建导航
+Current location	当前位置
+Use current location	使用当前位置
+Choose destination	选择目的地
+Calculate route	计算路径
+Save and preview	保存并预览
+Calculating route...	正在计算路径…
+Route ready: %.1f km	路径已就绪：%.1f 公里
+No TMAP routing data	没有可用的 TMAP 路网数据
+No path found	未找到可通行路径
+Outside routing coverage	超出路网覆盖范围
+Navigation memory limit	导航计算超出内存限额
+Navigation unavailable	导航暂不可用
+Origin	起始地
+Destination	目的地
+Tap the origin to search for a place	点击起始地可搜索地名
+Search unavailable	暂时无法搜索地名
+Cancelled	已取消
+No team	暂无队伍成员
+View	浏览
+Current	当前
+Contours	等高线
+Load	加载
+Unload	卸载

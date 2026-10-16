@@ -11,7 +11,7 @@ const strictUtf8 = new TextDecoder('utf-8', {fatal: true});
 
 // Parse only CMP1 types, bounding collections BEFORE allocation. Re-encoding
 // enforces shortest integer/string/bin/array headers and rejects trailing data.
-export function decode(raw, limit = 8192) {
+export function decode(raw, limit = 8192, {allowBoolean = false} = {}) {
   if (!(raw instanceof Uint8Array) || !raw.length || raw.length > limit) throw Error('Invalid payload size');
   const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
   let offset = 0, elements = 0;
@@ -31,6 +31,9 @@ export function decode(raw, limit = 8192) {
     if (tag <= 0x7f) return tag;
     if (tag >= 0xe0) return tag - 256;
     if (tag === 0xc0) return null;
+    // HostLink management uses explicit consent booleans. Geocaching CMP1
+    // callers keep the restricted default and cannot opt in accidentally.
+    if (allowBoolean && (tag === 0xc2 || tag === 0xc3)) return tag === 0xc3;
     if ([0xcc, 0xcd, 0xce].includes(tag)) return uint(2 ** (tag - 0xcc));
     if ([0xd0, 0xd1, 0xd2].includes(tag)) {
       const count = 2 ** (tag - 0xd0), start = take(count);
@@ -56,7 +59,10 @@ export function decode(raw, limit = 8192) {
     return kind === 'string' ? strictUtf8.decode(data) : data;
   };
   const value = read(0);
-  if (offset !== raw.length || !equal(encode(value), raw)) throw Error('Noncanonical CMP1');
+  const canonical = encode(value);
+  try {
+    if (offset !== raw.length || !equal(canonical, raw)) throw Error('Noncanonical CMP1');
+  } finally { canonical.fill(0); }
   return value;
 }
 

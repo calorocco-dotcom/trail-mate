@@ -43,6 +43,17 @@ the resource-specific child contract for the Wi-Fi owner.
 | Reticulum gateway Wi-Fi connect | `platform::ui::wifi_access::ensure_connected` |
 | Reticulum gateway socket connect/pump/send | `wifi_access::acquire` and `wifi_access::traffic_budget` |
 
+## TLS Allocation Policy
+
+TLS allocator policy belongs to platform startup, before network clients or
+background services run. mbedTLS allocator hooks are process-wide and must not
+be installed or changed by an individual HTTP request. On PSRAM-equipped
+targets TLS allocations must remain external and fail normally if PSRAM is
+exhausted, preserving internal memory for radio, DMA and task stacks. Arduino
+uses the pinned SDK's allocator hook; native P4 IDF builds select the external
+mbedTLS allocation configuration. See the [ESP RAM audit](engineering/esp-ram-audit.md)
+for measured static allocations and the distinction from runtime heap peaks.
+
 ## Wi-Fi Connect Memory Gate
 
 Starting an ESP STA connection is a resource boundary, not a harmless retry.

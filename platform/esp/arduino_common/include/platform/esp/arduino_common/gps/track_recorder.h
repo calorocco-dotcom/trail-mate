@@ -5,10 +5,14 @@
 
 #include <Arduino.h>
 
+#include <atomic>
 #include <cstddef>
 
 namespace gps
 {
+static_assert(sizeof(std::atomic_bool) == sizeof(bool), "Recorder flags must retain their byte budget");
+static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t), "Recorder interval must retain its word budget");
+static_assert(sizeof(std::atomic<uint8_t>) == 1, "Deferred recorder settings require one byte each");
 
 struct TrackPoint
 {
@@ -41,6 +45,7 @@ class TrackRecorder
     void setIntervalSeconds(uint32_t seconds);
     void setDistanceOnly(bool enabled);
     void setFormat(TrackFormat format);
+    void applyPendingSettings();
 
     // Append a single point if recording is active and SD is ready.
     void appendPoint(const TrackPoint& pt);
@@ -48,6 +53,13 @@ class TrackRecorder
 
     // List GPX files under /trackers; returns count.
     size_t listTracks(String* out_names, size_t max_names) const;
+    // Nonblocking; shares the recording mutex with writers and future snapshots.
+    // Only a direct child of /trackers may be removed, never the live recording.
+    bool removeTrack(const char* path);
+    // Borrow the existing mutex; caller must release on the same task exactly
+    // once. Catalog reads allow recording; snapshots require it to be stopped.
+    bool tryAcquireRead(bool require_stopped);
+    void releaseRead();
 
     static constexpr const char* kTrackDir = "/trackers";
 
@@ -67,11 +79,14 @@ class TrackRecorder
     bool shouldAcceptPointLocked(const TrackPoint& pt, uint32_t now_ms) const;
     void markPointAcceptedLocked(const TrackPoint& pt, uint32_t now_ms);
     bool writePendingPointsLocked(bool force);
+    void applyPendingSettingsLocked();
+    void applyAutoRecordingLocked(bool enabled);
+    void applyFormatLocked(TrackFormat format);
 
     static constexpr size_t kPendingPointCapacity = 16;
 
     SemaphoreHandle_t mutex_ = xSemaphoreCreateMutex();
-    bool recording_ = false;
+    std::atomic_bool recording_{false};
     bool auto_recording_ = false;
     bool manual_recording_ = false;
     String current_path_{};
@@ -79,9 +94,13 @@ class TrackRecorder
     TrackPoint last_point_{};
     time_t last_point_time_ = 0;
     uint32_t last_point_ms_ = 0;
-    uint32_t min_interval_ms_ = 0;
-    bool distance_only_ = false;
+    std::atomic<uint32_t> min_interval_ms_{0};
+    std::atomic_bool distance_only_{false};
     TrackFormat format_ = TrackFormat::GPX;
+    // Latest requested settings survive a busy snapshot/writer. Load/store
+    // only: no read/modify/write atomic operations on the PSRAM recorder.
+    std::atomic<uint8_t> requested_format_{0xff};
+    std::atomic<uint8_t> requested_auto_recording_{0xff};
     TrackPoint pending_points_[kPendingPointCapacity]{};
     size_t pending_point_count_ = 0;
     uint32_t last_flush_ms_ = 0;

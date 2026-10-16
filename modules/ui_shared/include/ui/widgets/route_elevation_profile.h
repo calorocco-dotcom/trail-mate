@@ -1,9 +1,9 @@
 #pragma once
 
 #include "lvgl.h"
+#include "ui/support/route_image_memory.h"
 
 #include <cstddef>
-#include <vector>
 
 namespace ui::widgets::route_elevation_profile
 {
@@ -13,7 +13,9 @@ struct Sample
     double altitude_m = 0.0;
     double distance_m = 0.0;
     bool has_altitude = false;
+    bool break_before = false;
 };
+static_assert(sizeof(Sample) <= 24, "Segment flag must fit existing sample padding");
 
 struct Metrics
 {
@@ -40,7 +42,7 @@ struct Widget
     lv_obj_t* panel = nullptr;
     lv_obj_t* label = nullptr;
     lv_obj_t* line = nullptr;
-    std::vector<lv_point_precise_t> points{};
+    ::ui::support::RouteImageVector<lv_point_precise_t, 192> points{};
 };
 
 void reset(Widget& widget);

@@ -9,6 +9,30 @@
 namespace platform::ui::orientation
 {
 
+bool heading_supported()
+{
+#if defined(TRAIL_MATE_ESP_BOARD_TAB5) || defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool acquire_heading()
+{
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    return ::boards::t_display_p4::heading_runtime::acquire();
+#else
+    return false;
+#endif
+}
+void release_heading()
+{
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    ::boards::t_display_p4::heading_runtime::release();
+#endif
+}
+
 HeadingState get_heading()
 {
 #if defined(TRAIL_MATE_ESP_BOARD_TAB5)

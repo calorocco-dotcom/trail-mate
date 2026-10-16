@@ -44,16 +44,24 @@ struct AnnotationLayoutOptions
     static constexpr std::size_t kMaxCandidates = 192;
     static constexpr std::size_t kMaxPlacements = 48;
     int16_t width = 0, height = 0;
-    uint8_t max_labels = 32;
+    uint8_t max_labels = 45;
     uint8_t max_unnamed_markers = 6;
     uint8_t road_reservation = 8;
     uint8_t place_reservation = 2;
-    uint8_t poi_reservation = 12;
+    uint8_t poi_reservation = 17;
     uint8_t marker_size = 12;
     uint8_t padding = 2;
     uint8_t max_text_width = 128;
     uint8_t retention_bonus = 12;
 };
+
+// Approximately 40% more named annotations, within the existing 48-slot frame.
+constexpr uint8_t annotation_label_budget(int zoom)
+{
+    return zoom <= 6 ? 11 : zoom <= 11 ? 22
+                        : zoom <= 15   ? 34
+                                       : 45;
+}
 
 struct AnnotationLayoutResult
 {

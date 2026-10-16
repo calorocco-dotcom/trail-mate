@@ -24,6 +24,10 @@ namespace ui
 namespace widgets
 {
 
+// The active IME may temporarily focus a hidden candidate-routing proxy.
+// Global navigation/help must treat that proxy as owned text input.
+bool ime_owns_text_focus(lv_obj_t* object);
+
 // Transient UI recovery metadata. Text storage belongs to the caller; this is
 // not a persistent format and does not retain widgets or candidate collections.
 struct ImeEditState

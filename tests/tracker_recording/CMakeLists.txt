@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.20)
+project(TrackerRecordingTests LANGUAGES CXX)
+enable_testing()
+find_package(Threads REQUIRED)
+add_executable(tracker_recording test_runtime.cpp
+    ../../platform/esp/arduino_common/src/gps/track_recorder.cpp)
+target_include_directories(tracker_recording PRIVATE stubs
+    ../../platform/esp/arduino_common/include ../../modules/core_gps/include)
+target_compile_features(tracker_recording PRIVATE cxx_std_17)
+target_link_libraries(tracker_recording PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(tracker_recording PRIVATE /UNDEBUG)
+else()
+    target_compile_options(tracker_recording PRIVATE -UNDEBUG)
+endif()
+add_test(NAME tracker_deferred_settings COMMAND tracker_recording)

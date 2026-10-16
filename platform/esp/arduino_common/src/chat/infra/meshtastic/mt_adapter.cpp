@@ -575,6 +575,33 @@ bool MtAdapter::sendAppDataNow(ChannelId channel, uint32_t portnum,
         return false;
     }
 
+    if (portnum == meshtastic_PortNum_POSITION_APP)
+    {
+        const auto& app_config = app::configFacade().readConfig();
+        const bool secondary_position = out_channel == ChannelId::SECONDARY;
+        if (!runtime::MeshtasticPositionCore::applyChannelPrecision(
+                scratch.decoded,
+                secondary_position ? app_config.secondary_channel_has_module_settings
+                                   : app_config.primary_channel_has_module_settings,
+                secondary_position ? app_config.secondary_channel_position_precision
+                                   : app_config.primary_channel_position_precision))
+        {
+            last_send_error_ = meshtastic_Routing_Error_BAD_REQUEST;
+            return false;
+        }
+        // All routes (broadcast, channel direct, PKI and MQTT mirror) consume
+        // this same normalized payload, never the original coordinates.
+        payload = scratch.decoded.payload.bytes;
+        len = scratch.decoded.payload.size;
+        pb_ostream_t normalized = pb_ostream_from_buffer(data_buffer.data(), data_buffer.size());
+        if (!pb_encode(&normalized, meshtastic_Data_fields, &scratch.decoded))
+        {
+            last_send_error_ = meshtastic_Routing_Error_TOO_LARGE;
+            return false;
+        }
+        data_size = normalized.bytes_written;
+    }
+
     size_t wire_size = wire_buffer.size();
 
     uint8_t channel_hash =
@@ -743,17 +770,9 @@ bool MtAdapter::sendAppDataNow(ChannelId channel, uint32_t portnum,
             trackPendingAck(msg_id, dest_node, out_channel, channel_hash, wire_buffer.data(), wire_size);
         }
         auto& mqtt_data = scratch.decoded;
-        std::memset(&mqtt_data, 0, sizeof(mqtt_data));
-        mqtt_data.portnum = static_cast<meshtastic_PortNum>(portnum);
-        mqtt_data.want_response = effective_want_response;
         mqtt_data.dest = dest_node;
         mqtt_data.source = node_id_;
         mqtt_data.has_bitfield = true;
-        mqtt_data.payload.size = std::min(len, sizeof(mqtt_data.payload.bytes));
-        if (mqtt_data.payload.size > 0)
-        {
-            memcpy(mqtt_data.payload.bytes, payload, mqtt_data.payload.size);
-        }
         queueMqttProxyPublishFromWire(wire_buffer.data(), wire_size,
                                       use_pki ? nullptr : &mqtt_data,
                                       out_channel);
@@ -807,6 +826,19 @@ bool MtAdapter::sendMeshPacket(const meshtastic_MeshPacket& packet)
     data.dest = (packet.to != 0) ? packet.to : kBroadcastNodeId;
     data.source = node_id_;
     data.has_bitfield = true;
+
+    const auto& app_config = app::configFacade().readConfig();
+    const bool secondary_position = packet.channel == 1;
+    if (!runtime::MeshtasticPositionCore::applyChannelPrecision(
+            data,
+            secondary_position ? app_config.secondary_channel_has_module_settings
+                               : app_config.primary_channel_has_module_settings,
+            secondary_position ? app_config.secondary_channel_position_precision
+                               : app_config.primary_channel_position_precision))
+    {
+        last_send_error_ = meshtastic_Routing_Error_BAD_REQUEST;
+        return false;
+    }
 
     pb_ostream_t dstream = pb_ostream_from_buffer(data_buf.data(), data_buf.size());
     if (!pb_encode(&dstream, meshtastic_Data_fields, &data))
@@ -4032,6 +4064,13 @@ bool MtAdapter::initPkiKeys()
     {
         LORA_LOG("[LORA] PKI stored identity unavailable status=%u\n",
                  static_cast<unsigned>(loaded.failure));
+        if (loaded.failure != ::mesh::StoreFailure::NotFound)
+        {
+            memset(pki_public_key_.data(), 0, pki_public_key_.size());
+            memset(pki_private_key_.data(), 0, pki_private_key_.size());
+            pki_ready_ = false;
+            return false; // Corrupt or unreadable identity must not silently become a new account.
+        }
     }
 
     if (!have_keys)
@@ -4056,6 +4095,9 @@ bool MtAdapter::initPkiKeys()
             {
                 LORA_LOG("[LORA] PKI key persist failed status=%u\n",
                          static_cast<unsigned>(saved.failure));
+                memset(pki_public_key_.data(), 0, pki_public_key_.size());
+                memset(pki_private_key_.data(), 0, pki_private_key_.size());
+                have_keys = false;
             }
         }
     }

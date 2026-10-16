@@ -186,7 +186,10 @@ class ReplicaScheduler:
                 raise ValueError(f"unexpected_status_{status}")
             if request[2] == 0:
                 if (type(body) is not list or len(body) != 12 or body[0] != [1] or body[1] != [1]
-                        or body[2] != [0, 1, 2, 3, 4] or body[3:6] != [8192, 4096, 64]
+                        or type(body[2]) is not list or not 5 <= len(body[2]) <= 64
+                        or any(not integer(op, 0, 255) for op in body[2])
+                        or len(set(body[2])) != len(body[2]) or not set(range(5)).issubset(body[2])
+                        or body[3:6] != [8192, 4096, 64]
                         or not integer(body[6], 1, 604800) or body[7] != DEDUP_TTL
                         or body[8] != 2 or not text_valid(body[9], 40, nonempty=True)
                         or body[10] != 1 or body[11] < DEDUP_TTL):
