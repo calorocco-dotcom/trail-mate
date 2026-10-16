@@ -134,6 +134,7 @@ int main(int argc, char** argv)
     {
         if (runtime_test::ready_calls != 2) return; // First call belongs to Player construction.
         runtime_test::on_ready = nullptr;
+        assert(snapshot().playback == music::Playback::Paused);
         ++runtime_test::session;
         const auto out = snapshot();
         assert(out.playback == music::Playback::Stopped);

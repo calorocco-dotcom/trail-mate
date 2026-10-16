@@ -120,6 +120,9 @@ observable PSRAM/SD/audio ports. It verifies lazy task creation, idle volume,
 hidden-pause cleanup and a UI card-change snapshot interleaved with worker
 restore. That regression fails before the saved-record ownership transfer and
 passes afterward; storage work remains outside the publication mutex.
+Restore publishes the paused session before handing the record to the worker,
+so a simultaneous entry snapshot keeps Now Playing routing. Published snapshots
+are also scoped to their SD media session. The same test checks both conditions.
 Preview screenshots use explicit deterministic fixtures; they are not evidence
 of physical audio quality, bus timing, PSRAM peaks or real-device latency.
 

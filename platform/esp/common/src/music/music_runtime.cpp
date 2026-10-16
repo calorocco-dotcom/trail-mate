@@ -84,6 +84,7 @@ class Service final : public ::music::IService
     TaskHandle_t worker_ = nullptr;
     Runtime* runtime_ = nullptr;
     ::music::Snapshot* published_ = nullptr;
+    uint32_t published_session_ = 0;
     ::music::ResumeState* resume_ = nullptr;
     ::music::Artwork* artwork_ = nullptr;
     ::music::Request* requests_ = nullptr;
@@ -135,7 +136,11 @@ class Service final : public ::music::IService
         {
             Lock lock(*this);
             if (!published_) published_ = ::music::make<::music::Snapshot>();
-            if (published_) *published_ = runtime.player.state;
+            if (published_)
+            {
+                *published_ = runtime.player.state;
+                published_session_ = sd::sd_media_session();
+            }
             else failure_ = Failure::Memory;
             auto* art = runtime.player.artwork();
             if (art != artwork_)
@@ -192,6 +197,18 @@ class Service final : public ::music::IService
             // UI snapshot may invalidate its own saved session after a card change.
             if (resume_ && runtime->player.state.current.id == 0)
             {
+                // Publish the existing session before transferring it, so an
+                // entry snapshot cannot briefly route a paused user to Library.
+                if (!published_) published_ = ::music::make<::music::Snapshot>();
+                if (published_)
+                {
+                    published_->current = resume_->current;
+                    published_->position_ms = resume_->position_ms;
+                    published_->mode = resume_->mode;
+                    published_->playback = ::music::Playback::Paused;
+                    published_session_ = resume_->media_session;
+                }
+                else failure_ = Failure::Memory;
                 saved = resume_;
                 resume_ = nullptr;
             }
@@ -352,7 +369,7 @@ class Service final : public ::music::IService
         Lock lock(*this, pdMS_TO_TICKS(20));
         if (!lock) return false;
         if (resume_ && resume_->media_session != sd::sd_media_session()) ::music::destroy(resume_);
-        if (published_) out = *published_;
+        if (published_ && published_session_ == sd::sd_media_session()) out = *published_;
         else
         {
             using Snapshot = ::music::Snapshot;
