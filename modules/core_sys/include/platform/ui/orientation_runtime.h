@@ -41,6 +41,10 @@ struct ScreenOrientationState
 };
 
 HeadingState get_heading();
+// A view owns one balanced lease. Acquisition only schedules work; release
+// stops the P4 sampling worker after the last consumer leaves.
+bool acquire_heading();
+void release_heading();
 void ensure_heading_runtime();
 ScreenOrientationState get_screen_orientation();
 void ensure_screen_orientation_runtime();

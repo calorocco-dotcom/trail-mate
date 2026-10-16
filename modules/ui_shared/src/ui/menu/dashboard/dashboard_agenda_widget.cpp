@@ -1,3 +1,4 @@
+#include "platform/ui/agenda_widget_runtime.h"
 #include "ui/localization.h"
 #include "ui/menu/dashboard/dashboard_style.h"
 #include "ui/menu/dashboard/dashboard_widgets.h"
@@ -15,6 +16,11 @@ struct AgendaWidgetUi : WidgetLifetime
     DashboardCardChrome chrome{};
     lv_obj_t* text = nullptr;
     ui::agenda::IAgendaSource* source = nullptr;
+    bool owns_source = false;
+    ~AgendaWidgetUi()
+    {
+        if (owns_source) platform::ui::destroy_agenda_widget_source(source);
+    }
     ui::agenda::AgendaSnapshot snapshot{};
     uint32_t next_query = 0;
     char buffer[640]{};
@@ -71,6 +77,11 @@ WidgetHandle create_agenda_widget(lv_obj_t* parent, lv_coord_t width, lv_coord_t
     auto* state = create_widget_state<AgendaWidgetUi>();
     if (!state) return {};
     state->source = source;
+    if (!source)
+    {
+        state->source = platform::ui::create_agenda_widget_source();
+        state->owns_source = state->source != nullptr;
+    }
     state->chrome = create_card_chrome(parent, ui::i18n::tr("Agenda"), width, height);
     state->text = lv_label_create(state->chrome.body);
     style_body_label(state->text, &lv_font_montserrat_14, color_text());

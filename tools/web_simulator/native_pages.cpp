@@ -7,6 +7,7 @@
 #include "ui/screens/extensions/extensions_page_runtime.h"
 #include "ui/screens/gnss/gnss_skyplot_page_runtime.h"
 #include "ui/screens/gps/gps_page_runtime.h"
+#include "ui/screens/music/music_page_shell.h"
 #include "ui/screens/network/network_page_shell.h"
 #include "ui/screens/settings/settings_page_runtime.h"
 #include "ui/screens/sstv/sstv_page_runtime.h"
@@ -24,11 +25,15 @@ void preview_power_enter();
 void preview_power_exit();
 void preview_chat_enter(int page);
 void preview_chat_exit();
+void preview_bind_music();
 
 void preview_exit_page()
 {
     switch (current_page)
     {
+    case 19:
+        ui::music_page::exit(nullptr, lv_screen_active());
+        break;
     case 0:
         calculator::ui::runtime::exit(lv_screen_active());
         break;
@@ -93,6 +98,10 @@ extern "C" EMSCRIPTEN_KEEPALIVE void native_open_page(int page)
     if (page != 10 && page != 17 && page != 18) ui::menu_runtime::setScene(ui::menu_runtime::Scene::App);
     switch (page)
     {
+    case 19:
+        preview_bind_music();
+        ui::music_page::enter(nullptr, lv_screen_active());
+        break;
     case 0:
         calculator::ui::runtime::enter(nullptr, lv_screen_active());
         break;

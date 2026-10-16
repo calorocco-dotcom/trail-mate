@@ -1,4 +1,5 @@
 #include "platform/esp/idf_common/sx126x_radio.h"
+#include "platform/radio/radio_power.h"
 
 #include <algorithm>
 #include <cmath>
@@ -351,6 +352,7 @@ Sx126xRadio& Sx126xRadio::instance()
 
 bool Sx126xRadio::acquire()
 {
+    if (!platform::radio::power_policy().enabled()) return false;
 #if !defined(TRAIL_MATE_ESP_BOARD_TAB5) && !defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
     return false;
 #else
@@ -1113,6 +1115,7 @@ bool Sx126xRadio::configureFsk(float freq_mhz,
 
 bool Sx126xRadio::startReceive()
 {
+    if (!platform::radio::power_policy().enabled()) return false;
     if (!take_mutex(mutex_))
     {
         return false;
@@ -1128,15 +1131,16 @@ bool Sx126xRadio::startReceive()
     return ok;
 }
 
-void Sx126xRadio::standby()
+bool Sx126xRadio::standby()
 {
     if (!take_mutex(mutex_))
     {
-        return;
+        return false;
     }
     const uint8_t mode = kStandbyRc;
-    write_command_locked(kCmdSetStandby, &mode, 1, true);
+    const bool ok = write_command_locked(kCmdSetStandby, &mode, 1, true);
     give_mutex(mutex_);
+    return ok;
 }
 
 float Sx126xRadio::readRssi()
@@ -1153,6 +1157,7 @@ float Sx126xRadio::readRssi()
 
 int Sx126xRadio::startTransmit(const uint8_t* data, size_t size)
 {
+    if (!platform::radio::power_policy().enabled()) return -1;
     if (!take_mutex(mutex_))
     {
         return -1;

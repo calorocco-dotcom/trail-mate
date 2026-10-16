@@ -26,6 +26,8 @@ foreach(TEST power heading audio rtc haptic display)
     endif()
     add_test(NAME p4_${TEST} COMMAND p4_${TEST}_test)
 endforeach()
+target_sources(p4_audio_test PRIVATE "${REPO}/modules/core_sys/src/platform/audio/audio_focus.cpp")
+target_sources(p4_audio_test PRIVATE "${REPO}/platform/linux/common/src/platform/resource_lock.cpp")
 add_executable(p4_keyboard_availability_test test_keyboard_availability.cpp)
 target_include_directories(p4_keyboard_availability_test PRIVATE keyboard_fakes
     "${REPO}/platform/esp/idf_components/t_display_p4/include")

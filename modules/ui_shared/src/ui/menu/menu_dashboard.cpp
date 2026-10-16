@@ -1,4 +1,7 @@
 #include "ui/menu/menu_dashboard.h"
+#include "platform/ui/music_runtime.h"
+#include "platform/ui/quick_controls_runtime.h"
+#include "ui/menu/menu_layout.h"
 
 #if defined(TRAIL_MATE_ESP_BOARD_TAB5) || defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || defined(ARDUINO_T_DECK) || defined(ARDUINO_WIO_TRACKER_L2) || defined(ARDUINO_T_LORA_PAGER)
 #include "ui/app_runtime.h"
@@ -20,6 +23,8 @@ namespace
 constexpr uint32_t kDashboardTimerMs = 1000;
 constexpr lv_coord_t kPagerHeight = 24;
 ui::agenda::IAgendaSource* s_agenda_source = nullptr;
+ui::controls::IQuickControls* s_controls_source = nullptr;
+::music::IService* s_music_source = nullptr;
 
 bool dashboard_enabled()
 {
@@ -65,6 +70,10 @@ WidgetHandle create_widget(WidgetKind kind, lv_obj_t* parent, lv_coord_t width, 
         return create_compass_widget(parent, width, height);
     case WidgetKind::Agenda:
         return create_agenda_widget(parent, width, height, s_agenda_source);
+    case WidgetKind::Music:
+        return create_music_widget(parent, width, height, s_music_source ? s_music_source : platform::ui::music_service());
+    case WidgetKind::Controls:
+        return create_controls_widget(parent, width, height, s_controls_source ? s_controls_source : platform::ui::quick_controls_source());
     default:
         return {};
     }
@@ -172,6 +181,9 @@ void menu_pointer(lv_event_t* event)
     if (code == LV_EVENT_PRESSED)
     {
         state->pressed = false;
+        // A slider owns its complete drag, even when a page threshold is crossed.
+        for (auto* object = lv_indev_get_active_obj(); object; object = lv_obj_get_parent(object))
+            if (lv_obj_check_type(object, &lv_slider_class)) return;
         lv_area_t area;
         lv_obj_get_coords(ui::menu_layout::menuPanel(), &area);
         if (point.x < area.x1 || point.x > area.x2 || point.y < area.y1 || point.y > area.y2) return;
@@ -224,6 +236,8 @@ void panel_deleted(lv_event_t* event)
 } // namespace
 
 void bindAgendaSource(ui::agenda::IAgendaSource* source) { s_agenda_source = source; }
+void bindControlsSource(ui::controls::IQuickControls* source) { s_controls_source = source; }
+void bindMusicSource(::music::IService* source) { s_music_source = source; }
 
 bool isFeedOpen()
 {
@@ -246,6 +260,8 @@ bool handleKey(uint32_t key, bool at_left_edge)
         (lv_group_get_default() && lv_group_get_default() != menu_g)) return false;
     if (state->feed_open)
     {
+        for (auto& widget : state->widgets)
+            if (widget.key && widget.key(widget.state, key)) return true;
         if (key == 'w' || key == 'W' || key == LV_KEY_UP || key == LV_KEY_PREV) change_page(-1);
         else if (key == 's' || key == 'S' || key == LV_KEY_DOWN || key == LV_KEY_NEXT) change_page(1);
         else if (key == 'd' || key == 'D' || key == LV_KEY_RIGHT || key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) set_feed_open(false);

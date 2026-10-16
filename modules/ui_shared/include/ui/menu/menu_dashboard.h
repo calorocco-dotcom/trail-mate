@@ -2,11 +2,22 @@
 
 #include "lvgl.h"
 
-#include "ui/menu/menu_layout.h"
+namespace ui::menu_layout
+{
+struct InitOptions;
+}
 
 namespace ui::agenda
 {
 class IAgendaSource;
+}
+namespace ui::controls
+{
+class IQuickControls;
+}
+namespace music
+{
+class IService;
 }
 
 namespace ui::menu::dashboard
@@ -19,6 +30,8 @@ void refresh_localized_text();
 void setActive(bool active);
 // Target-owned read port; its lifetime must exceed the menu's lifetime.
 void bindAgendaSource(ui::agenda::IAgendaSource* source);
+void bindControlsSource(ui::controls::IQuickControls* source);
+void bindMusicSource(::music::IService* source);
 bool isFeedOpen();
 bool handleKey(uint32_t key, bool at_left_edge = false);
 bool handleEncoder(int delta);
@@ -43,6 +56,8 @@ inline void setActive(bool active)
     (void)active;
 }
 inline void bindAgendaSource(ui::agenda::IAgendaSource*) {}
+inline void bindControlsSource(ui::controls::IQuickControls*) {}
+inline void bindMusicSource(::music::IService*) {}
 inline bool isFeedOpen() { return false; }
 inline bool handleKey(uint32_t, bool = false) { return false; }
 inline bool handleEncoder(int) { return false; }

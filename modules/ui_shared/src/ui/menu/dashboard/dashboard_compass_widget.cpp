@@ -25,6 +25,11 @@ namespace
 
 struct CompassWidgetUi : WidgetLifetime
 {
+    bool heading_lease = false;
+    ~CompassWidgetUi()
+    {
+        if (heading_lease) platform::ui::orientation::release_heading();
+    }
     DashboardCardChrome chrome{};
     lv_obj_t* dial = nullptr;
     lv_obj_t* dial_ring = nullptr;
@@ -105,6 +110,7 @@ WidgetHandle create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord
     auto* memory = create_widget_state<CompassWidgetUi>();
     if (!memory) return {};
     auto& compass = *memory;
+    compass.heading_lease = platform::ui::orientation::acquire_heading();
     compass.chrome = create_card_chrome(parent, ::ui::i18n::tr("Mini Compass"), card_w, card_h);
 
     const lv_coord_t body_w = lv_obj_get_content_width(compass.chrome.body);

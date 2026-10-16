@@ -33,12 +33,39 @@ set(TRAILMATE_ESP_IDF_CORE_HOSTLINK_SOURCES
     "${TRAILMATE_ROOT}/modules/core_hostlink/src/c6_frame_codec.cpp")
 
 set(TRAILMATE_ESP_IDF_CORE_SYS_SOURCES
+    "${TRAILMATE_ROOT}/platform/esp/common/src/resource_lock.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/platform/audio/media_volume.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/platform/radio/radio_power.cpp"
+    "${TRAILMATE_ROOT}/modules/core_sys/src/platform/audio/audio_focus.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/app/app_facade_access.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/app/tms_config_codec.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/screen_power_state_machine.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/reticulum_call_runtime.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/sys/clock.cpp"
     "${TRAILMATE_ROOT}/modules/core_sys/src/platform/ui/timezone_profile.cpp")
+
+set(TRAILMATE_ESP_IDF_AGENDA_WIDGET_SOURCES
+    "${TRAILMATE_ROOT}/platform/esp/common/src/agenda_widget_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/storage/agenda_file_store.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/agenda_clock.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/agenda_query.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/agenda_service.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/event_codec.cpp"
+    "${TRAILMATE_ROOT}/modules/core_agenda/src/recurrence.cpp")
+
+set(TRAILMATE_ESP_IDF_CORE_MUSIC_SOURCES
+    "${TRAILMATE_ROOT}/platform/esp/common/src/quick_controls_runtime.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/catalog.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/decoder.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/id3.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/lyrics.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/player.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/playlists.cpp"
+    "${TRAILMATE_ROOT}/modules/core_music/src/storage.cpp"
+    "${TRAILMATE_ROOT}/modules/music_image/src/cover_decoder.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_audio.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_runtime.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/common/src/music/music_storage.cpp")
 
 set(TRAILMATE_ESP_IDF_CORE_DEVICE_SOURCES
     "${TRAILMATE_ROOT}/modules/core_device/src/device/capability_types.cpp")
@@ -163,6 +190,13 @@ set(TRAILMATE_ESP_IDF_CORE_PHONE_SOURCES
     "${TRAILMATE_ROOT}/modules/core_phone/src/meshtastic/meshtastic_phone_session.cpp")
 
 set(TRAILMATE_ESP_IDF_UI_SHARED_SOURCES
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/music.c"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_state.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_page_shell.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_page_input.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/screens/music/music_page_layout.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_controls_widget.cpp"
+    "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/menu/dashboard/dashboard_music_widget.cpp"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/Chat.c"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/alert.c"
     "${TRAILMATE_ROOT}/modules/ui_shared/src/ui/assets/AreaCleared.c"
@@ -641,6 +675,8 @@ set(TRAILMATE_ESP_IDF_FINAL_INCLUDE_DIRS
     "${TRAILMATE_ROOT}/modules/core_track_sharing/include"
     "${TRAILMATE_ROOT}/modules/core_sys/include"
     "${TRAILMATE_ROOT}/modules/core_agenda/include"
+    "${TRAILMATE_ROOT}/modules/core_music/include"
+    "${TRAILMATE_ROOT}/modules/music_image/include"
     "${TRAILMATE_ROOT}/modules/core_chat/include"
     "${TRAILMATE_ROOT}/modules/core_chat/generated"
     "${TRAILMATE_ROOT}/modules/core_chat/third_party/nanopb"

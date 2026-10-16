@@ -47,7 +47,7 @@ constexpr const char* kTag = "ui-menu-layout";
 #define MENU_LAYOUT_DIAG(...)
 #endif
 
-constexpr size_t kMaxMenuApps = 17;
+constexpr size_t kMaxMenuApps = 18;
 constexpr const char* kBottomHelpPlainPrefix = "H Help";
 constexpr const char* kBottomHelpRichPrefix = "#D6403A H#elp";
 
@@ -578,8 +578,8 @@ void menuButtonClickCallback(lv_event_t* e)
 #if defined(ESP_PLATFORM)
     ESP_LOGI(kTag, "direct app enter target=%s", target_app ? target_app->name() : "(null)");
 #endif
-    ui_switch_to_app(target_app, s_app_panel);
     menuHidden();
+    ui_switch_to_app(target_app, s_app_panel);
 }
 
 void positionChatBadge(lv_obj_t* badge, lv_obj_t* icon)
@@ -1377,8 +1377,9 @@ bool launchAppByStableId(const char* stable_id)
         }
 
         set_default_group(nullptr);
-        ui_switch_to_app(app, s_app_panel);
+        // Release widget subscriptions before the app attaches to a service.
         menuHidden();
+        ui_switch_to_app(app, s_app_panel);
         return ui_get_active_app() == app;
     }
     return false;

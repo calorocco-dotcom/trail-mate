@@ -16,11 +16,14 @@ namespace ui::agenda
 class IAgendaSource;
 }
 ui::agenda::IAgendaSource* preview_agenda_source();
+void preview_bind_controls();
+void preview_bind_music();
 static bool menu_created = false;
 static AppScreen* active_app = nullptr;
 static ui::AppCatalog catalog;
 static int page_for(const char* id)
 {
+    if (std::strcmp(id, "music") == 0) return 19;
     const char* ids[] = {"calculator", "sky_plot", "usb_mass_storage", "walkie_talkie", "sstv", "chat", "", "", "extensions", "network", "", "settings", "contacts", "team", "tracker", "map", "energy_sweep"};
     for (int i = 0; i < 17; ++i)
         if (std::strcmp(ids[i], id) == 0) return i;
@@ -29,6 +32,8 @@ static int page_for(const char* id)
 
 void preview_menu_enter()
 {
+    preview_bind_controls();
+    preview_bind_music();
     if (!menu_created)
     {
         auto* previous_group = app_g;

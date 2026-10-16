@@ -163,6 +163,7 @@ set(TRAIL_MATE_LINUX_COMMON_SOURCES
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/map_diagnostics.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/hostlink_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/lora_runtime.cpp"
+    "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/resource_lock.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/orientation_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/pack_repository_runtime.cpp"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}/platform/ui/route_storage.cpp"
@@ -560,6 +561,7 @@ set(TRAIL_MATE_LINUX_UI_SHELL_SOURCES
 # ---------------------------------------------------------------------------
 
 set(TRAIL_MATE_LINUX_COMMON_INCLUDES
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_music/include"
     "${TRAIL_MATE_LINUX_COMMON_INCLUDE_ROOT}"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}"
     "${TRAIL_MATE_CORE_CHAT_INCLUDE_ROOT}"
@@ -588,6 +590,7 @@ set(TRAIL_MATE_LINUX_COMMON_INCLUDES
 )
 
 set(TRAIL_MATE_LINUX_UI_SHELL_INCLUDES
+    "${TRAIL_MATE_REPO_ROOT}/modules/core_music/include"
     "${TRAIL_MATE_LINUX_COMMON_INCLUDE_ROOT}"
     "${TRAIL_MATE_LINUX_COMMON_SRC_ROOT}"
     "${TRAIL_MATE_CORE_CHAT_INCLUDE_ROOT}"

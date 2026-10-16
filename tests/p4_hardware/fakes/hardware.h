@@ -21,9 +21,11 @@ inline int64_t now_us = 0;
 inline bool power = true;
 inline int step = 0, fail_step = -1, live = 0, channel_live = 0;
 inline int sample_reads = 0;
+inline int heading_devices = 0, deleted_tasks = 0;
 inline size_t last_sample_size = 0;
 inline std::array<uint8_t, 9> sample{1, 100, 0, 0, 0, 0, 0, 8, 0};
 inline float gain = 0;
+inline int output_volume = 0;
 inline bool gain_ok = true;
 inline bool i2c_ok = true;
 inline int resets = 0;
@@ -49,6 +51,7 @@ using TaskHandle_t = void*;
 constexpr int pdPASS = 1, pdTRUE = 1;
 inline int pdMS_TO_TICKS(int value) { return value; }
 inline void vTaskDelay(int ms) { fake::now_us += static_cast<int64_t>(ms) * 1000; }
+inline void vTaskDelete(void*) { ++fake::deleted_tasks; }
 inline int xTaskCreate(void (*)(void*), const char*, int, void*, int, TaskHandle_t*) { return pdPASS; }
 struct StaticSemaphore_t
 {
@@ -69,6 +72,12 @@ struct i2c_device_config_t
 inline int i2c_master_bus_add_device(void*, const i2c_device_config_t* config, void** handle)
 {
     *handle = reinterpret_cast<void*>(static_cast<uintptr_t>(config->device_address));
+    ++fake::heading_devices;
+    return 0;
+}
+inline int i2c_master_bus_rm_device(void*)
+{
+    --fake::heading_devices;
     return 0;
 }
 inline int i2c_master_probe(void*, uint16_t, int) { return fake::i2c_ok ? 0 : -1; }
@@ -205,7 +214,11 @@ inline int esp_codec_dev_set_in_gain(codec_device*, float gain)
     fake::gain = gain;
     return fake::gain_ok ? 0 : -1;
 }
-inline int esp_codec_dev_set_out_vol(codec_device*, int) { return 0; }
+inline int esp_codec_dev_set_out_vol(codec_device*, int value)
+{
+    fake::output_volume = value;
+    return 0;
+}
 inline int esp_codec_dev_set_out_mute(codec_device*, bool) { return 0; }
 inline int esp_codec_dev_read(codec_device*, void* out, int bytes)
 {

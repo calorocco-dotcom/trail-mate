@@ -25,9 +25,9 @@ whole rows and centers them vertically between the top and bottom bars.
 | P4 right dashboard | Swipe left/right | Next/previous widget page |
 
 The negative screen shows exactly one widget: Mesh, GPS, Recent Activity,
-Compass or Agenda. Navigation stops at the first/last widget. P4 keeps the
+Compass, Agenda, Music or Quick controls. Navigation stops at the first/last widget. P4 keeps the
 left launcher and displays four status widgets on its first right-hand page,
-then Agenda on the second. Footer controls provide a visible alternative to
+then Agenda, Music and Quick controls on separate pages. Footer controls provide a visible alternative to
 gestures. Widget browsing does not activate a background launcher icon.
 
 A drag is owned by its original menu gesture until physical release. Leaving
@@ -44,11 +44,15 @@ sleep scenes and modal focus groups retain their own input ownership.
 - `menu_dashboard.cpp` owns selection, arrangement, gestures and one refresh
   timer. `dashboard_state.*` retains only this container's state in PSRAM.
 - Widgets read the existing GPS, messaging, mesh, orientation and Agenda ports.
-  They create no service tasks, persistent stores or duplicate background caches.
-- The target composition explicitly binds its `IAgendaSource`. T-Deck, L2 and
-  Pager bind the existing Agenda model. P4 currently has no Agenda composition;
-  its page reports that capability as unavailable until one is bound. Preview
-  Agenda data is supplied only by a test adapter, never by firmware.
+  They do not duplicate the background services. P4 heading uses a balanced
+  demand lease; the final visible consumer releases its sampling task/handles.
+- T-Deck, L2 and Pager bind the existing `IAgendaSource`. P4 creates a per-view,
+  read-only adapter over the same Agenda file store and query use cases. It
+  reads an existing `/agenda/events.dat` through the shared SD runtime, never
+  mounts, formats, creates or repairs a store, and rejects external USB ownership
+  or a changed media session. A missing file means an empty Agenda; corruption
+  and I/O failure remain errors. This does not add a P4 Calendar editor or a
+  second reminder service. Preview data comes only from a test adapter.
 
 The container creates only visible widgets. Closing the negative screen,
 changing a widget/page, or entering an app deletes those controls. Root DELETE
@@ -84,6 +88,12 @@ LVGL, repeated destruction and explicit PSRAM failure. It separately compiles
 the production IDF allocator and checks that even small allocations and failed
 reallocations obey the external-memory policy.
 
+The P4 Agenda adapter is tested with records produced by the actual storage
+codec/service. Its fake shared-SD port deliberately has no write or mount API.
+The test verifies strict PSRAM failure, missing/corrupt files, USB ownership,
+removal, a card change during a query, successful retry and no retained handles
+or adapter allocation after destruction.
+
 `tests/site/menu-widgets-native.test.mjs` compiles/runs the real production UI
 for Pager, T-Deck, L2 and both P4 panels. It checks adaptive columns, contextual
 encoder behavior, touch/key navigation, one visible widget, hidden-query
@@ -103,6 +113,9 @@ describing a nonexistent magnetometer as still warming up.
 
 Physical touch thresholds, encoder direction, internal/PSRAM heap peaks and
 rendering latency still require device acceptance under live service load.
+
+Music and quick-controls ownership, supported formats, resource limits and
+failure semantics are documented in [Music and device controls](music.md).
 
 ## Actual LVGL captures
 

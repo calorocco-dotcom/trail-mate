@@ -67,6 +67,7 @@ enum Seen : uint32_t
     SeenGaugeFull = 1UL << 15U,
     SeenWifiEnabled = 1UL << 16U,
     SeenWifiCount = 1UL << 17U,
+    SeenRadioEnabled = 1UL << 18U,
 };
 
 constexpr uint32_t kRequiredBase = SeenScreenTimeout | SeenBrightness | SeenSpeakerVolume |
@@ -100,6 +101,7 @@ struct ParseState
     uint32_t gauge_design_mah = 1500U;
     uint32_t gauge_full_mah = 1500U;
     bool wifi_enabled = false;
+    bool radio_enabled = true;
     uint8_t wifi_profile_count = 0U;
     bool wifi_ssid_seen[::platform::ui::wifi::kMaxSavedProfileCount]{};
     bool wifi_password_seen[::platform::ui::wifi::kMaxSavedProfileCount]{};
@@ -964,6 +966,12 @@ tms::RecordConsumeResult consumeRecord(void*, const tms::RecordReader& reader)
                    ? tms::RecordConsumeResult::Accepted
                    : tms::RecordConsumeResult::Invalid;
     }
+    if (key_equals(reader, "radio.enabled"))
+    {
+        return mark_once(SeenRadioEnabled) && reader.boolean(&s_state.radio_enabled)
+                   ? tms::RecordConsumeResult::Accepted
+                   : tms::RecordConsumeResult::Invalid;
+    }
     if (key_equals(reader, "wifi.profile_count"))
     {
         return mark_once(SeenWifiCount) &&
@@ -1079,6 +1087,7 @@ bool write_base_scalar_settings()
     return unsigned_integer(kSettingsNs, "screen_timeout", s_state.screen_timeout_ms) &&
            integer(kSettingsNs, "screen_brightness", s_state.screen_brightness) &&
            integer(kSettingsNs, "speaker_volume", s_state.speaker_volume) &&
+           (!(s_state.seen & SeenRadioEnabled) || boolean(kSettingsNs, "radio_enabled", s_state.radio_enabled)) &&
            boolean(kSettingsNs, "vibration_enabled", s_state.vibration_enabled) &&
            integer(kSettingsNs, "timezone_profile", s_state.timezone_profile) &&
            integer(kSettingsNs, "timezone_offset", s_state.timezone_offset_minutes) &&
@@ -1201,6 +1210,7 @@ bool writeRecords(void* context, tms::RecordWriter& writer)
                            "screen_brightness", ::platform::ui::device::screen_brightness()) ||
         !write_i32_setting(writer, "ui.audio.speaker_volume", kSettingsNs,
                            "speaker_volume", 45) ||
+        !write_bool_setting(writer, "radio.enabled", kSettingsNs, "radio_enabled", true) ||
         !write_bool_setting(writer, "ui.haptics.vibration_enabled", kSettingsNs,
                             "vibration_enabled", true) ||
         !write_text_setting(writer,

@@ -1431,7 +1431,14 @@ bool stop_wifi_runtime(const char* success_message)
     if (s_runtime.wifi_started)
     {
         (void)esp_wifi_disconnect();
-        (void)esp_wifi_stop();
+        const auto stopped = esp_wifi_stop();
+        if (stopped != ESP_OK && stopped != ESP_ERR_WIFI_NOT_INIT)
+        {
+            set_status_message("Wi-Fi driver could not stop");
+            return false;
+        }
+        s_runtime.wifi_started = false;
+        clear_connection_details();
     }
     if (s_runtime.wifi_initialized)
     {
@@ -1440,6 +1447,10 @@ bool stop_wifi_runtime(const char* success_message)
         {
             std::printf("[WiFi] esp_wifi_deinit failed err=0x%x\n",
                         static_cast<unsigned>(deinit_err));
+            // Keep the initialization flag and reserve truthful so a retry
+            // can finish cleanup instead of allocating a second Wi-Fi owner.
+            set_status_message("Wi-Fi driver cleanup failed");
+            return false;
         }
         else
         {
@@ -1653,6 +1664,29 @@ bool apply_enabled(bool enabled)
         (void)connect(nullptr);
     }
     return true;
+}
+
+bool set_user_enabled(bool enabled)
+{
+    const auto access = ::platform::ui::wifi_access::status();
+    if (!is_supported() || s_runtime.externally_suspended || access.non_preemptible_active ||
+        access.ota_active || access.exclusive_owner != ::platform::ui::wifi_access::ExclusiveOwner::None)
+        return false;
+    Config previous{};
+    if (!load_config(previous)) return false;
+    const auto persist = [](bool value)
+    {
+        ::platform::ui::settings_store::put_bool(kSettingsNs, kWifiEnabledKey, value);
+        if (::platform::ui::settings_store::get_bool(kSettingsNs, kWifiEnabledKey, !value) != value) return false;
+        s_runtime.config.enabled = value;
+        s_runtime.config_cached = true;
+        return true;
+    };
+    if (!persist(enabled)) return false;
+    if (apply_enabled(enabled)) return true;
+    (void)persist(previous.enabled);
+    (void)apply_enabled(previous.enabled);
+    return false;
 }
 
 bool suspend_for_external_storage(ExternalStorageSuspension* out_suspension)

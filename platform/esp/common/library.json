@@ -9,6 +9,9 @@
     "srcDir": "src"
   },
   "dependencies": [
+    { "name": "ui_presentation" },
+    { "name": "core_music" },
+    { "name": "music_image" },
     { "name": "core_waypoint" },
     {
       "name": "core_agenda"

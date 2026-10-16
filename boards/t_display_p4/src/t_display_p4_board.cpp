@@ -1473,6 +1473,11 @@ bool TDisplayP4Board::isRadioOnline() const
     return ensureRadioReady() && radio().isOnline();
 }
 
+bool TDisplayP4Board::quiesceForExternalStorage()
+{
+    return !radio().isOnline() || radio().standby();
+}
+
 int TDisplayP4Board::transmitRadio(const uint8_t* data, size_t len)
 {
     if (!ensureRadioReady())

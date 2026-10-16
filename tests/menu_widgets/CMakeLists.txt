@@ -36,7 +36,20 @@ endif()
 target_link_options(widget_allocator_link PRIVATE "-Wl,--undefined=${WIDGET_ALLOCATOR_LINK_SYMBOL}")
 add_executable(widget_orientation test_orientation.cpp "${REPO}/platform/esp/arduino_common/src/platform_ui_orientation_runtime.cpp")
 target_include_directories(widget_orientation PRIVATE "${REPO}/modules/core_sys/include")
-foreach(TARGET widget_ownership widget_idf_allocator widget_allocator_link widget_orientation)
+add_executable(agenda_widget test_agenda_widget.cpp
+    "${REPO}/platform/esp/common/src/agenda_widget_runtime.cpp"
+    "${REPO}/platform/esp/common/src/storage/agenda_file_store.cpp"
+    "${REPO}/platform/esp/arduino_common/src/agenda_clock.cpp"
+    "${REPO}/modules/core_agenda/src/agenda_query.cpp"
+    "${REPO}/modules/core_agenda/src/agenda_service.cpp"
+    "${REPO}/modules/core_agenda/src/event_codec.cpp"
+    "${REPO}/modules/core_agenda/src/recurrence.cpp")
+target_include_directories(agenda_widget PRIVATE agenda_fakes fakes
+    "${REPO}/modules/core_sys/include" "${REPO}/modules/core_agenda/include"
+    "${REPO}/modules/ui_presentation/include" "${REPO}/platform/esp/common/include"
+    "${REPO}/platform/esp/arduino_common/include")
+target_compile_definitions(agenda_widget PRIVATE ESP_PLATFORM=1 TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4=1)
+foreach(TARGET widget_ownership widget_idf_allocator widget_allocator_link widget_orientation agenda_widget)
     if(MSVC)
         target_compile_options(${TARGET} PRIVATE /UNDEBUG)
     else()

@@ -33,6 +33,8 @@ add_executable(${PREVIEW_TARGET}
   preview_platform.cpp
   preview_sensors.cpp
   preview_agenda.cpp
+  preview_music.cpp
+  preview_controls.cpp
   preview_facade.cpp
   preview_status.cpp
   preview_extensions.cpp
@@ -118,6 +120,7 @@ target_include_directories(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_chat/include"
   "${REPO_ROOT}/modules/core_gps/include"
   "${REPO_ROOT}/modules/core_agenda/include"
+  "${REPO_ROOT}/modules/core_music/include"
   "${REPO_ROOT}/modules/core_track_sharing/include"
   "${REPO_ROOT}/modules/core_geocaching/include"
   "${REPO_ROOT}/third_party/yxml"
@@ -127,6 +130,8 @@ target_compile_options(${PREVIEW_TARGET} PRIVATE -O2)
 target_compile_definitions(${PREVIEW_TARGET} PRIVATE LV_CONF_INCLUDE_SIMPLE TRAIL_MATE_LORA_TX_POWER_MAX_DBM=22 ${BOARD_DEFINITION}=1)
 target_link_libraries(${PREVIEW_TARGET} PRIVATE lvgl)
 file(GLOB DASHBOARD_WIDGET_SOURCES "${UI}/menu/dashboard/*.cpp")
+file(GLOB MUSIC_UI_SOURCES "${UI}/screens/music/*.cpp")
+target_sources(${PREVIEW_TARGET} PRIVATE ${MUSIC_UI_SOURCES})
 target_sources(${PREVIEW_TARGET} PRIVATE "${UI}/menu/menu_dashboard.cpp" ${DASHBOARD_WIDGET_SOURCES}
   preview_p4_dashboard.cpp
   "${UI}/presentation_sources/runtime_mesh_status_source.cpp"
@@ -185,6 +190,10 @@ target_sources(${PREVIEW_TARGET} PRIVATE ${CORE_TEAM_SOURCES} ${EXTRA_VIEW_SOURC
   "${REPO_ROOT}/modules/core_chat/src/infra/reticulum/reticulum_wire.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/team_ui_store_runtime.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/tracker_runtime.cpp"
+  "${REPO_ROOT}/platform/linux/common/src/platform/ui/music_runtime.cpp"
+    "${REPO_ROOT}/platform/linux/common/src/platform/ui/agenda_widget_runtime.cpp"
+    "${REPO_ROOT}/platform/linux/common/src/platform/resource_lock.cpp"
+    "${REPO_ROOT}/platform/linux/common/src/platform/ui/quick_controls_runtime.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/route_storage.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/linux/runtime_paths.cpp"
   "${REPO_ROOT}/platform/linux/common/src/platform/ui/firmware_update_runtime.cpp"

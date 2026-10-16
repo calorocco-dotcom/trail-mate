@@ -1,6 +1,7 @@
 #include "bsp/trail_mate_t_display_p4_runtime.h"
 
 #include "boards/t_display_p4/t_display_p4_board.h"
+#include "platform/audio/audio_focus.h"
 
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
@@ -45,6 +46,27 @@ struct AudioRuntime
 };
 
 AudioRuntime s_audio{};
+platform::audio::FocusToken s_audio_focus;
+struct FocusReservation
+{
+    platform::audio::FocusToken token;
+    bool allowed = false;
+    explicit FocusReservation(trail_mate_t_display_p4_audio_owner_t owner)
+    {
+        if (owner == TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_MUSIC)
+        {
+            allowed = !platform::audio::music_blocked();
+            return;
+        }
+        using platform::audio::FocusOwner;
+        const auto kind = owner == TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_WALKIE ? FocusOwner::Walkie : owner == TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_RETICULUM_CALL ? FocusOwner::Call
+                                                                                                 : owner == TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_SSTV             ? FocusOwner::Sstv
+                                                                                                                                                                 : FocusOwner::Notification;
+        token = platform::audio::request_focus(kind);
+        allowed = bool(token);
+    }
+    ~FocusReservation() { platform::audio::release_focus(token); }
+};
 
 SemaphoreHandle_t audio_mutex()
 {
@@ -231,6 +253,15 @@ extern "C" bool trail_mate_t_display_p4_audio_begin(
         return false;
     }
 
+    {
+        AudioLock lock;
+        if (!lock) return false;
+        if (s_audio.owner == owner) return s_audio.sample_rate_hz == sample_rate_hz;
+        if (s_audio.owner != TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NONE && s_audio.owner != TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_MUSIC) return false;
+    }
+    // Suspend the music worker before taking the codec lock it needs to close its session.
+    FocusReservation focus(owner);
+    if (!focus.allowed) return false;
     AudioLock lock;
     if (!lock || !initialize_audio_locked())
     {
@@ -258,15 +289,18 @@ extern "C" bool trail_mate_t_display_p4_audio_begin(
         return false;
     }
 
+    const uint8_t hardware_volume = owner == TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_MUSIC ? 100 : s_audio.volume_percent;
     if (esp_codec_dev_set_in_gain(s_audio.codec, kMicrophoneGainDb) != ESP_CODEC_DEV_OK ||
-        esp_codec_dev_set_out_vol(s_audio.codec, s_audio.volume_percent) != ESP_CODEC_DEV_OK ||
-        esp_codec_dev_set_out_mute(s_audio.codec, s_audio.volume_percent == 0) != ESP_CODEC_DEV_OK)
+        esp_codec_dev_set_out_vol(s_audio.codec, hardware_volume) != ESP_CODEC_DEV_OK ||
+        esp_codec_dev_set_out_mute(s_audio.codec, hardware_volume == 0) != ESP_CODEC_DEV_OK)
     {
         (void)esp_codec_dev_close(s_audio.codec);
         return false;
     }
     s_audio.owner = owner;
     s_audio.sample_rate_hz = sample_rate_hz;
+    s_audio_focus = focus.token;
+    focus.token = {};
     ESP_LOGI(kTag,
              "session begin owner=%u rate=%lu volume=%u",
              static_cast<unsigned>(owner),
@@ -287,17 +321,23 @@ extern "C" bool trail_mate_t_display_p4_audio_set_input_gain(
 extern "C" void trail_mate_t_display_p4_audio_end(
     trail_mate_t_display_p4_audio_owner_t owner)
 {
-    AudioLock lock;
-    if (!lock || !owner_active_locked(owner))
+    platform::audio::FocusToken focus;
     {
-        return;
-    }
+        AudioLock lock;
+        if (!lock || !owner_active_locked(owner))
+        {
+            return;
+        }
 
-    (void)esp_codec_dev_set_out_mute(s_audio.codec, true);
-    (void)esp_codec_dev_close(s_audio.codec);
-    s_audio.owner = TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NONE;
-    s_audio.sample_rate_hz = 0;
-    ESP_LOGI(kTag, "session end owner=%u", static_cast<unsigned>(owner));
+        (void)esp_codec_dev_set_out_mute(s_audio.codec, true);
+        (void)esp_codec_dev_close(s_audio.codec);
+        s_audio.owner = TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NONE;
+        s_audio.sample_rate_hz = 0;
+        focus = s_audio_focus;
+        s_audio_focus = {};
+        ESP_LOGI(kTag, "session end owner=%u", static_cast<unsigned>(owner));
+    }
+    platform::audio::release_focus(focus);
 }
 
 extern "C" bool trail_mate_t_display_p4_audio_read_mono(
@@ -385,9 +425,17 @@ extern "C" void trail_mate_t_display_p4_audio_set_volume_percent(uint8_t volume_
     }
 
     s_audio.volume_percent = volume_percent > 100U ? 100U : volume_percent;
-    if (s_audio.ready && s_audio.owner != TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NONE)
+    if (s_audio.ready && s_audio.owner != TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NONE && s_audio.owner != TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_MUSIC && s_audio.owner != TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_RETICULUM_CALL)
     {
         (void)esp_codec_dev_set_out_vol(s_audio.codec, s_audio.volume_percent);
         (void)esp_codec_dev_set_out_mute(s_audio.codec, s_audio.volume_percent == 0);
     }
+}
+
+extern "C" bool trail_mate_t_display_p4_audio_set_session_volume(trail_mate_t_display_p4_audio_owner_t owner, uint8_t volume_percent)
+{
+    AudioLock lock;
+    if (!lock || !s_audio.ready || owner == TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NONE || s_audio.owner != owner) return false;
+    const auto volume = std::min<uint8_t>(volume_percent, 100);
+    return esp_codec_dev_set_out_vol(s_audio.codec, volume) == ESP_CODEC_DEV_OK && esp_codec_dev_set_out_mute(s_audio.codec, volume == 0) == ESP_CODEC_DEV_OK;
 }

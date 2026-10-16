@@ -13,6 +13,8 @@
 
 namespace platform::ui::orientation
 {
+bool acquire_heading() { return true; }
+void release_heading() {}
 static HeadingState preview_heading{};
 HeadingState get_heading() { return preview_heading; }
 ScreenOrientationState get_screen_orientation()

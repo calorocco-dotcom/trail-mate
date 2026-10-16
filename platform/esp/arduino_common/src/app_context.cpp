@@ -21,6 +21,7 @@
 #include "platform/esp/arduino_common/memory_diag.h"
 #include "platform/esp/arduino_common/storage/storage_runtime.h"
 #include "platform/esp/arduino_common/voice/vmp_pager_session.h"
+#include "platform/ui/quick_controls_runtime.h"
 #include "platform/ui/reticulum_call_runtime.h"
 #include "platform/ui/reticulum_directory_runtime.h"
 #include "sys/event_bus.h"
@@ -974,6 +975,7 @@ void AppContext::getEffectiveUserInfo(char* out_long, size_t long_len,
 
 void AppContext::updateCoreServices()
 {
+    ::platform::ui::service_quick_controls();
     flushConfigPersistence(millis());
 #if defined(ARDUINO_T_LORA_PAGER) || defined(ARDUINO_T_DECK) || defined(ARDUINO_WIO_TRACKER_L2)
     // Text and VMP attachments share the deferred-storage readiness boundary.

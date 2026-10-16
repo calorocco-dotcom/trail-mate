@@ -24,5 +24,15 @@ int main()
     fake::sample[8] = 0;
     assert(ensure_sensor_ready() && sample_once());
     assert(get_data().available);
+    assert(acquire() && acquire());
+    assert(g_runtime.consumers == 2 && g_runtime.started);
+    release();
+    assert(g_runtime.consumers == 1 && get_data().available);
+    release();
+    const auto reads = fake::sample_reads;
+    task_main(nullptr); // Drive the final-consumer cleanup through production code.
+    assert(!g_runtime.started && !g_runtime.task && !get_data().available);
+    assert(!g_runtime.icm && !g_runtime.magnetometer && fake::heading_devices == 0);
+    assert(fake::sample_reads == reads && fake::deleted_tasks == 1 && fake::power);
     std::cout << "P4 magnetometer ST2, overflow and stale recovery passed\n";
 }

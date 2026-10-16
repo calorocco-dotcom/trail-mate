@@ -6,6 +6,7 @@
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/esp/common/shared_spi_coordinator.h"
+#include "platform/radio/radio_power.h"
 #include "sys/bus_access_scope.h"
 #include <Wire.h>
 #include <ctime>
@@ -1102,6 +1103,7 @@ bool TDeckBoard::syncTimeFromGPS(uint32_t gps_task_interval_ms)
 
 int TDeckBoard::transmitRadio(const uint8_t* data, size_t len)
 {
+    if (!platform::radio::power_policy().enabled()) return RADIOLIB_ERR_SPI_WRITE_FAILED;
     const uint32_t timeout_ms = radio_tx_timeout_ms(radio_, len);
     int rc = RADIOLIB_ERR_SPI_WRITE_FAILED;
     if (withSharedSpiRadioAccess("radio_tx", pdMS_TO_TICKS(50), [&]()
@@ -1141,6 +1143,7 @@ int TDeckBoard::transmitRadio(const uint8_t* data, size_t len)
 
 int TDeckBoard::startRadioReceive()
 {
+    if (!platform::radio::power_policy().enabled()) return RADIOLIB_ERR_SPI_WRITE_FAILED;
     int rc = RADIOLIB_ERR_SPI_WRITE_FAILED;
     if (withSharedSpiRadioAccess("radio_rx", pdMS_TO_TICKS(50), [&]()
                                  { rc = radio_.startReceive(); }))

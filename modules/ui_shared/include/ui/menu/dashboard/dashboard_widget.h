@@ -16,6 +16,8 @@ enum class WidgetKind : uint8_t
     Recent,
     Compass,
     Agenda,
+    Music,
+    Controls,
     Count
 };
 struct WidgetHandle
@@ -25,6 +27,7 @@ struct WidgetHandle
     void (*refresh)(void*) = nullptr;
     uint32_t period_ms = 1000;
     uint32_t next_refresh_ms = 0;
+    bool (*key)(void*, uint32_t) = nullptr;
 };
 inline void* widget_allocate(std::size_t bytes)
 {

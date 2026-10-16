@@ -101,6 +101,16 @@ static void append_json_string(const char* value)
 static void collect_labels(lv_obj_t* obj)
 {
     if (!lv_obj_is_visible(obj)) return;
+    if (lv_obj_check_type(obj, &lv_slider_class))
+    {
+        lv_area_t area;
+        lv_obj_get_coords(obj, &area);
+        char data[220];
+        std::snprintf(data, sizeof(data), "%s{\"slider\":true,\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"value\":%d}",
+                      snapshot.size() > 1 ? "," : "", static_cast<int>(area.x1), static_cast<int>(area.y1),
+                      static_cast<int>(lv_area_get_width(&area)), static_cast<int>(lv_area_get_height(&area)), static_cast<int>(lv_slider_get_value(obj)));
+        snapshot += data;
+    }
     if (lv_obj_check_type(obj, &lv_textarea_class))
     {
         lv_area_t area;
@@ -192,6 +202,7 @@ extern "C"
     }
     EMSCRIPTEN_KEEPALIVE void native_key(int key)
     {
+        if (preview_current_page() == 10 && ui::menu::dashboard::handleKey(key)) return;
         if (key == LV_KEY_ENTER && preview_current_page() == 10)
         {
             auto* group = input_group();

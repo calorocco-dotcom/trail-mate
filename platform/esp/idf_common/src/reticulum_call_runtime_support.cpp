@@ -10,7 +10,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
@@ -37,6 +39,8 @@ volatile bool s_incoming_tone_stop_requested = false;
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
 constexpr auto kCallOwner = TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_RETICULUM_CALL;
 constexpr auto kNotificationOwner = TRAIL_MATE_T_DISPLAY_P4_AUDIO_OWNER_NOTIFICATION;
+std::atomic<uint8_t> s_call_volume{100};
+uint8_t call_volume() { return s_call_volume.load(); }
 
 bool media_supported()
 {
@@ -71,8 +75,8 @@ uint8_t speaker_volume()
 void set_backend_volume(uint8_t volume_percent)
 {
     const uint8_t volume = volume_percent > 100U ? 100U : volume_percent;
-    ::boards::t_display_p4::TDisplayP4Board::instance().setMessageToneVolume(volume);
-    trail_mate_t_display_p4_audio_set_volume_percent(volume);
+    s_call_volume.store(volume);
+    (void)trail_mate_t_display_p4_audio_set_session_volume(kCallOwner, volume);
 }
 #else
 bool media_supported()
@@ -103,6 +107,7 @@ uint8_t speaker_volume()
 {
     return 0;
 }
+uint8_t call_volume() { return 0; }
 
 void set_backend_volume(uint8_t)
 {
@@ -263,7 +268,7 @@ void ensure_registered()
     audio_backend.close = close_call_audio;
     audio_backend.read_mono = read_call_audio;
     audio_backend.write_mono = write_call_audio;
-    audio_backend.speaker_volume = speaker_volume;
+    audio_backend.speaker_volume = call_volume;
     audio_backend.set_speaker_volume = set_backend_volume;
     if (!::platform::esp::common::reticulum_call_audio::install_backend(audio_backend))
     {
@@ -283,7 +288,13 @@ void ensure_registered()
 
 void set_speaker_volume(uint8_t volume_percent)
 {
-    set_backend_volume(volume_percent);
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    const auto volume = std::min<uint8_t>(volume_percent, 100);
+    ::boards::t_display_p4::TDisplayP4Board::instance().setMessageToneVolume(volume);
+    trail_mate_t_display_p4_audio_set_volume_percent(volume);
+#else
+    (void)volume_percent;
+#endif
 }
 
 bool play_message_notification()
