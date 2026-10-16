@@ -161,6 +161,23 @@ to peers without sleeping an extra RTOS tick after every frame. Compressed input
 is refilled in batches using the existing 8 KiB PSRAM window, rather than seeking
 and reading the SD card after each frame. Neither change adds a task, DMA buffer
 or internal-RAM audio queue. Runtime and decoder regressions cover both rules.
+While the output is open, that same worker temporarily runs at priority 5 so a
+ready UI render cannot delay the producer until its DMA queue empties. Closing,
+pausing or yielding audio focus restores the previous priority; failed opens
+never acquire it. Library-only work retains its original low priority. A host
+scheduler model reproduces starvation with a 30 ms competing UI render before
+the fix and verifies uninterrupted feeding and priority release afterward. This
+model is a regression check, not a measured hardware latency result.
+Playback control reads, volume observer updates, optional artwork checks and
+snapshot publication never wait on the UI mutex while output is active. A busy
+UI retains its last snapshot; queued commands/properties remain pending for the
+next admitted frame. Ordinary progress publication is limited to 10 Hz, with
+prompt publication for commands and playback transitions. Active playback does
+not take the idle-cleanup lock. An additional regression reproduces starvation
+from a 30 ms snapshot owner even after raising priority, then verifies skipped
+publication/control admission without losing Pause or visibility changes.
+On L2 the same worker is pinned to core 0, separate from the board's core-1
+Arduino UI loop. Both the generic ESP and L2 paths run the runtime regression.
 
 On L2, a music rate transition silences the amplifier and clears the DMA queue,
 sets the I2S clock, then configures and reads back ES8311 slave/16-bit/I2S/MCLK
@@ -169,6 +186,18 @@ and driver-reported rate. Closing playback reports the maximum producer gap and
 the number of gaps exceeding the entire DMA queue (11.6 ms at 44.1 kHz).
 Those counters diagnose definite starvation, but a zero count does not establish
 gap-free output or analog sound quality. Physical MP3 listening remains required.
+
+L2 fixes the ES8311 DAC volume register (0x32) at 0xBF, exactly 0 dB, and verifies
+the write on initialization and after codec reconfiguration. User volume scales
+PCM once. The installed audio-driver's logarithmic `setVolume(75)` maps to 0xE2
+(+17.5 dB), which clipped ordinary music despite a moderate user volume. It is
+not a neutral 75% stage. See the [ES8311 User Guide, section 11.3](https://files.waveshare.com/wiki/common/ES8311.user.Guide.pdf).
+The same unity stage applies when returning to notification/received-voice audio.
+
+The bundled LVGL TJpgDec fork emits BGR888 for `JD_FORMAT=0`. Music converts that
+order into native RGB565 once; display transport swapping is independent. JPEG
+and PNG color-bar fixtures now check actual channel values, in addition to the
+existing geometry, cancellation and allocation checks.
 
 ## Actual LVGL captures
 

@@ -37,7 +37,10 @@ int jpeg_output(JDEC* decoder, void* bitmap, JRECT* rect)
     auto& self = *static_cast<JpegWorkspace*>(decoder->device);
     auto& art = *self.art;
     if (self.pump && ++self.blocks % 16 == 0 && !self.pump(self.context)) return 0;
-    const auto* rgb = static_cast<const uint8_t*>(bitmap);
+    // LVGL's TJpgDec fork emits BGR888 for JD_FORMAT=0 (unlike upstream).
+    // Convert to native RGB565 here; display byte swapping belongs to flush.
+    static_assert(JD_FORMAT == 0, "Music JPEG adapter requires LVGL BGR888 output");
+    const auto* bgr = static_cast<const uint8_t*>(bitmap);
     const uint32_t block_w = rect->right - rect->left + 1;
     // Map destination centres into this MCU. Original aspect ratio is retained.
     const uint32_t first_y = static_cast<uint32_t>(rect->top) * art.height / decoder->height;
@@ -53,7 +56,7 @@ int jpeg_output(JDEC* decoder, void* bitmap, JRECT* rect)
             const uint32_t sx = (2 * x + 1) * decoder->width / (2 * art.width);
             if (sx < rect->left || sx > rect->right) continue;
             const auto at = ((sy - rect->top) * block_w + sx - rect->left) * 3;
-            art.pixels[y * art.width + x] = rgb565(rgb[at], rgb[at + 1], rgb[at + 2]);
+            art.pixels[y * art.width + x] = rgb565(bgr[at + 2], bgr[at + 1], bgr[at]);
         }
     }
     return 1;

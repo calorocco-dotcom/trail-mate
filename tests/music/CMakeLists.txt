@@ -13,6 +13,10 @@ target_include_directories(music_tags PRIVATE . "${LVGL_DIR}" "${REPO}/modules/c
 target_compile_definitions(music_tags PRIVATE LV_CONF_INCLUDE_SIMPLE LODEPNG_NO_COMPILE_DISK LODEPNG_NO_COMPILE_ENCODER)
 target_compile_options(music_tags PRIVATE -UNDEBUG -Wall -Wextra -fstack-usage)
 enable_testing()
+add_executable(es8311_gain test_es8311_gain.cpp)
+target_include_directories(es8311_gain PRIVATE "${REPO}/platform/esp/wio_tracker_l2/include")
+target_compile_options(es8311_gain PRIVATE -UNDEBUG)
+add_test(NAME es8311_gain COMMAND es8311_gain)
 add_executable(media_volume test_media_volume.cpp "${REPO}/modules/core_sys/src/platform/audio/media_volume.cpp")
 target_include_directories(media_volume PRIVATE "${REPO}/modules/core_sys/include")
 target_compile_options(media_volume PRIVATE -UNDEBUG)
@@ -79,3 +83,11 @@ target_include_directories(music_runtime PRIVATE runtime_fakes .
 target_compile_definitions(music_runtime PRIVATE ESP_PLATFORM=1 TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4=1)
 target_compile_options(music_runtime PRIVATE -UNDEBUG -O2)
 add_test(NAME music_runtime COMMAND music_runtime "${REPO}/docs/sound/call.mp3")
+get_target_property(MUSIC_RUNTIME_SOURCES music_runtime SOURCES)
+add_executable(music_runtime_l2 ${MUSIC_RUNTIME_SOURCES})
+target_include_directories(music_runtime_l2 PRIVATE runtime_fakes .
+    "${REPO}/modules/core_music/include" "${REPO}/modules/music_image/include"
+    "${REPO}/modules/core_sys/include")
+target_compile_definitions(music_runtime_l2 PRIVATE ESP_PLATFORM=1 ARDUINO_WIO_TRACKER_L2=1)
+target_compile_options(music_runtime_l2 PRIVATE -UNDEBUG -O2)
+add_test(NAME music_runtime_l2 COMMAND music_runtime_l2 "${REPO}/docs/sound/call.mp3")

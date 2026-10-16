@@ -28,6 +28,8 @@ class Output final : public ::music::AudioOutput
 {
     AudioState& shared_;
     TickType_t last_write_ = 0;
+    UBaseType_t previous_priority_ = 0;
+    bool priority_raised_ = false;
 
   public:
     explicit Output(AudioState& state) : shared_(state) {}
@@ -38,6 +40,15 @@ class Output final : public ::music::AudioOutput
     {
         shared_.opening.store(true);
         const bool opened = !blocked() && audio_begin(rate);
+        if (opened)
+        {
+            // UI rendering must not preempt the producer until its short DMA
+            // queue empties. The existing task blocks in audio_write, leaving
+            // CPU time for UI; scanning/paused sessions keep their old priority.
+            previous_priority_ = uxTaskPriorityGet(nullptr);
+            priority_raised_ = previous_priority_ < tskIDLE_PRIORITY + 5;
+            if (priority_raised_) vTaskPrioritySet(nullptr, tskIDLE_PRIORITY + 5);
+        }
         shared_.active.store(opened);
         shared_.opening.store(false);
         return opened;
@@ -52,6 +63,11 @@ class Output final : public ::music::AudioOutput
     {
         audio_end();
         shared_.active.store(false);
+        if (priority_raised_)
+        {
+            priority_raised_ = false;
+            vTaskPrioritySet(nullptr, previous_priority_);
+        }
     }
 };
 class Images final : public ::music::ImageLoader
@@ -119,7 +135,14 @@ class Service final : public ::music::IService
             xTaskNotifyGive(worker_);
             return;
         }
-        if (xTaskCreate(task, "music", 4096, this, tskIDLE_PRIORITY + 1, &worker_) != pdPASS)
+#if defined(ARDUINO_WIO_TRACKER_L2)
+        // L2's Arduino UI loop runs on core 1. Keep decoding and I2S producer
+        // work on core 0, using the same worker and stack as before.
+        const auto created = xTaskCreatePinnedToCore(task, "music", 4096, this, tskIDLE_PRIORITY + 1, &worker_, 0);
+#else
+        const auto created = xTaskCreate(task, "music", 4096, this, tskIDLE_PRIORITY + 1, &worker_);
+#endif
+        if (created != pdPASS)
         {
             worker_ = nullptr;
             failure_ = Failure::Task;
@@ -130,18 +153,25 @@ class Service final : public ::music::IService
         static_cast<Service*>(context)->run();
         vTaskDelete(nullptr);
     }
-    void publish(Runtime& runtime)
+    bool publish(Runtime& runtime)
     {
         ::music::Artwork* old = nullptr;
         {
-            Lock lock(*this);
+            // UI readers may keep the previous snapshot. Audio must never
+            // wait for them while the hardware is consuming its DMA queue.
+            Lock lock(*this, audio_.active.load() ? 0 : portMAX_DELAY);
+            if (!lock) return false;
             if (!published_) published_ = ::music::make<::music::Snapshot>();
             if (published_)
             {
                 *published_ = runtime.player.state;
                 published_session_ = sd::sd_media_session();
             }
-            else failure_ = Failure::Memory;
+            else
+            {
+                failure_ = Failure::Memory;
+                return false;
+            }
             auto* art = runtime.player.artwork();
             if (art != artwork_)
             {
@@ -151,6 +181,7 @@ class Service final : public ::music::IService
             }
         }
         if (old) old->drop();
+        return true;
     }
     Runtime* finish_locked()
     {
@@ -216,25 +247,32 @@ class Service final : public ::music::IService
         if (saved) runtime->player.restore_resume(*saved);
         ::music::destroy(saved);
         runtime->player.state.volume = volume_.load();
+        bool visible = false, lyrics = false, publication_pending = true;
+        uint8_t rows = 0;
+        uint16_t edge = 0;
+        TickType_t last_publication = 0;
+        auto published_playback = ::music::Playback::Stopped;
         for (;;)
         {
-            bool command = false, visible = false, lyrics = false;
-            uint8_t rows = 0;
-            uint16_t edge = 0;
+            bool command = false, properties_changed = false;
             {
-                Lock lock(*this);
-                visible = visible_;
-                rows = rows_;
-                lyrics = lyrics_;
-                edge = edge_.load();
-                if (count_)
+                Lock lock(*this, audio_.active.load() ? 0 : portMAX_DELAY);
+                if (lock)
                 {
-                    runtime->command = requests_[read_];
-                    read_ = (read_ + 1) % 8;
-                    --count_;
-                    command = true;
+                    visible = visible_;
+                    rows = rows_;
+                    lyrics = lyrics_;
+                    edge = edge_.load();
+                    if (count_)
+                    {
+                        runtime->command = requests_[read_];
+                        read_ = (read_ + 1) % 8;
+                        --count_;
+                        command = true;
+                    }
+                    properties_changed = properties_dirty_;
+                    properties_dirty_ = false;
                 }
-                properties_dirty_ = false;
             }
             runtime->player.attach(visible ? rows : 0);
             runtime->player.request_artwork(visible ? edge : 0);
@@ -256,8 +294,20 @@ class Service final : public ::music::IService
             }
             runtime->player.state.volume = volume_.load();
             runtime->player.tick();
-            publish(*runtime);
             const bool active = runtime->player.active();
+            const auto now = xTaskGetTickCount();
+            publication_pending |= command || properties_changed || runtime->player.state.playback != published_playback;
+            // PCM has its own hardware clock. Cached UI state needs at most
+            // 10 Hz; commands and playback transitions are published promptly.
+            if (publication_pending || !audio_.active.load() || pdTICKS_TO_MS(now - last_publication) >= 100)
+            {
+                if (publish(*runtime))
+                {
+                    last_publication = now;
+                    published_playback = runtime->player.state.playback;
+                    publication_pending = false;
+                }
+            }
             if (runtime->volume_dirty && !active && !::platform::audio::music_blocked() && (!visible || pdTICKS_TO_MS(xTaskGetTickCount() - runtime->volume_changed) >= 500))
             {
                 ::platform::ui::settings_store::put_int("settings", "speaker_volume", volume_.load());
@@ -265,9 +315,10 @@ class Service final : public ::music::IService
             }
             Runtime* retired = nullptr;
             bool finished = false;
+            if (!active)
             {
                 Lock lock(*this);
-                if (!active && !runtime->volume_dirty && !count_ && !properties_dirty_)
+                if (!runtime->volume_dirty && !count_ && !properties_dirty_)
                 {
                     retired = finish_locked();
                     finished = true;
@@ -308,7 +359,7 @@ class Service final : public ::music::IService
         auto& self = *static_cast<Service*>(context);
         percent = ::platform::audio::media_volume(percent);
         self.volume_.store(percent);
-        Lock lock(self, pdMS_TO_TICKS(20));
+        Lock lock(self, self.audio_.active.load() ? 0 : pdMS_TO_TICKS(20));
         if (!lock) return;
         if (self.published_) self.published_->volume = percent;
         if (self.resume_) self.resume_->volume = percent;
@@ -328,7 +379,7 @@ class Service final : public ::music::IService
     bool artwork_wanted(uint16_t edge)
     {
         if (edge_.load() != edge) return false;
-        Lock lock(*this, pdMS_TO_TICKS(5));
+        Lock lock(*this, audio_.active.load() ? 0 : pdMS_TO_TICKS(5));
         return lock && visible_ && count_ == 0;
     }
     uint8_t volume() const override { return volume_.load(); }

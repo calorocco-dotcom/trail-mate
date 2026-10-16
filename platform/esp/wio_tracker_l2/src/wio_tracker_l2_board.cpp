@@ -4,6 +4,7 @@
 #include "platform/audio/audio_focus.h"
 #include "platform/esp/arduino_common/storage/sd_card_runtime.h"
 #include "platform/esp/common/memory_budget.h"
+#include "platform/esp/wio_tracker_l2/es8311_output_gain.h"
 #include "platform/radio/radio_power.h"
 #include "platform/ui/screen_runtime.h"
 
@@ -96,6 +97,15 @@ bool readBytes(uint8_t address, uint8_t reg, uint8_t* data, size_t size)
     }
     for (size_t index = 0; index < size; ++index) data[index] = Wire.read();
     return true;
+}
+
+bool setCodecUnityGain()
+{
+    return audio::configure_unity_gain(
+        [](uint8_t reg, uint8_t value)
+        { return writeByte(0x18, reg, value); },
+        [](uint8_t reg, uint8_t& value)
+        { return readBytes(0x18, reg, &value, 1); });
 }
 
 bool writeExpanderWord(uint8_t reg, uint16_t value)
@@ -754,7 +764,7 @@ bool WioTrackerL2Board::initializeAudio()
     codec_config.output_device = audio_driver::DAC_OUTPUT_ALL;
     codec_config.i2s.bits = audio_driver::BIT_LENGTH_16BITS;
     codec_config.i2s.rate = audio_driver::RATE_16K;
-    const bool ready = s_codec.begin(codec_config, s_codec_pins) && s_codec.setVolume(75);
+    const bool ready = s_codec.begin(codec_config, s_codec_pins) && setCodecUnityGain();
     Wire.setClock(i2c::kFrequencyHz);
     if (!ready) i2s_driver_uninstall(I2S_NUM_0);
     return ready;
@@ -914,10 +924,10 @@ bool WioTrackerL2Board::beginMusic(uint32_t rate)
         if (i2c && clocked && std::abs(actual_rate - static_cast<float>(rate)) <= rate / 100.0F)
         {
             uint8_t reset = 0, format = 0, clock = 0;
-            configured = s_codec.setConfig(config) && s_codec.setVolume(75) &&
+            configured = s_codec.setConfig(config) && setCodecUnityGain() &&
                          readBytes(0x18, 0x00, &reset, 1) && readBytes(0x18, 0x09, &format, 1) && readBytes(0x18, 0x01, &clock, 1) &&
                          !(reset & 0x40) && (format & 0x5F) == 0x0C && !(clock & 0x80);
-            Serial.printf("[WioL2] music requested=%luHz actual=%.1fHz ES8311 reset=%02x format=%02x clock=%02x ready=%u\n",
+            Serial.printf("[WioL2] music requested=%luHz actual=%.1fHz ES8311 reset=%02x format=%02x clock=%02x ready=%u dac_target=0dB\n",
                           static_cast<unsigned long>(rate), actual_rate, reset, format, clock, configured);
         }
     }
@@ -978,7 +988,7 @@ void WioTrackerL2Board::endMusic()
         if (i2c)
         {
             (void)s_codec.setConfig(config);
-            (void)s_codec.setVolume(75);
+            (void)setCodecUnityGain();
         }
     }
     Serial.printf("[WioL2] music writes=%lu late=%lu max_gap=%luus dma_budget=%luus\n",

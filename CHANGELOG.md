@@ -55,6 +55,8 @@ and no final release has been published.
 
 - Product documentation introduces device-owned identity, decentralized Geocaching and trail sharing alongside navigation and communication.
 - Music content labels use the installed content font for CJK titles, artists, albums, lyrics and playlists. Compass widgets are filtered by magnetometer capability, without starting absent hardware or leaving empty pages.
+- L2 uses a verified 0 dB ES8311 DAC stage instead of the library's +17.5 dB boost. JPEG covers convert LVGL's BGR output correctly; register-I/O and color-bar regressions cover both fixes.
+- Active music avoids waiting on UI state locks, publishes cached progress at 10 Hz, and temporarily outranks rendering. L2 reuses its worker on core 0 alongside the core-1 UI. Contending-reader and UI-load regressions verify uninterrupted feeding, priority restoration and retained commands without adding an audio task or buffer.
 - Continuous Music playback reuses its PSRAM read-ahead window for batched SD reads and yields without an extra per-frame sleep. L2 music transitions silence the amplifier, validate I2S/ES8311 settings and report producer starvation diagnostics; physical listening verification remains pending.
 - Configuration controls show meanings, ranges and units instead of unexplained numbers. Brightness/audio use percentages and satellite masks have understandable choices.
 - Browser publication guides signing, network publication and device confirmation in one operation while preserving unconfirmed work.

@@ -143,6 +143,26 @@ int main(int argc, char** argv)
         if (std::strstr(name, "landscape")) assert(art->height == 48);
         art->drop();
     }
+    for (const auto* name : {"color-bars.jpg", "color-bars.png"})
+    {
+        frames.clear();
+        frame(frames, "APIC", picture(file(std::string(argv[1]) + "/" + name), 3, std::strstr(name, "png") ? "image/png" : "image/jpeg"));
+        input.bytes = tag(frames);
+        assert(parser->read(input, *track, page));
+        art = music::decode_cover(input, *track, 64, result);
+        assert(art && result == music::CoverResult::Ready && art->width == 64 && art->height == 32);
+        const uint16_t expected[] = {0xF800, 0x07E0, 0x001F, 0xFFFF};
+        for (unsigned index = 0; index < 4; ++index)
+        {
+            const auto pixel = art->pixels[16 * art->width + index * 16 + 8];
+            // JPEG quantization may lose a few low bits; channels must retain
+            // the same ordering as the lossless PNG and the RGB565 display.
+            assert(std::abs(int(pixel >> 11) - int(expected[index] >> 11)) <= 1);
+            assert(std::abs(int((pixel >> 5) & 63) - int((expected[index] >> 5) & 63)) <= 1);
+            assert(std::abs(int(pixel & 31) - int(expected[index] & 31)) <= 1);
+        }
+        art->drop();
+    }
     frames.clear();
     frame(frames, "TIT2", Bytes{1, 0xff, 0xfe, 0x2d, 0x4e, 0x87, 0x65, 0, 0});
     input.bytes = tag(frames, 3);
