@@ -17,6 +17,7 @@
 #include "sys/clock.h"
 #include "ui/LV_Helper.h"
 #include "ui/app_runtime.h"
+#include "ui/input/pager_navigation.h"
 #include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/support/lvgl_fs_utils.h"
@@ -1177,6 +1178,7 @@ static void lv_encoder_read(lv_indev_t* drv, lv_indev_data_t* data)
     // Screen is awake, process input normally
     if (msg.dir != ROTARY_DIR_NONE || msg.centerBtnPressed)
     {
+        ::ui::input::pager::prepare_group(lv_indev_get_group(drv));
         ::platform::ui::screen::record_activity();
     }
 
@@ -1195,6 +1197,11 @@ static void lv_encoder_read(lv_indev_t* drv, lv_indev_data_t* data)
         break;
     }
     if (::ui::menu::dashboard::handleEncoder(data->enc_diff)) data->enc_diff = 0;
+    if (::ui::menu::dashboard::handleEncoderButton(msg.centerBtnPressed))
+    {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
     if (msg.centerBtnPressed)
     {
         data->state = LV_INDEV_STATE_PRESSED;
@@ -1271,6 +1278,14 @@ static void keypad_read(lv_indev_t* drv, lv_indev_data_t* data)
     }
 
     // Screen is awake, process input normally
+    if (state == KEYBOARD_PRESSED) ::ui::input::pager::prepare_group(lv_indev_get_group(drv));
+    if (::ui::input::pager::handle_key(key, state == KEYBOARD_PRESSED, lv_indev_get_group(drv)))
+    {
+        ::platform::ui::screen::record_activity();
+        if (state == KEYBOARD_PRESSED) plane->feedback((void*)drv);
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
     if (!from_nav && (state == KEYBOARD_PRESSED || state == KEYBOARD_RELEASED))
     {
         AppScreen* active_app = ui_get_active_app();

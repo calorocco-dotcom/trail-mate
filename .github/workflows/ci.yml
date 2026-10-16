@@ -654,6 +654,7 @@ jobs:
           node tests/site/compass-capability-native.test.mjs
           MUSIC_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/music-native-ui.test.mjs
           node tests/site/music-widget-refresh-native.test.mjs
+          WIDGET_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/pager-input-native.test.mjs
           MUSIC_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/music-cjk-native.test.mjs
           WIDGET_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/quick-controls-native.test.mjs
           node tests/site/settings-catalog-native.test.mjs

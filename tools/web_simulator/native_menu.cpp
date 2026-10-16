@@ -24,10 +24,25 @@ static ui::AppCatalog catalog;
 static int page_for(const char* id)
 {
     if (std::strcmp(id, "music") == 0) return 19;
+    if (std::strcmp(id, "geocaching") == 0) return 20;
     const char* ids[] = {"calculator", "sky_plot", "usb_mass_storage", "walkie_talkie", "sstv", "chat", "", "", "extensions", "network", "", "settings", "contacts", "team", "tracker", "map", "energy_sweep"};
     for (int i = 0; i < 17; ++i)
         if (std::strcmp(ids[i], id) == 0) return i;
     return -1;
+}
+
+void preview_select_page(int page)
+{
+    active_app = nullptr;
+    for (size_t i = 0; i < ui::catalogCount(catalog); ++i)
+    {
+        auto* app = ui::catalogAt(catalog, i);
+        if (page_for(app->stable_id()) == page || (page >= 5 && page <= 7 && !std::strcmp(app->stable_id(), "chat")))
+        {
+            active_app = app;
+            break;
+        }
+    }
 }
 
 void preview_menu_enter()

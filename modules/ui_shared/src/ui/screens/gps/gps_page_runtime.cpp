@@ -249,6 +249,7 @@ lv_obj_t* s_map_notice_label = nullptr;
 lv_obj_t* s_map_context_rail = nullptr;
 lv_obj_t* s_map_route_btn = nullptr;
 lv_obj_t* s_map_help_modal = nullptr;
+lv_obj_t* s_map_help_previous_focus = nullptr;
 lv_obj_t* s_tracker_modal = nullptr;
 bool s_map_help_open_pending = false;
 bool s_map_refresh_pending = false;
@@ -3567,11 +3568,17 @@ void close_map_help_modal()
             lv_group_add_obj(app_g, s_top_bar.back_btn);
         }
         add_map_controls_to_group(app_g);
-        if (s_map_help_btn)
+        if (s_map_help_previous_focus && lv_obj_is_valid(s_map_help_previous_focus) &&
+            lv_obj_get_group(s_map_help_previous_focus) == app_g)
+        {
+            lv_group_focus_obj(s_map_help_previous_focus);
+        }
+        else if (s_map_help_btn)
         {
             lv_group_focus_obj(s_map_help_btn);
         }
     }
+    s_map_help_previous_focus = nullptr;
 }
 
 void on_map_help_modal_key(lv_event_t* e)
@@ -3623,6 +3630,7 @@ void open_map_help_modal()
         return;
     }
 
+    s_map_help_previous_focus = app_g ? lv_group_get_focused(app_g) : nullptr;
     const auto frame = ::ui::components::dialog_frame::create(s_root,
                                                               {"Map Help", 304, 216, [](lv_event_t*)
                                                                { close_map_help_modal(); },

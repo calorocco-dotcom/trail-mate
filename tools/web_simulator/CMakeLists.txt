@@ -28,6 +28,17 @@ set(UI "${REPO_ROOT}/modules/ui_shared/src/ui")
 function(add_native_preview PREVIEW_TARGET BOARD_DEFINITION OUTPUT_NAME)
 add_executable(${PREVIEW_TARGET}
   native_runtime.cpp
+  "${UI}/input/pager_navigation.cpp"
+  "${UI}/screens/agenda/agenda_state.cpp"
+  "${UI}/screens/agenda/agenda_page_shell.cpp"
+  "${UI}/screens/agenda/agenda_page_runtime.cpp"
+  "${UI}/screens/agenda/agenda_page_input.cpp"
+  "${UI}/screens/agenda/agenda_page_components.cpp"
+  "${UI}/screens/agenda/agenda_editor_runtime.cpp"
+  "${UI}/screens/agenda/agenda_editor_components.cpp"
+  "${REPO_ROOT}/modules/core_agenda/src/recurrence.cpp"
+  "${REPO_ROOT}/modules/core_agenda/src/event_codec.cpp"
+  "${REPO_ROOT}/modules/core_waypoint/src/waypoint.cpp"
   "${UI}/screens/common/placeholder_page.cpp"
   native_pages.cpp
   native_menu.cpp
@@ -125,6 +136,7 @@ target_include_directories(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_chat/include"
   "${REPO_ROOT}/modules/core_gps/include"
   "${REPO_ROOT}/modules/core_agenda/include"
+  "${REPO_ROOT}/modules/core_waypoint/include"
   "${REPO_ROOT}/modules/core_music/include"
   "${REPO_ROOT}/modules/core_track_sharing/include"
   "${REPO_ROOT}/modules/core_geocaching/include"

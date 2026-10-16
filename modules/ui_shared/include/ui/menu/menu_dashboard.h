@@ -35,6 +35,7 @@ void bindMusicSource(::music::IService* source);
 bool isFeedOpen();
 bool handleKey(uint32_t key, bool at_left_edge = false);
 bool handleEncoder(int delta);
+bool handleEncoderButton(bool pressed);
 #else
 inline void init(lv_obj_t* menu_panel, lv_obj_t* grid_panel, const ui::menu_layout::InitOptions& options)
 {
@@ -61,6 +62,7 @@ inline void bindMusicSource(::music::IService*) {}
 inline bool isFeedOpen() { return false; }
 inline bool handleKey(uint32_t, bool = false) { return false; }
 inline bool handleEncoder(int) { return false; }
+inline bool handleEncoderButton(bool) { return false; }
 #endif
 
 } // namespace ui::menu::dashboard

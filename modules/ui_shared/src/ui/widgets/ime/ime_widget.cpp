@@ -354,6 +354,11 @@ extern "C" bool ui_ime_is_active()
     return s_active_ime != nullptr;
 }
 
+bool ime_owns_text_focus(lv_obj_t* object)
+{
+    return object && s_active_ime && s_active_ime->focus_obj() == object;
+}
+
 void ImeWidget::init(lv_obj_t* parent, lv_obj_t* textarea, bool force_touch_keyboard)
 {
     editor_keyboard_ = force_touch_keyboard;

@@ -1,4 +1,5 @@
 #include "ui/localization.h"
+#include "ui/menu/dashboard/dashboard_key_focus.h"
 #include "ui/menu/dashboard/dashboard_style.h"
 #include "ui/menu/dashboard/dashboard_widgets.h"
 #include "ui_presentation/controls/quick_controls.h"
@@ -11,11 +12,12 @@ namespace
 {
 struct ControlsWidget : WidgetLifetime
 {
+    DashboardKeyFocus focus{};
     DashboardCardChrome chrome{};
     ui::controls::IQuickControls* source = nullptr;
     ui::controls::Snapshot snapshot{};
     lv_obj_t *switches[3]{}, *names[3]{}, *status[3]{};
-    lv_obj_t *sliders[2]{}, *values[2]{}, *message = nullptr;
+    lv_obj_t *sliders[2]{}, *values[2]{}, *message = nullptr, *hint = nullptr;
     bool applying = false;
 };
 lv_obj_t* caption(lv_obj_t* parent, const char* text, lv_coord_t x, lv_coord_t y, lv_coord_t w, bool muted = false)
@@ -49,7 +51,9 @@ void refresh_controls(void* context)
                                                                                        : on                                              ? "On"
                                                                                                                                          : "Off";
         changed(self.status[i], ui::i18n::tr(text));
-        lv_obj_set_style_bg_color(self.switches[i], on ? color_soft_amber() : color_panel_bg(), 0);
+        const auto background = on ? color_soft_amber() : color_panel_bg();
+        if (lv_color_to_int(lv_obj_get_style_bg_color(self.switches[i], LV_PART_MAIN)) != lv_color_to_int(background))
+            lv_obj_set_style_bg_color(self.switches[i], background, 0);
         if (enabled) lv_obj_remove_state(self.switches[i], LV_STATE_DISABLED);
         else lv_obj_add_state(self.switches[i], LV_STATE_DISABLED);
     }
@@ -69,6 +73,9 @@ void refresh_controls(void* context)
     changed(self.message, data.message);
     if (data.message[0]) lv_obj_remove_flag(self.message, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(self.message, LV_OBJ_FLAG_HIDDEN);
+    self.focus.ensure();
+    if (self.hint)
+        changed(self.hint, self.focus.editing ? "A/D adjust  Enter done  W/S wheel widgets  V menu" : "A/D select  Enter edit  W/S wheel widgets  V menu");
 }
 void switch_event(lv_event_t* event)
 {
@@ -99,6 +106,32 @@ void slider_event(lv_event_t* event)
 bool controls_key(void* context, uint32_t key)
 {
     auto& self = *static_cast<ControlsWidget*>(context);
+#if defined(ARDUINO_T_LORA_PAGER)
+    const bool left = key == 'a' || key == 'A' || key == LV_KEY_LEFT;
+    const bool right = key == 'd' || key == 'D' || key == LV_KEY_RIGHT;
+    if (left || right || key == LV_KEY_ENTER)
+    {
+        if (key == LV_KEY_ENTER)
+        {
+            if (self.focus.available(self.focus.selected))
+            {
+                if (self.focus.selected < 3) lv_obj_send_event(self.focus.current(), LV_EVENT_CLICKED, nullptr);
+                else self.focus.editing = !self.focus.editing;
+            }
+        }
+        else if (self.focus.editing && self.focus.selected >= 3)
+        {
+            const bool brightness = self.focus.selected == 4;
+            if (self.source && self.focus.available(self.focus.selected))
+                self.source->set(brightness ? ui::controls::Control::Brightness : ui::controls::Control::Volume,
+                                 std::clamp<int>((brightness ? self.snapshot.brightness : self.snapshot.volume) + (left ? -5 : 5), brightness ? 10 : 0, 100));
+            refresh_controls(&self);
+        }
+        else self.focus.move(left ? -1 : 1);
+        changed(self.hint, self.focus.editing ? "A/D adjust  Enter done  W/S wheel widgets  V menu" : "A/D select  Enter edit  W/S wheel widgets  V menu");
+        return true;
+    }
+#endif
     if (!self.source) return false;
     using namespace ui::controls;
     bool handled = true;
@@ -126,11 +159,19 @@ WidgetHandle create_controls_widget(lv_obj_t* parent, lv_coord_t width, lv_coord
     self->source = source;
     self->chrome = create_card_chrome(parent, ui::i18n::tr("Quick controls"), width, height);
     auto* body = self->chrome.body;
-    // This widget has no persistent footer content. Reclaim the shared chrome's footer entirely.
+    // Touch devices need no footer. Pager uses a compact, transparent key hint.
+#if defined(ARDUINO_T_LORA_PAGER)
+    lv_obj_set_height(self->chrome.footer, 18);
+    lv_obj_set_style_bg_opa(self->chrome.footer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_top(self->chrome.footer, 0, 0);
+    lv_obj_set_style_pad_bottom(self->chrome.footer, 0, 0);
+    self->hint = caption(self->chrome.footer, "A/D select  Enter edit  W/S wheel widgets  V menu", 0, 0, LV_PCT(100), true);
+#else
     lv_obj_delete(self->chrome.footer);
     self->chrome.footer = nullptr;
+#endif
     lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-    lv_obj_set_height(body, lv_obj_get_content_height(self->chrome.card) - lv_obj_get_y(body));
+    lv_obj_set_height(body, lv_obj_get_content_height(self->chrome.card) - lv_obj_get_y(body) - (self->hint ? 18 : 0));
     lv_obj_update_layout(body);
     const auto w = lv_obj_get_content_width(body), h = lv_obj_get_content_height(body);
     const bool tall = h > 180;
@@ -142,6 +183,7 @@ WidgetHandle create_controls_widget(lv_obj_t* parent, lv_coord_t width, lv_coord
     {
         auto* button = lv_button_create(body);
         self->switches[i] = button;
+        self->focus.add(button);
         lv_group_remove_obj(button);
         lv_obj_set_pos(button, x + i * (toggle_w + gap), top);
         lv_obj_set_size(button, toggle_w, toggle_h);
@@ -166,6 +208,7 @@ WidgetHandle create_controls_widget(lv_obj_t* parent, lv_coord_t width, lv_coord
         lv_obj_set_style_text_align(self->values[i], LV_TEXT_ALIGN_RIGHT, 0);
         auto* slider = lv_slider_create(body);
         self->sliders[i] = slider;
+        self->focus.add(slider);
         lv_group_remove_obj(slider);
         lv_obj_set_pos(slider, sx + 7, sy + (tall ? 34 : 26));
         lv_obj_set_size(slider, slider_w - 14, tall ? 8 : 6);

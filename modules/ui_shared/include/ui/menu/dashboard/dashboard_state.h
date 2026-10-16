@@ -36,6 +36,7 @@ struct DashboardUi
     int page_delta = 0;
     bool settling = false;
     bool feed_target = false;
+    bool encoder_button_owned = false;
 };
 
 DashboardUi* dashboard_state();

@@ -4,12 +4,16 @@
  */
 
 #include "ui/widgets/top_bar.h"
+#if defined(ARDUINO_T_LORA_PAGER)
+#include "platform/ui/psram_ui_lease.h"
+#endif
 
 #include <algorithm>
 #include <cstring>
 
 #include "ui/assets/fonts/font_utils.h"
 #include "ui/components/bottom_bar.h"
+#include "ui/input/pager_navigation.h"
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
 #include "ui/ui_theme.h"
@@ -80,6 +84,9 @@ static const lv_font_t* resolve_top_bar_font(lv_coord_t height)
 
 void top_bar_init(TopBar& bar, lv_obj_t* parent, const TopBarConfig& config)
 {
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
     const auto& profile = ::ui::page_profile::current();
     const lv_coord_t resolved_height = resolve_top_bar_height(config);
     const bool large_touch = resolved_height > ::ui::kUnifiedTopBarHeight &&
@@ -205,6 +212,16 @@ void top_bar_init(TopBar& bar, lv_obj_t* parent, const TopBarConfig& config)
     {
         top_bar_power::bind(bar);
     }
+#if defined(ARDUINO_T_LORA_PAGER)
+    // A shared, visible hint applies to every page, including text editors
+    // where H stays text until another control is selected with the wheel.
+    auto* help_hint = lv_label_create(bar.container);
+    lv_label_set_text(help_hint, "H Help");
+    lv_obj_set_style_text_font(help_hint, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(help_hint, ui::theme::text(), 0);
+    lv_obj_move_to_index(help_hint, lv_obj_get_index(bar.right_label));
+    ui::input::pager::install_help(parent, bar.title_label);
+#endif
 }
 
 void top_bar_set_title(TopBar& bar, const char* title)

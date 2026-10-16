@@ -529,6 +529,10 @@ static void bind_list_column(Binding* binding)
     }
 
     add_top_back(binding, binding->adapter.list_top_back_placement, BackPlacement::Trailing);
+#if defined(ARDUINO_T_LORA_PAGER)
+    if (binding->adapter.list_top_back_placement == BackPlacement::None)
+        group_add_if_visible(binding, get_top_back_button(binding));
+#endif
     group_add_if_visible(binding, binding->menu.button());
     lv_group_focus_freeze(binding->group, false);
 
@@ -563,6 +567,8 @@ static void bind_list_column(Binding* binding)
         }
     }
     prepare_touch_routing(binding);
+    if (!target || lv_obj_get_group(target) != binding->group)
+        target = binding->menu.button();
     if (target)
     {
         focus_first_valid(binding, target);
@@ -646,11 +652,15 @@ static void root_key_event_cb(lv_event_t* e)
     const uint32_t key = lv_event_get_key(e);
     if (binding->adapter.filter_panel && (key == 'm' || key == 'M'))
     {
+        lv_event_stop_bubbling(e);
+        lv_event_stop_processing(e);
         binding->menu.toggle();
         return;
     }
     if (key == LV_KEY_BACKSPACE || key == LV_KEY_ESC)
     {
+        lv_event_stop_bubbling(e);
+        lv_event_stop_processing(e);
         if (lv_obj_t* back = get_top_back_button(binding))
         {
             lv_obj_send_event(back, LV_EVENT_CLICKED, nullptr);
@@ -658,10 +668,32 @@ static void root_key_event_cb(lv_event_t* e)
         return;
     }
 
-    if (key != LV_KEY_ENTER) return;
+    if (key != LV_KEY_ENTER)
+    {
+#if defined(ARDUINO_T_LORA_PAGER)
+        auto* target = lv_event_get_target_obj(e);
+        auto* root = get_key_target(binding);
+        if (target != root && is_valid(root) && !lv_obj_has_flag(target, LV_OBJ_FLAG_EVENT_BUBBLE))
+        {
+            uint32_t forwarded = key;
+            lv_obj_send_event(root, LV_EVENT_KEY, &forwarded);
+            lv_event_stop_processing(e);
+        }
+#endif
+        return;
+    }
 
     lv_obj_t* focused = binding->group ? lv_group_get_focused(binding->group) : nullptr;
     if (!focused) return;
+    lv_event_stop_bubbling(e);
+    lv_event_stop_processing(e);
+    if (auto* device = lv_indev_active(); device && lv_indev_get_type(device) == LV_INDEV_TYPE_KEYPAD)
+    {
+        // This handler activates manually. Suppress LVGL's later Enter-release
+        // click, which would toggle the menu twice or activate the new focus.
+        lv_indev_wait_release(device);
+        lv_indev_stop_processing(device);
+    }
     if (binding->menu.in_submenu())
     {
         lv_obj_send_event(focused, LV_EVENT_CLICKED, nullptr);
@@ -883,8 +915,12 @@ void on_ui_refreshed(Binding* binding)
 {
     if (!binding_alive(binding) || !binding->group) return;
     if (binding->menu.in_submenu()) return;
+    auto* focused = lv_group_get_focused(binding->group);
     lv_group_set_editing(binding->group, false);
     rebind_by_column(binding);
+    // Background status refresh must not move the user's current selection.
+    if (is_visible(focused) && lv_obj_get_group(focused) == binding->group)
+        lv_group_focus_obj(focused);
 }
 
 void focus_filter(Binding* binding)

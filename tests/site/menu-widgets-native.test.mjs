@@ -95,7 +95,7 @@ for (const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_
     assert.notEqual(runtime._native_menu_focus(),focused,'menu encoder changes launcher focus');
     assert.equal(runtime._native_widget_page(),-1,'menu encoder never opens widgets');
     runtime._native_focus(map.id);
-    if(device==='pager')key('a');else swipe(30,80,100,0);
+    if(device==='pager')key('v');else swipe(30,80,100,0);
     assert.equal(runtime._native_widget_page(),0,'open negative screen');
     assert.equal(runtime._native_widget_count(),1);
     key('h');
@@ -122,14 +122,14 @@ for (const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_
     key('w');assert.equal(runtime._native_widget_page(),2);
     const before=runtime._native_preview_agenda_queries();
     tick(35000);assert.equal(runtime._native_preview_agenda_queries(),before,'hidden Agenda is never queried');
-    if(device==='pager')key('d');else swipe(width-30,80,-100,0);
+    if(device==='pager')key('v');else swipe(width-30,80,-100,0);
     assert.equal(runtime._native_widget_page(),-1);
     assert.equal(runtime._native_widget_leases(),0);
     runtime._native_encoder(1);tick();
     assert.equal(runtime._native_widget_page(),-1,'encoder resumes launcher navigation');
     for(let cycle=0;cycle<50;cycle++){
-      runtime._native_focus(map.id);key('a');
-      runtime._native_encoder(1);tick();key('d');
+      runtime._native_focus(map.id);key(device==='pager'?'v':'a');
+      runtime._native_encoder(1);tick();key(device==='pager'?'v':'d');
       assert.equal(runtime._native_widget_leases(),0,`${device}: repeated feed exit frees state`);
     }
   }

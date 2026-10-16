@@ -27,7 +27,7 @@ for (const [device,width,height] of boards) {
     swipe();swipe();
     assert.equal(runtime._native_widget_page(),2);
   } else {
-    runtime._native_key('a'.charCodeAt(0));tick(300);
+    runtime._native_key((device==='pager'?'v':'a').charCodeAt(0));tick(300);
     for(let page=0;page<4;page++){runtime._native_encoder(1);tick(100);}
     assert.equal(runtime._native_widget_page(),4);
   }

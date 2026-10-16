@@ -280,8 +280,6 @@ void menu_items()
     {
         add("Track info", Details);
         add("Add to playlist", AddToPlaylist);
-        add("Volume -", VolumeDown);
-        add("Volume +", VolumeUp);
         add("Stop playback", Stop);
     }
     else
@@ -351,6 +349,9 @@ void draw()
     {
         auto* panel = card(self.body, 8, 6, width - 16, height - 12);
         lyrics(panel, width - 16, height - 12);
+        lv_group_add_obj(app_g, panel);
+        lv_obj_add_event_cb(panel, key_event, LV_EVENT_KEY, nullptr);
+        lv_group_focus_obj(panel);
     }
     else if (self.view == View::NewPlaylist)
     {
@@ -395,6 +396,7 @@ void draw()
         }
         if (self.snapshot.metadata.unsupported_flags) label(panel, "Some compressed or encrypted tags could not be read", 0, 0, LV_PCT(100), &lv_font_montserrat_12, true);
         lv_obj_add_event_cb(panel, key_event, LV_EVENT_KEY, nullptr);
+        lv_group_add_obj(app_g, panel);
         lv_group_focus_obj(panel);
     }
     else if (self.view == View::ConfirmDelete)
@@ -447,6 +449,15 @@ void draw()
 void update()
 {
     auto& self = *state();
+    // Track changes keep the player controls and their rotary focus alive.
+    // Refresh raw ID3/artwork in place instead of rebuilding the whole page.
+    if (self.view == View::Playing)
+    {
+        changed(self.title, self.snapshot.current.id ? self.snapshot.current.title : ui::i18n::tr("Choose a song"), FontScope::Content);
+        changed(self.artist, self.snapshot.current.artist, FontScope::Content);
+        changed(self.album, self.snapshot.current.album, FontScope::Content);
+        self.rendered_track = self.snapshot.current.id;
+    }
     char time[32];
     std::snprintf(time, sizeof(time), "%u:%02u", static_cast<unsigned>(self.snapshot.position_ms / 60000), static_cast<unsigned>((self.snapshot.position_ms / 1000) % 60));
     changed(self.elapsed, time);

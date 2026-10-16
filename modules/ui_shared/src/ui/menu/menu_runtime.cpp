@@ -251,7 +251,7 @@ void openMenuHelpModal()
         return;
     }
 
-    ::ui::components::shortcut_help_modal::Row rows[8] = {
+    ::ui::components::shortcut_help_modal::Row rows[12] = {
         {"WASD", nullptr, "Select app"},
         {"Enter", nullptr, "Open app"},
         {"B", nullptr, "Cycle screen brightness"},
@@ -264,11 +264,20 @@ void openMenuHelpModal()
     if (ui::menu::dashboard::isFeedOpen())
     {
         rows[0] = {"W/S", "Wheel", "Switch widget"};
+#if defined(ARDUINO_T_LORA_PAGER)
+        rows[1] = {"V", "Back", "Return to menu"};
+        rows[row_count++] = {"A/D", nullptr, "Select widget control"};
+        rows[row_count++] = {"Enter", nullptr, "Run / edit selected control"};
+        rows[row_count++] = {"A/D", nullptr, "Adjust slider while editing"};
+#else
         rows[1] = {"D", "Back", "Return to menu"};
+#endif
     }
     else
     {
-#if defined(ARDUINO_T_DECK) || defined(ARDUINO_T_LORA_PAGER) || defined(ARDUINO_WIO_TRACKER_L2)
+#if defined(ARDUINO_T_LORA_PAGER)
+        rows[row_count++] = {"V", nullptr, "Toggle widgets / main menu"};
+#elif defined(ARDUINO_T_DECK) || defined(ARDUINO_WIO_TRACKER_L2)
         rows[row_count++] = {"A", nullptr, "Widgets at left edge"};
 #elif defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
         rows[row_count++] = {"Swipe", nullptr, "More dashboard widgets"};

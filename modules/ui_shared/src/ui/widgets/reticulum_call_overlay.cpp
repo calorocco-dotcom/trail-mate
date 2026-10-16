@@ -34,8 +34,6 @@ constexpr uint32_t kAccept = 0x3E7D3E;
 constexpr uint32_t kAcceptPressed = 0x2F662F;
 constexpr uint8_t kVolumeStep = 5;
 constexpr uint32_t kActivationGuardMs = 400;
-constexpr int kEncoderKeyRotateUp = 19;
-constexpr int kEncoderKeyRotateDown = 20;
 
 enum class Action : uint8_t
 {
@@ -172,16 +170,14 @@ bool handle_focus_key(lv_event_t* event)
         return false;
     }
     const uint32_t key = lv_event_get_key(event);
-    if (key == LV_KEY_UP || key == LV_KEY_LEFT || key == LV_KEY_PREV ||
-        key == static_cast<uint32_t>(kEncoderKeyRotateUp))
+    if (key == LV_KEY_UP || key == LV_KEY_LEFT || key == LV_KEY_PREV)
     {
         lv_group_focus_prev(s_page.group);
         lv_group_set_editing(s_page.group, false);
         stop_event(event);
         return true;
     }
-    if (key == LV_KEY_DOWN || key == LV_KEY_RIGHT || key == LV_KEY_NEXT ||
-        key == static_cast<uint32_t>(kEncoderKeyRotateDown))
+    if (key == LV_KEY_DOWN || key == LV_KEY_RIGHT || key == LV_KEY_NEXT)
     {
         lv_group_focus_next(s_page.group);
         lv_group_set_editing(s_page.group, false);

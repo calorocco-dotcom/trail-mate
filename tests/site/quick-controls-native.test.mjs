@@ -16,7 +16,7 @@ for(const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_U
  runtime._native_init(device==='pager'?0:1);runtime._native_preview_music_playing(1);runtime._native_open_page(10);tick();
  const p4=device.startsWith('t-display');
  if(p4){click('\uf054');click('\uf054');}else{
-  const map=snapshot().find(item=>item.button&&item.text==='Map');runtime._native_focus(map.id);key('a');
+  const map=snapshot().find(item=>item.button&&item.text==='Map');runtime._native_focus(map.id);key(device==='pager'?'v':'a');
   for(let i=0;i<4;i++){runtime._native_encoder(1);tick();}
  }
  assert.ok(snapshot().some(item=>item.text==='Music'));assert.ok(snapshot().some(item=>item.text==='After the rain'));
@@ -51,7 +51,7 @@ for(const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_U
  drag(0,-80);
  assert.equal(runtime._native_widget_page(),pageBefore,'vertical slider drag retains the current widget');
  if(device==='pager'){
-   runtime._native_encoder(-1);tick();key(10); // LV_KEY_ENTER is '\n'.
+   runtime._native_encoder(-1);tick();key('d');key('d');key('d');key(10); // Play -> Next -> Mode -> Open.
    assert.ok(snapshot().some(item=>item.text==='Now Playing'),'Enter on music widget opens the full player');
    assert.equal(runtime._native_widget_count(),0,'opening music releases the widget');
    assert.equal(runtime._native_widget_leases(),1,'only the full music page retains a PSRAM UI lease');

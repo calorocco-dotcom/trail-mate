@@ -1,6 +1,7 @@
 #include "music/service.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include "ui/localization.h"
+#include "ui/menu/dashboard/dashboard_key_focus.h"
 #include "ui/menu/dashboard/dashboard_style.h"
 #include "ui/menu/dashboard/dashboard_widgets.h"
 #include "ui/menu/menu_layout.h"
@@ -17,6 +18,7 @@ namespace
 {
 struct MusicWidget : WidgetLifetime
 {
+    DashboardKeyFocus focus{};
     DashboardCardChrome chrome{};
     ::music::IService* source = nullptr;
     ::music::Snapshot snapshot{};
@@ -104,6 +106,13 @@ void clicked(lv_event_t* event)
 bool music_key(void* context, uint32_t key)
 {
     auto& self = *static_cast<MusicWidget*>(context);
+#if defined(ARDUINO_T_LORA_PAGER)
+    if (key == 'a' || key == 'A' || key == LV_KEY_LEFT || key == 'd' || key == 'D' || key == LV_KEY_RIGHT)
+    {
+        self.focus.move(key == 'a' || key == 'A' || key == LV_KEY_LEFT ? -1 : 1);
+        return true;
+    }
+#endif
     if (key == ' ')
     {
         send(self, 1);
@@ -126,7 +135,11 @@ bool music_key(void* context, uint32_t key)
     }
     if (key == LV_KEY_ENTER)
     {
+#if defined(ARDUINO_T_LORA_PAGER)
+        send(self, self.focus.selected);
+#else
         send(self, 4);
+#endif
         return true;
     }
     return false;
@@ -181,6 +194,7 @@ WidgetHandle create_music_widget(lv_obj_t* parent, lv_coord_t width, lv_coord_t 
     for (unsigned i = 0; i < controls; i++)
     {
         auto* button = lv_button_create(body);
+        self->focus.add(button);
         lv_group_remove_obj(button);
         lv_obj_set_pos(button, bx, by);
         lv_obj_set_size(button, widths[i], 24);
@@ -200,7 +214,10 @@ WidgetHandle create_music_widget(lv_obj_t* parent, lv_coord_t width, lv_coord_t 
     lv_obj_set_user_data(footer, reinterpret_cast<void*>(4));
     lv_obj_add_event_cb(footer, clicked, LV_EVENT_CLICKED, self);
 #if defined(ARDUINO_T_LORA_PAGER)
-    ui::i18n::set_label_text(footer, "Space play  J/K tracks  R mode  Enter open");
+    lv_obj_set_style_bg_opa(self->chrome.footer, LV_OPA_TRANSP, 0);
+    ui::i18n::set_label_text(footer, "A/D select  Enter run  W/S wheel widgets  V menu");
+    self->focus.selected = 1;
+    self->focus.show();
 #endif
     // Observe existing playback only. A widget never scans or opens the song library.
     if (source)

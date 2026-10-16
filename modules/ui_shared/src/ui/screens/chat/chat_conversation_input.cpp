@@ -17,8 +17,8 @@ namespace chat::ui::conversation::input
 
 namespace
 {
-constexpr int kEncoderKeyRotateUp = 19;
-constexpr int kEncoderKeyRotateDown = 20;
+constexpr int kEncoderKeyRotateUp = LV_KEY_LEFT;
+constexpr int kEncoderKeyRotateDown = LV_KEY_RIGHT;
 constexpr lv_coord_t kScrollStep = 24;
 constexpr lv_coord_t kPageScrollPadding = 12;
 } // namespace
@@ -50,7 +50,10 @@ static bool scroll_messages(ChatConversationScreen* screen,
     {
         return false;
     }
-    lv_obj_scroll_by(msg_list, 0, delta, LV_ANIM_OFF);
+    const lv_coord_t current = lv_obj_get_scroll_y(msg_list);
+    const lv_coord_t maximum = current + lv_obj_get_scroll_bottom(msg_list);
+    const lv_coord_t target = std::max<lv_coord_t>(0, std::min<lv_coord_t>(maximum, current + delta));
+    lv_obj_scroll_to_y(msg_list, target, LV_ANIM_OFF);
     consume(e);
     return true;
 }
@@ -258,11 +261,7 @@ static void on_msg_list_key(lv_event_t* e)
         }
         if (delta != 0)
         {
-            if (lv_obj_t* msg_list = screen->getMsgList())
-            {
-                lv_obj_scroll_by(msg_list, 0, delta, LV_ANIM_OFF);
-                consume(e);
-            }
+            scroll_messages(screen, e, delta);
         }
     }
 }
@@ -302,7 +301,12 @@ void init(ChatConversationScreen* screen, Binding* binding)
     {
         lv_group_add_obj(binding->group, binding->msg_list);
         lv_group_focus_obj(binding->msg_list);
+#if defined(ARDUINO_T_LORA_PAGER)
+        // The wheel can reach Send and Back; press to scroll, hold to leave editing.
+        lv_group_set_editing(binding->group, false);
+#else
         lv_group_set_editing(binding->group, true);
+#endif
         lv_obj_add_event_cb(binding->msg_list, on_msg_list_key, LV_EVENT_KEY, screen);
     }
     if (binding->reply_btn)

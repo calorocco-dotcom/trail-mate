@@ -24,7 +24,7 @@ bool command(::music::Action action, uint64_t id, int32_t value, const char* tex
         return false;
     }
     self.service->snapshot(self.snapshot);
-    if ((self.view == View::Playing || self.view == View::Details) && self.rendered_track != self.snapshot.current.id) draw();
+    if (self.view == View::Details && self.rendered_track != self.snapshot.current.id) draw();
     else update();
     return true;
 }

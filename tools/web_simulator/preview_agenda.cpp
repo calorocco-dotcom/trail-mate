@@ -1,5 +1,7 @@
 // Deterministic service boundary for real widget rendering. Firmware binds the
 // target-owned Agenda model instead; this source never enters a device build.
+#include "ui/app_runtime.h"
+#include "ui/screens/agenda/agenda_page_shell.h"
 #include "ui_presentation/agenda/agenda_source.h"
 #include <cstdio>
 #include <emscripten.h>
@@ -46,3 +48,22 @@ extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_agenda_state(int ready, int 
     clock_ready = clock != 0;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE int native_preview_agenda_queries() { return queries; }
+
+void preview_enter_agenda(lv_obj_t* parent)
+{
+    class Actions : public ui::agenda::IAgendaActionSink
+    {
+      public:
+        ui::UiActionResult save(const agenda::EventRecord&) override { return ui::UiActionResult::fail(ui::UiActionFailure::Unsupported); }
+        ui::UiActionResult remove(uint32_t) override { return ui::UiActionResult::fail(ui::UiActionFailure::Unsupported); }
+        ui::UiActionResult dismissReminder(uint32_t) override { return ui::UiActionResult::fail(ui::UiActionFailure::Unsupported); }
+        ui::UiActionResult snoozeReminder(uint32_t) override { return ui::UiActionResult::fail(ui::UiActionFailure::Unsupported); }
+    };
+    static Actions actions;
+    static ui::agenda::page::Host host;
+    host.source = &source;
+    host.actions = &actions;
+    host.navigation.request_exit = [](void*)
+    { ui_request_exit_to_menu(); };
+    ui::agenda::page::enter(&host, parent);
+}

@@ -31,7 +31,7 @@ for (const device of ['pager','tdeck','wio-tracker-l2','t-display-p4-tft','t-dis
       assert.ok(snapshot().some(item=>item.text==='Agenda'),'filtered overview keeps Agenda as next page');
     } else {
       const map=snapshot().find(item=>item.button&&item.text==='Map');assert.ok(map);
-      runtime._native_focus(map.id);runtime._native_key('a'.charCodeAt(0));tick();
+      runtime._native_focus(map.id);runtime._native_key((device==='pager'?'v':'a').charCodeAt(0));tick();
       for(let page=0;page<6;page++) {
         assert.equal(runtime._native_widget_page(),page);
         assert.ok(!compass(),'absent magnetometer never creates Compass');

@@ -30,7 +30,9 @@ for(const [device,width,height] of boards.filter(([name])=>!process.env.MUSIC_UI
  await capture('interrupted');
  runtime._native_preview_music_playing(1);tick();tick();
  click('Lyrics');assert.ok(snapshot().some(item=>item.text==='We take the quiet way home'));await capture('lyrics');
- click('\uf053');click('Menu');click('Track info');await capture('metadata');assert.ok(snapshot().some(item=>item.text==='Aster'));
+ click('\uf053');click('Menu');
+ assert.ok(!snapshot().some(item=>item.button&&/^Volume [+-]$/.test(item.text)),`${device}: Now Playing menu excludes incremental volume actions`);
+ click('Track info');await capture('metadata');assert.ok(snapshot().some(item=>item.text==='Aster'));
  click('\uf053');click('Library');click('Browse');click('Playlists');await capture('playlists');
  click('Browse');click('New playlist');await capture('new-playlist');
  const editor=snapshot().find(item=>item.input);assert.ok(editor);

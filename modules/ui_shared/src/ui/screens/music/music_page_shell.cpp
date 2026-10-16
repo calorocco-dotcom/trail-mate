@@ -37,7 +37,7 @@ void tick(lv_timer_t*)
     if ((self->view == View::Library || self->view == View::ChoosePlaylist) &&
         self->rendered_library != self->snapshot.library_revision)
         draw();
-    else if ((self->view == View::Playing || self->view == View::Details) && self->rendered_track != self->snapshot.current.id)
+    else if (self->view == View::Details && self->rendered_track != self->snapshot.current.id)
         draw();
     else if (self->view == View::Details && self->rendered_metadata != self->snapshot.metadata_revision)
         draw();

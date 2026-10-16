@@ -443,22 +443,60 @@ bool handleKey(uint32_t key, bool at_left_edge)
     if (!state || !state->active || state->dock_right ||
         ui::menu_runtime::currentScene() != ui::menu_runtime::Scene::Menu || ui_is_overlay_active() ||
         (lv_group_get_default() && lv_group_get_default() != menu_g)) return false;
+#if defined(ARDUINO_T_LORA_PAGER)
+    if (key == 'v' || key == 'V')
+    {
+        set_feed_open(!state->feed_open);
+        return true;
+    }
+#endif
     if (state->feed_open)
     {
         for (auto& widget : state->widgets)
             if (widget.key && widget.key(widget.state, key)) return true;
         if (key == 'w' || key == 'W' || key == LV_KEY_UP || key == LV_KEY_PREV) change_page(-1);
         else if (key == 's' || key == 'S' || key == LV_KEY_DOWN || key == LV_KEY_NEXT) change_page(1);
-        else if (key == 'd' || key == 'D' || key == LV_KEY_RIGHT || key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) set_feed_open(false);
+        else if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) set_feed_open(false);
+#if !defined(ARDUINO_T_LORA_PAGER)
+        else if (key == 'd' || key == 'D' || key == LV_KEY_RIGHT) set_feed_open(false);
+#endif
+        else if (key == 'd' || key == 'D' || key == LV_KEY_RIGHT) return true;
         else if (key != LV_KEY_ENTER && key != 'a' && key != 'A' && key != LV_KEY_LEFT) return false;
         return true;
     }
+#if !defined(ARDUINO_T_LORA_PAGER)
     if (at_left_edge && (key == LV_KEY_LEFT || key == 'a' || key == 'A'))
     {
         set_feed_open(true);
         return true;
     }
+#else
+    (void)at_left_edge;
+#endif
     return false;
+}
+
+bool handleEncoderButton(bool pressed)
+{
+#if defined(ARDUINO_T_LORA_PAGER)
+    auto* state = dashboard_state();
+    if (!state) return false;
+    if (state->encoder_button_owned)
+    {
+        if (!pressed) state->encoder_button_owned = false;
+        return true;
+    }
+    if (!pressed || !isFeedOpen() || ui_is_overlay_active() ||
+        (lv_group_get_default() && lv_group_get_default() != menu_g)) return false;
+    // Own the whole press/release pair, even if activation opens an app and
+    // releases the widget. A held switch must never fire on the new page.
+    state->encoder_button_owned = true;
+    handleKey(LV_KEY_ENTER);
+    return true;
+#else
+    (void)pressed;
+    return false;
+#endif
 }
 
 void init(lv_obj_t* menu_panel, lv_obj_t* grid_panel, const ui::menu_layout::InitOptions&)

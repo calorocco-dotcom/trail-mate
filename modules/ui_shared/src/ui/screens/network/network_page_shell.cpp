@@ -319,8 +319,8 @@ constexpr uint32_t kMicronHeading3Bg = 0x777777;
 constexpr const char* kMicronUnsupportedInline = "[unsupported inline]";
 constexpr const char* kMicronUnsupportedBlock = "[unsupported block]";
 constexpr uint32_t kPageLoadPollMs = 500;
-constexpr uint32_t kPagerRotateUpKey = 19;
-constexpr uint32_t kPagerRotateDownKey = 20;
+constexpr uint32_t kPagerRotateUpKey = LV_KEY_LEFT;
+constexpr uint32_t kPagerRotateDownKey = LV_KEY_RIGHT;
 constexpr lv_coord_t kViewportScrollStep = 28;
 constexpr lv_coord_t kViewportPageScrollPadding = 12;
 constexpr BuiltInFavourite kBuiltInFavourites[] = {
@@ -4953,22 +4953,22 @@ bool viewport_scroll_delta_for_key(uint32_t key, lv_coord_t* delta)
     }
     if (key == LV_KEY_UP || key == kPagerRotateUpKey)
     {
-        *delta = -kViewportScrollStep;
+        *delta = kViewportScrollStep;
         return true;
     }
     if (key == LV_KEY_DOWN || key == kPagerRotateDownKey)
     {
-        *delta = kViewportScrollStep;
+        *delta = -kViewportScrollStep;
         return true;
     }
     if (key == LV_KEY_PREV)
     {
-        *delta = -viewport_page_scroll_step();
+        *delta = viewport_page_scroll_step();
         return true;
     }
     if (key == LV_KEY_NEXT)
     {
-        *delta = viewport_page_scroll_step();
+        *delta = -viewport_page_scroll_step();
         return true;
     }
     return false;

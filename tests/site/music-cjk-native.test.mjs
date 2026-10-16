@@ -66,7 +66,7 @@ for (const [device,width,height] of boards.filter(([name]) => !process.env.MUSIC
   if(device.startsWith('t-display')) {click('\uf054');click('\uf054');}
   else {
     const map=snapshot().find(item => item.button && item.text==='Map');assert.ok(map);
-    runtime._native_focus(map.id);runtime._native_key('a'.charCodeAt(0));tick();
+    runtime._native_focus(map.id);runtime._native_key((device==='pager'?'v':'a').charCodeAt(0));tick();
     for(let i=0;i<4;i++){runtime._native_encoder(1);tick();}
   }
   text();await verify('widget',['Music','空白格','蔡健雅','中文专辑']);
