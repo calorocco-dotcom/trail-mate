@@ -137,6 +137,7 @@ WidgetHandle create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t c
     lv_obj_set_style_bg_color(gps_ui.radar, lv_color_hex(0xF7ECD2), 0);
     lv_obj_set_style_bg_opa(gps_ui.radar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(gps_ui.radar, 0, 0);
+    lv_obj_set_style_pad_all(gps_ui.radar, 0, 0);
     lv_obj_set_style_radius(gps_ui.radar, LV_RADIUS_CIRCLE, 0);
     lv_obj_clear_flag(gps_ui.radar, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -200,6 +201,9 @@ WidgetHandle create_gps_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t c
     style_footer_label(gps_ui.footer_label);
     lv_obj_align(gps_ui.footer_label, LV_ALIGN_LEFT_MID, 0, 0);
     ::ui::i18n::set_label_text(gps_ui.footer_label, "searching satellites");
+    // Satellite coordinates are computed on the first refresh, before LVGL's
+    // next frame. Resolve the new radar's dimensions before exposing the handle.
+    lv_obj_update_layout(gps_ui.chrome.card);
     return own_widget(gps_ui.chrome.card, memory, refresh_gps_widget, 2000);
 }
 

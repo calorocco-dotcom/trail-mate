@@ -40,12 +40,20 @@ for (const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_
     runtime._native_preview_agenda_state(1,1);tick(31000);
     assert.ok(snapshot().some(item=>item.text.includes('Trail check-in')),'Agenda recovers from service unavailability');
   };
+  const checkSkyplot=()=>{
+    const satellites=snapshot().filter(item=>/^\d+$/.test(item.text)&&Number(item.text)>0&&Number(item.text)<=12);
+    assert.equal(satellites.length,8,'eight ranked satellites');
+    const xs=satellites.map(item=>item.x), ys=satellites.map(item=>item.y);
+    assert.ok(Math.max(...xs)-Math.min(...xs)>25,'first-frame skyplot spreads satellites horizontally');
+    assert.ok(Math.max(...ys)-Math.min(...ys)>25,'first-frame skyplot spreads satellites vertically');
+  };
   runtime._native_init(device==='pager'?0:1);runtime._native_open_page(10);tick();
   const p4=device.startsWith('t-display');
   const map=snapshot().find(item=>item.button&&item.text==='Map');
   assert.ok(map,`${device}: Map launcher`);
   await capture('menu');
   if(p4) {
+    checkSkyplot();
     assert.equal(runtime._native_widget_count(),4);
     assert.equal(runtime._native_widget_leases(),4);
     swipe(40,100,150,0);
@@ -99,6 +107,7 @@ for (const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_
       assert.equal(runtime._native_widget_count(),1,'one widget at a time');
       assert.equal(runtime._native_widget_leases(),1,'one independent PSRAM owner');
       assert.equal(runtime._native_dashboard_geometry(),0,`${device}: widget ${page} geometry`);
+      if(page===1)checkSkyplot();
       await capture(`widget-${page}`);
       if(page<4){if(device==='pager'){runtime._native_encoder(1);tick();}else swipe(width/2,height-65,0,-70);}
     }

@@ -232,7 +232,9 @@ bool isFeedOpen()
 }
 bool handleEncoder(int delta)
 {
-    if (!isFeedOpen() || delta == 0 || (lv_group_get_default() && lv_group_get_default() != menu_g)) return false;
+    if (!isFeedOpen() || delta == 0 || ui_is_overlay_active() ||
+        ui::menu_runtime::currentScene() != ui::menu_runtime::Scene::Menu ||
+        (lv_group_get_default() && lv_group_get_default() != menu_g)) return false;
     change_page(delta > 0 ? 1 : -1);
     return true;
 }

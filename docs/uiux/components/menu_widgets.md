@@ -87,7 +87,9 @@ reallocations obey the external-memory policy.
 `tests/site/menu-widgets-native.test.mjs` compiles/runs the real production UI
 for Pager, T-Deck, L2 and both P4 panels. It checks adaptive columns, contextual
 encoder behavior, touch/key navigation, one visible widget, hidden-query
-suppression, lease release, repeated entry/exit and P4 paging. Setting
+suppression, lease release, repeated entry/exit and P4 paging. Satellite
+distribution is checked on the first frame: the radar has zero coordinate
+padding and resolves its dimensions before the first refresh. Setting
 `WIDGET_UI_ARTIFACT_DIR` saves actual RGB565-rendered PNGs and layout coordinates.
 The existing P4 lifecycle suite continues to exercise 250 container rebuilds
 per panel.
