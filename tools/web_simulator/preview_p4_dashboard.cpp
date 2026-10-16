@@ -4,6 +4,7 @@
 #include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_layout.h"
 #include <cmath>
+#include <cstdio>
 #include <emscripten.h>
 
 namespace
@@ -25,6 +26,21 @@ int inspect_lines(lv_obj_t* object)
     return 0;
 }
 } // namespace
+extern "C" EMSCRIPTEN_KEEPALIVE const char* native_dashboard_rects()
+{
+    static char text[256];
+    auto* state = ui::menu::dashboard::dashboard_state();
+    if (!state || !state->panel) return "{}";
+    lv_area_t panel{}, parent{};
+    auto* owner = lv_obj_get_parent(state->panel);
+    lv_obj_get_coords(state->panel, &panel);
+    lv_obj_get_coords(owner, &parent);
+    std::snprintf(text, sizeof(text),
+                  "{\"panel\":[%d,%d,%d,%d],\"parent\":[%d,%d,%d,%d],\"scroll\":[%d,%d],\"offset\":%ld,\"settling\":%d}",
+                  panel.x1, panel.y1, panel.x2, panel.y2, parent.x1, parent.y1, parent.x2, parent.y2,
+                  lv_obj_get_scroll_x(owner), lv_obj_get_scroll_y(owner), static_cast<long>(state->slide_offset), state->settling);
+    return text;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE int native_dashboard_geometry()
 {
     auto* state = ui::menu::dashboard::dashboard_state();

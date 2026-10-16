@@ -2,6 +2,7 @@
 #include "platform/memory/psram_ptr.h"
 #include "platform/ui/gps_runtime.h"
 #include "platform/ui/navigation_runtime.h"
+#include "platform/ui/navigation_trace.h"
 #include "ui/app_runtime.h"
 #include "ui/components/dialog_frame.h"
 #include "ui/components/map_poi_search.h"
@@ -49,6 +50,7 @@ bool activate(lv_event_t* event)
 }
 void message(const char* key)
 {
+    nav::trace("[Navigation][UI] event=message text=%s\n", key ? key : "");
     if (s_state) ::ui::i18n::set_label_text(s_state->status, key);
 }
 void selected(const platform::ui::map_search::Result& result, void*)
@@ -87,6 +89,8 @@ void calculate(lv_event_t* event)
 {
     if (!s_state || s_state->calculating || !activate(event)) return;
     auto& state = *s_state;
+    nav::trace("[Navigation][UI] event=calculate current_origin=%u destination_set=%u\n",
+               unsigned(state.current_origin), unsigned(state.destination_set));
     if (!state.destination_set)
     {
         message("Choose destination");
@@ -95,6 +99,9 @@ void calculate(lv_event_t* event)
     if (state.current_origin)
     {
         const auto fix = platform::ui::gps::get_data();
+        nav::trace("[Navigation][UI] event=origin_fix valid=%u age_ms=%lu coordinate_valid=%u\n",
+                   unsigned(fix.valid), static_cast<unsigned long>(fix.age),
+                   unsigned(std::isfinite(fix.lat) && std::isfinite(fix.lng) && std::abs(fix.lat) <= 90 && std::abs(fix.lng) <= 180));
         if (!fix.valid || fix.age > 5000 || !std::isfinite(fix.lat) || !std::isfinite(fix.lng) || std::abs(fix.lat) > 90 || std::abs(fix.lng) > 180)
         {
             message("No GPS fix");
@@ -120,6 +127,8 @@ void poll(lv_timer_t*)
 {
     if (!s_state || !nav::poll(s_state->snapshot)) return;
     auto& state = *s_state;
+    nav::trace("[Navigation][UI] event=snapshot status=%u revision=%lu points=%lu\n",
+               unsigned(state.snapshot.status), static_cast<unsigned long>(state.snapshot.revision), static_cast<unsigned long>(state.snapshot.points));
     if (state.snapshot.status == nav::Status::Calculating) return;
     state.calculating = false;
     lv_obj_clear_state(state.calculate, LV_STATE_DISABLED);

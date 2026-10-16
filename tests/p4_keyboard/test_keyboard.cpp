@@ -100,6 +100,7 @@ int main()
     fake::attached = false;
     assert(!trail_mate_t_display_p4_keyboard_initialize());
     assert(fake::probes == 1);
+    assert((fake::delays == std::vector<unsigned>{kPowerSettleMs}));
     assert(!trail_mate_t_display_p4_keyboard_start());
     assert(s_keypad != nullptr && s_poll_timer != nullptr);
     lv_timer_pause(s_poll_timer);
@@ -107,10 +108,12 @@ int main()
     poll_timer_cb(nullptr);
     assert(fake::probes == 1);
     fake::attached = true;
+    fake::delays.clear();
     lv_tick_inc(kAttachRetryMs);
     poll_timer_cb(nullptr);
     assert(trail_mate_t_display_p4_keyboard_is_ready());
     assert(fake::probes == 2);
+    assert((fake::delays == std::vector<unsigned>{kResetDelayMs, kResetDelayMs}));
     assert((fake::reset_steps == std::vector<int>{0, 2, 1}));
     assert(trail_mate_t_display_p4_keyboard_start());
 

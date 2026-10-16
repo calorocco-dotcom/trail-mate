@@ -11,7 +11,7 @@ idf_component_register(
         "rm69a10_driver.c"
         "${LILYGO_CPP_BUS_DRIVER_DIR}/src/tool.cpp"
         "${LILYGO_CPP_BUS_DRIVER_DIR}/src/bus/bus_guide.cpp"
-        "${LILYGO_CPP_BUS_DRIVER_DIR}/src/bus/i2c/software_i2c.cpp"
+        "${LILYGO_CPP_BUS_DRIVER_DIR}/src/bus/i2c/hardware_i2c_1.cpp"
         "${LILYGO_CPP_BUS_DRIVER_DIR}/src/chip/chip_guide.cpp"
         "${LILYGO_CPP_BUS_DRIVER_DIR}/src/chip/i2c/tca8418.cpp"
         "${LILYGO_CPP_BUS_DRIVER_DIR}/src/chip/i2c/xl95x5.cpp"

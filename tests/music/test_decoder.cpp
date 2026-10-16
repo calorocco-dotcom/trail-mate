@@ -8,6 +8,7 @@ struct File : music::Reader
 {
     FILE* handle = nullptr;
     uint32_t length = 0;
+    unsigned reads = 0;
     explicit File(const char* path)
     {
         handle = std::fopen(path, "rb");
@@ -17,7 +18,11 @@ struct File : music::Reader
     }
     ~File() { std::fclose(handle); }
     uint32_t size() const override { return length; }
-    std::size_t read_at(uint32_t offset, void* out, std::size_t bytes) override { return std::fseek(handle, offset, SEEK_SET) == 0 ? std::fread(out, 1, bytes, handle) : 0; }
+    std::size_t read_at(uint32_t offset, void* out, std::size_t bytes) override
+    {
+        ++reads;
+        return std::fseek(handle, offset, SEEK_SET) == 0 ? std::fread(out, 1, bytes, handle) : 0;
+    }
 };
 int main(int argc, char** argv)
 {
@@ -32,6 +37,7 @@ int main(int argc, char** argv)
         assert(parser->read(input, *track));
         auto* decoder = music::make<music::Decoder>();
         assert(decoder && decoder->ready() && decoder->open(input, *track));
+        const auto reads_before_decode = input.reads;
         unsigned frames = 0, peak = 0;
         music::PcmFrame frame;
         for (;;)
@@ -45,6 +51,9 @@ int main(int argc, char** argv)
         std::printf("Decoded %s: frames=%u peak=%u position=%lu duration=%lu\n", argv[n], frames, peak, static_cast<unsigned long>(decoder->position_ms()), static_cast<unsigned long>(track->duration_ms));
         std::fflush(stdout);
         assert(frames > 10 && peak > 100 && decoder->position_ms() > 250 && track->duration_ms > 250);
+        // Sequential playback must reuse the PSRAM read-ahead window instead
+        // of taking the SD bus once per compressed frame.
+        assert(input.reads - reads_before_decode < frames / 2);
         assert(decoder->seek(track->duration_ms / 2));
         assert(decoder->next(frame) == music::DecodeResult::Frame);
         assert(decoder->position_ms() >= track->duration_ms / 2);

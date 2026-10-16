@@ -38,10 +38,10 @@ void refresh_music(void* context)
     auto& self = *static_cast<MusicWidget*>(context);
     if (self.source) self.source->snapshot(self.snapshot);
     const auto& value = self.snapshot;
-    const char* title = value.current.id ? value.current.title : "Choose a song";
-    if (std::strcmp(lv_label_get_text(self.title), title)) ui::i18n::set_label_text_raw(self.title, title);
-    if (std::strcmp(lv_label_get_text(self.artist), value.current.artist)) ui::i18n::set_label_text_raw(self.artist, value.current.artist);
-    if (std::strcmp(lv_label_get_text(self.album), value.current.album)) ui::i18n::set_label_text_raw(self.album, value.current.album);
+    const char* title = value.current.id ? value.current.title : ui::i18n::tr("Choose a song");
+    if (std::strcmp(lv_label_get_text(self.title), title)) ui::i18n::set_content_label_text_raw(self.title, title);
+    if (std::strcmp(lv_label_get_text(self.artist), value.current.artist)) ui::i18n::set_content_label_text_raw(self.artist, value.current.artist);
+    if (std::strcmp(lv_label_get_text(self.album), value.current.album)) ui::i18n::set_content_label_text_raw(self.album, value.current.album);
     ui::i18n::set_label_text(self.play, value.playback == ::music::Playback::Playing || value.playback == ::music::Playback::Interrupted ? "Pause" : "Play");
     ui::i18n::set_label_text(self.mode, value.mode == ::music::PlayMode::RepeatOne ? "Repeat one" : value.mode == ::music::PlayMode::Shuffle ? "Shuffle"
                                                                                                                                              : "Repeat all");

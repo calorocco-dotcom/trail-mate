@@ -1633,7 +1633,8 @@ bool TDisplayP4Board::initializeI2cBuses()
     if (system_i2c_handle_ == nullptr)
     {
         i2c_master_bus_config_t sys_cfg = {};
-        sys_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+        static_assert(profile().sys_i2c.port == LP_I2C_NUM_0);
+        sys_cfg.lp_source_clk = LP_I2C_SCLK_DEFAULT;
         sys_cfg.sda_io_num = static_cast<gpio_num_t>(systemI2c().sda);
         sys_cfg.scl_io_num = static_cast<gpio_num_t>(systemI2c().scl);
         sys_cfg.i2c_port = systemI2c().port;

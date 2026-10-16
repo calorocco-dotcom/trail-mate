@@ -15,6 +15,8 @@ bool dashboard_create()
 void dashboard_reset()
 {
     if (!s_dashboard) return;
+    lv_anim_delete(s_dashboard, nullptr);
+    if (s_dashboard->pointer_timer) lv_timer_delete(s_dashboard->pointer_timer);
     if (s_dashboard->timer) lv_timer_delete(s_dashboard->timer);
     delete_widget_state(s_dashboard);
     s_dashboard = nullptr;

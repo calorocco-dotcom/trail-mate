@@ -650,7 +650,10 @@ jobs:
           cmake --build .codex-build/p4-preview/build --target trailmate_p4_tft trailmate_p4_amoled trailmate_pager trailmate_tdeck trailmate_wio --parallel 2
           P4_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/p4-native-ui.test.mjs
           WIDGET_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/menu-widgets-native.test.mjs
+          node tests/site/widget-transitions-native.test.mjs
+          node tests/site/compass-capability-native.test.mjs
           MUSIC_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/music-native-ui.test.mjs
+          MUSIC_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/music-cjk-native.test.mjs
           WIDGET_UI_ARTIFACT_DIR=.codex-build/p4-preview/artifacts node tests/site/quick-controls-native.test.mjs
           node tests/site/settings-catalog-native.test.mjs
       - name: Retain actual LVGL frames and layout coordinates

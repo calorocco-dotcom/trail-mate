@@ -17,7 +17,7 @@ for(const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_U
  const p4=device.startsWith('t-display');
  if(p4){click('\uf054');click('\uf054');}else{
   const map=snapshot().find(item=>item.button&&item.text==='Map');runtime._native_focus(map.id);key('a');
-  for(let i=0;i<5;i++){runtime._native_encoder(1);tick();}
+  for(let i=0;i<4;i++){runtime._native_encoder(1);tick();}
  }
  assert.ok(snapshot().some(item=>item.text==='Music'));assert.ok(snapshot().some(item=>item.text==='After the rain'));
  await capture('music-widget');
@@ -32,7 +32,7 @@ for(const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_U
  if(device==='pager'){
   key('1');key('2');key('3');key('+');key(']');
   assert.ok(snapshot().some(item=>item.text==='40%'));assert.ok(snapshot().some(item=>item.text==='75%'));
-  assert.equal(runtime._native_widget_page(),6,'quick keys do not change page');
+  assert.equal(runtime._native_widget_page(),5,'quick keys do not change page');
  }else{
   click('Wi-Fi');click('GPS');
  }

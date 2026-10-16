@@ -3954,21 +3954,10 @@ static void refresh_node_card_ui()
             }
             if (state.card_region_result.path[0])
             {
-                // The card keeps the short suffix; the full path belongs in
-                // the node details. Never cut through UTF-8 scalar bytes.
-                const char* path = state.card_region_result.path;
-                const char* last = std::strrchr(path, '/');
-                const char* start = path;
-                if (last)
-                {
-                    for (const char* p = path; p < last; ++p)
-                        if (*p == '/') start = p + 1;
-                    while (*start == ' ') ++start;
-                }
-                size_t length = std::min(std::strlen(start), sizeof(text) - 3);
-                while (length && (static_cast<uint8_t>(start[length]) & 0xc0) == 0x80) --length;
-                std::snprintf(text, sizeof(text), "~ %.*s", static_cast<int>(length), start);
-                ::ui::i18n::set_content_label_text_raw(state.card_region, text);
+                const std::string region = std::string("~ ") + state.card_region_result.path;
+                // Preserve the animation across periodic refreshes of the same path.
+                if (std::strcmp(lv_label_get_text(state.card_region), region.c_str()) != 0)
+                    ::ui::i18n::set_content_label_text_raw(state.card_region, region.c_str());
             }
             else ::ui::i18n::set_label_text(state.card_region, state.card_region_request &&
                                                                        state.card_region_result.status == map_search::Status::Searching

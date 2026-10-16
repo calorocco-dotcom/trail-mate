@@ -39,6 +39,9 @@
 #if __has_include("lv_binfont_loader.h")
 #include "lv_binfont_loader.h"
 #define UI_I18N_HAVE_BINFONT 1
+#elif __has_include("src/font/binfont_loader/lv_binfont_loader.h")
+#include "src/font/binfont_loader/lv_binfont_loader.h"
+#define UI_I18N_HAVE_BINFONT 1
 #elif __has_include("src/font/lv_binfont_loader.h")
 #include "src/font/lv_binfont_loader.h"
 #define UI_I18N_HAVE_BINFONT 1

@@ -116,6 +116,8 @@ int main(int argc, char** argv)
     run_worker();
     assert(snapshot().total == 1);
     // Run real playback; inject a user pause/hide after its first output batch.
+    const auto delays_before_playback = runtime_test::delays;
+    const auto yields_before_playback = runtime_test::yields;
     send(music::Action::Play, library.rows[0].id);
     runtime_test::on_delay = []
     {
@@ -126,6 +128,7 @@ int main(int argc, char** argv)
     };
     run_worker();
     assert(!audio_open && runtime_test::storages == 0 && allocations.size() == 1);
+    assert(runtime_test::delays == delays_before_playback && runtime_test::yields > yields_before_playback);
     assert(snapshot().playback == music::Playback::Paused && resume_alive);
     // Interleave UI media invalidation at restore's first SD readiness operation.
     // A transferred record must stay alive until the worker has finished reading it.

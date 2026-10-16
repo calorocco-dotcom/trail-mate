@@ -3,6 +3,7 @@
 int main()
 {
     namespace orientation = platform::ui::orientation;
+    assert(!orientation::heading_supported());
     orientation::ensure_heading_runtime();
     orientation::ensure_screen_orientation_runtime();
     const auto heading = orientation::get_heading();

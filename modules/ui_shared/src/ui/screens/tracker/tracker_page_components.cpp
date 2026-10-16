@@ -28,7 +28,10 @@
 #include "ui/support/route_image_kml_reader.h"
 #include "ui/support/route_image_memory.h"
 #include "ui/support/route_image_source_state.h"
+#include "ui/support/route_preview_viewport.h"
 #include "ui/support/route_segment_sampling.h"
+#include "ui/support/tmroute_map.h"
+#include "ui/support/tmroute_preview.h"
 #include "ui/ui_common.h"
 #include "ui/widgets/map/map_viewport.h"
 #include "ui/widgets/route_elevation_profile.h"
@@ -146,6 +149,10 @@ bool s_preview_image_saved_state_known = false;
 bool s_preview_image_cache_state_known = false;
 std::size_t s_preview_saved_image_count_hint = 0;
 ::ui::widgets::map::Runtime s_preview_map_runtime;
+::ui::support::RoutePreviewViewport s_preview_view;
+::ui::support::TmRouteMap* s_preview_native_route = nullptr;
+lv_timer_t* s_preview_native_timer = nullptr;
+lv_obj_t* s_preview_map_controls = nullptr;
 lv_timer_t* s_preview_download_poll_timer = nullptr;
 bool s_preview_download_refresh_map_on_finish = false;
 
@@ -197,6 +204,7 @@ void open_route_preview_page();
 void close_route_preview_page();
 void render_route_preview_page();
 void refresh_route_preview_map();
+void create_preview_map_controls();
 void update_route_preview_status();
 void show_route_preview_notice(const char* message, uint32_t duration_ms);
 void update_route_preview_load_button();
@@ -922,6 +930,11 @@ bool apply_route_preview_download_status_to_images(
 
 void clear_preview_model()
 {
+    if (s_preview_native_timer) lv_timer_del(s_preview_native_timer);
+    s_preview_native_timer = nullptr;
+    s_preview_map_controls = nullptr;
+    ::ui::support::RouteUiMemory::destroy(s_preview_native_route);
+    s_preview_view.reset();
     s_preview_route_points.clear();
     s_preview_images.clear();
     s_preview_map_line_points.clear();
@@ -948,6 +961,20 @@ bool load_route_preview_model(const std::string& route_name)
     s_preview_route_name = route_name;
     s_preview_asset_id = route_asset_id_for_name(route_name);
     const std::string path = route_path_for_name(route_name);
+    if (path.size() >= 8 && path.compare(path.size() - 8, 8, ".tmroute") == 0)
+    {
+        auto result = ::ui::support::projectTmRoutePreview(path.c_str(), s_preview_route_points, s_preview_metrics.distance_m);
+        if (result == tmap::Result::Ok && !s_preview_route_points.empty())
+        {
+            s_preview_native_route = ::ui::support::RouteUiMemory::create<::ui::support::TmRouteMap>();
+            if (s_preview_native_route && s_preview_native_route->begin(path.c_str())) return true;
+            result = tmap::Result::BudgetExceeded;
+        }
+        clear_preview_model();
+        s_preview_status_text = ::ui::i18n::tr(result == tmap::Result::Busy ? "SD busy; retry preview" : result == tmap::Result::BudgetExceeded ? "Route preview budget exceeded"
+                                                                                                                                                : "Route file unavailable or damaged");
+        return false;
+    }
     ::ui::support::KmlElevationMetrics metrics;
     if (!::ui::support::projectKmlRoute(path.c_str(), s_preview_route_points, s_preview_elevation_samples, metrics, 96))
     {
@@ -1087,6 +1114,13 @@ bool preview_model_fits_bounds(lv_obj_t* viewport_root,
     model.focus_point.valid = bounds.valid;
     model.focus_point.lat = bounds.valid ? (bounds.min_lat + bounds.max_lat) / 2.0 : 0.0;
     model.focus_point.lon = bounds.valid ? (bounds.min_lon + bounds.max_lon) / 2.0 : 0.0;
+    if (s_preview_view.zoom >= 0)
+    {
+        model.zoom = s_preview_view.zoom;
+        model.pan_x = s_preview_view.pan_x;
+        model.pan_y = s_preview_view.pan_y;
+        return model;
+    }
     if (!bounds.valid || !g_tracker_state.route_preview_map_host)
     {
         return model;
@@ -1103,6 +1137,7 @@ bool preview_model_fits_bounds(lv_obj_t* viewport_root,
             break;
         }
     }
+    s_preview_view.zoom = model.zoom;
     return model;
 }
 
@@ -1148,7 +1183,20 @@ void draw_preview_map_overlay()
     }
     lv_obj_clean(widgets.overlay_layer);
 
-    if (build_preview_map_line_points())
+    if (s_preview_native_route)
+    {
+        // A child follows the viewport's lightweight translation during a drag.
+        // Its draw callback consumes only the existing fixed screen snapshot.
+        auto* line = lv_obj_create(widgets.overlay_layer);
+        lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_opa(line, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(line, 0, 0);
+        lv_obj_set_style_pad_all(line, 0, 0);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
+        s_preview_native_route->attach(line);
+    }
+    else if (build_preview_map_line_points())
     {
         lv_obj_t* line = lv_line_create(widgets.overlay_layer);
         lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
@@ -1215,6 +1263,64 @@ void draw_preview_map_overlay()
     }
 }
 
+bool project_preview_native_route(void*, tmap::GeoPoint point, tmap::ScreenPoint& output)
+{
+    lv_point_t pixel;
+    if (!::ui::widgets::map::project_point(s_preview_map_runtime, {true, point.latitude / 1e7, point.longitude / 1e7}, pixel)) return false;
+    output.x = static_cast<float>(pixel.x);
+    output.y = static_cast<float>(pixel.y);
+    return true;
+}
+
+void sync_preview_native_view()
+{
+    if (!s_preview_native_route) return;
+    auto* host = g_tracker_state.route_preview_map_host;
+    ::ui::widgets::map::GeoPoint center;
+    if (!host || !::ui::widgets::map::screen_center(s_preview_map_runtime, center)) return;
+    tmap::MapViewport view;
+    view.center = {static_cast<int32_t>(std::llround(center.lat * 1e7)), static_cast<int32_t>(std::llround(center.lon * 1e7))};
+    view.zoom = static_cast<uint8_t>(s_preview_view.zoom);
+    view.width = static_cast<float>(lv_obj_get_content_width(host));
+    view.height = static_cast<float>(lv_obj_get_content_height(host));
+    if (view.width <= 0 || view.height <= 0) return;
+    s_preview_native_route->setViewport(view, project_preview_native_route, nullptr,
+                                        app::configFacade().readConfig().map_coord_system ? 200000 : 0);
+}
+
+void preview_map_gesture(const ::ui::widgets::map::GestureEvent& event, void*)
+{
+    using Phase = ::ui::widgets::map::GesturePhase;
+    if (event.phase == Phase::Tapped)
+    {
+        const auto* overlay = ::ui::widgets::map::widgets(s_preview_map_runtime).overlay_layer;
+        if (!overlay) return;
+        lv_area_t origin;
+        lv_obj_get_coords(overlay, &origin);
+        for (std::size_t i = s_preview_images.size(); i > 0; --i)
+        {
+            const auto& image = s_preview_images[i - 1];
+            lv_point_t point;
+            if (!image.has_position || !::ui::widgets::map::project_point(s_preview_map_runtime, {true, image.lat, image.lon}, point)) continue;
+            if (std::abs(event.point.x - origin.x1 - point.x) > 12 || std::abs(event.point.y - origin.y1 - (point.y - 6)) > 12) continue;
+            s_preview_selected_image = static_cast<int>(i - 1);
+            s_preview_status_text.clear();
+            sync_route_preview_download_status();
+            refresh_route_preview_map();
+            update_route_preview_status();
+            break;
+        }
+    }
+    else if (event.phase == Phase::DragBegin) s_preview_view.beginDrag();
+    else if (event.phase == Phase::DragUpdate)
+    {
+        s_preview_view.drag(event.total_dx, event.total_dy);
+        ::ui::widgets::map::apply_model_lightweight(s_preview_map_runtime, build_preview_map_model());
+    }
+    else if (event.phase == Phase::DragEnd || event.phase == Phase::Cancel)
+        refresh_route_preview_map();
+}
+
 void refresh_route_preview_map()
 {
     auto& state = g_tracker_state;
@@ -1234,13 +1340,27 @@ void refresh_route_preview_map()
     if (!::ui::widgets::map::widgets(s_preview_map_runtime).root)
     {
         (void)::ui::widgets::map::create(s_preview_map_runtime, state.route_preview_map_host, 180);
-        ::ui::widgets::map::set_gesture_enabled(s_preview_map_runtime, false);
+        ::ui::widgets::map::set_gesture_callback(s_preview_map_runtime, preview_map_gesture, nullptr);
+        ::ui::widgets::map::set_gesture_enabled(s_preview_map_runtime, true);
         s_preview_map_loader_paused = false;
     }
     sync_route_preview_map_loader_pause();
     ::ui::widgets::map::set_size(s_preview_map_runtime, width, height);
     ::ui::widgets::map::apply_model(s_preview_map_runtime, build_preview_map_model());
     draw_preview_map_overlay();
+    sync_preview_native_view();
+    create_preview_map_controls();
+    if (s_preview_native_route && !s_preview_native_timer)
+        s_preview_native_timer = lv_timer_create([](lv_timer_t*)
+                                                 {
+            auto* page = g_tracker_state.route_preview_page;
+            if (!page || !lv_obj_is_valid(page) || !lv_obj_is_visible(page) || !s_preview_native_route) return;
+            const bool changed = s_preview_native_route->poll(false, {}, lv_tick_get(), 0, false, lv_tick_get);
+            if (changed && s_preview_native_route->dense())
+                show_route_preview_notice("Zoom in to show route detail", 2000);
+            else if (changed && s_preview_native_route->error() != tmap::Result::Ok && s_preview_native_route->error() != tmap::Result::More)
+                show_route_preview_notice("Route file unavailable or damaged", 2500); },
+                                                 50, nullptr);
     sync_route_preview_image_strip();
 }
 
@@ -1920,6 +2040,50 @@ lv_obj_t* create_preview_page_button(lv_obj_t* parent,
     return btn;
 }
 
+void preview_map_control(lv_event_t* event)
+{
+    const auto action = reinterpret_cast<intptr_t>(lv_event_get_user_data(event));
+    if (!action) s_preview_view.reset();
+    else if (!s_preview_view.zoomBy(static_cast<int>(action))) return;
+    refresh_route_preview_map();
+}
+
+void create_preview_map_controls()
+{
+    auto* host = g_tracker_state.route_preview_map_host;
+    if (!host || !lv_obj_is_valid(host)) return;
+    if (!s_preview_map_controls || !lv_obj_is_valid(s_preview_map_controls))
+    {
+        s_preview_map_controls = lv_obj_create(host);
+        lv_obj_add_flag(s_preview_map_controls, LV_OBJ_FLAG_IGNORE_LAYOUT);
+        lv_obj_clear_flag(s_preview_map_controls, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(s_preview_map_controls, 122, 36);
+        lv_obj_align(s_preview_map_controls, LV_ALIGN_TOP_LEFT, 4, 4);
+        lv_obj_set_flex_flow(s_preview_map_controls, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_bg_opa(s_preview_map_controls, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(s_preview_map_controls, 0, 0);
+        lv_obj_set_style_pad_all(s_preview_map_controls, 0, 0);
+        lv_obj_set_style_pad_column(s_preview_map_controls, 4, 0);
+        const char* labels[] = {"+", "-", "Fit"};
+        for (int index = 0; index < 3; ++index)
+        {
+            auto* button = create_preview_page_button(s_preview_map_controls, labels[index], nullptr, 38);
+            lv_obj_set_height(button, 36);
+            lv_obj_set_style_pad_all(button, 2, 0);
+            lv_obj_add_event_cb(button, preview_map_control, LV_EVENT_CLICKED,
+                                reinterpret_cast<void*>(intptr_t(index == 0 ? 1 : index == 1 ? -1
+                                                                                             : 0)));
+        }
+    }
+    auto* zoom_in = lv_obj_get_child(s_preview_map_controls, 0);
+    auto* zoom_out = lv_obj_get_child(s_preview_map_controls, 1);
+    if (s_preview_view.zoom >= ::ui::widgets::map::kMaxZoom) lv_obj_add_state(zoom_in, LV_STATE_DISABLED);
+    else lv_obj_clear_state(zoom_in, LV_STATE_DISABLED);
+    if (s_preview_view.zoom <= ::ui::widgets::map::kMinZoom) lv_obj_add_state(zoom_out, LV_STATE_DISABLED);
+    else lv_obj_clear_state(zoom_out, LV_STATE_DISABLED);
+    lv_obj_move_foreground(s_preview_map_controls);
+}
+
 bool preview_selected_route_is_active()
 {
     const auto& state = g_tracker_state;
@@ -2210,14 +2374,19 @@ void open_route_preview_help_modal()
         lv_label_set_text(text, description ? description : "");
     };
 
-    add_help_row("D", nullptr, "Download images");
+    add_help_row("WASD", nullptr, "Pan map (images hidden)");
+    add_help_row("Q / -", nullptr, "Zoom out");
+    add_help_row("E / +", nullptr, "Zoom in");
+    add_help_row("F", nullptr, "Fit whole route");
     add_help_row("R", nullptr, "Load/off route");
     add_help_row("L", nullptr, "Change base layer");
-    add_help_row("E", nullptr, "Show/hide profile");
+    add_help_row("V", nullptr, "Show/hide profile");
+    add_help_row("G", nullptr, "Download images");
     add_help_row("P", nullptr, "Show/hide images");
-    add_help_row("W/S", "Up/Dn", "Select image");
+    add_help_row("W/S", nullptr, "Select image when shown");
     add_help_row("Enter", nullptr, "Open/close image");
     add_help_row("Pin", nullptr, "Select image point");
+    add_help_row("W/S", nullptr, "Scroll this help");
     add_help_row("X/H", "Back", "Close help");
 
     lv_obj_move_foreground(state.route_preview_help_modal);
@@ -2334,7 +2503,37 @@ void on_route_preview_key(lv_event_t* e)
         close_route_preview_page();
         return;
     }
-    if (key == 'd' || key == 'D')
+    if (key == '+' || key == '=' || key == '-' || key == '_' ||
+        key == 'q' || key == 'Q' || key == 'e' || key == 'E')
+    {
+        if (s_preview_view.zoomBy(key == '+' || key == '=' || key == 'e' || key == 'E' ? 1 : -1)) refresh_route_preview_map();
+        consume_route_preview_key_event(e);
+        return;
+    }
+    if (key == 'f' || key == 'F')
+    {
+        s_preview_view.reset();
+        refresh_route_preview_map();
+        consume_route_preview_key_event(e);
+        return;
+    }
+    if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT || key == LV_KEY_UP || key == LV_KEY_DOWN ||
+        key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
+        key == 's' || key == 'S' || key == 'd' || key == 'D')
+    {
+        const bool left = key == LV_KEY_LEFT || key == 'a' || key == 'A';
+        const bool right = key == LV_KEY_RIGHT || key == 'd' || key == 'D';
+        const bool up = key == LV_KEY_UP || key == 'w' || key == 'W';
+        const bool down = key == LV_KEY_DOWN || key == 's' || key == 'S';
+        s_preview_view.pan(left ? 40 : right ? -40
+                                             : 0,
+                           up ? 40 : down ? -40
+                                          : 0);
+        refresh_route_preview_map();
+        consume_route_preview_key_event(e);
+        return;
+    }
+    if (key == 'g' || key == 'G')
     {
         consume_route_preview_key_event(e);
         on_route_preview_download_clicked(nullptr);
@@ -2352,7 +2551,7 @@ void on_route_preview_key(lv_event_t* e)
         cycle_route_preview_map_layer();
         return;
     }
-    if (key == 'e' || key == 'E')
+    if (key == 'v' || key == 'V')
     {
         consume_route_preview_key_event(e);
         toggle_route_preview_elevation();
@@ -2545,6 +2744,7 @@ void render_route_preview_page()
     }
     destroy_route_preview_image_strip(false);
     ::ui::widgets::map::destroy(s_preview_map_runtime);
+    s_preview_map_controls = nullptr;
     lv_obj_clean(state.route_preview_page);
     ::ui::widgets::route_elevation_profile::reset(s_preview_elevation_profile);
     state.route_preview_download_btn = nullptr;
@@ -2704,7 +2904,8 @@ void open_route_preview_page()
     {
         if (state.status_label)
         {
-            ::ui::i18n::set_label_text(state.status_label, "Preview failed");
+            if (!s_preview_status_text.empty()) ::ui::i18n::set_label_text_raw(state.status_label, s_preview_status_text.c_str());
+            else ::ui::i18n::set_label_text(state.status_label, "Preview failed");
         }
         return;
     }

@@ -27,7 +27,7 @@ physical acceptance results must be recorded separately.
 | HI8561 / GT9895 touch | SYS I2C address/protocol and AMOLED coordinate scaling reviewed. Register the LVGL input device under the display lock after the LVGL task starts. Touch transactions remain under the managed SYS I2C lock. |
 | Keyboard electrical setup | GPIO46 SDA / GPIO45 SCL, XL9555 `0x20`, reset IO6, TCA8418 `0x34`, 10×7 matrix, GPIO47 backlight. Preload reset LOW before enabling output. LDO4 must be 3300 mV before accessing GPIO45/46. |
 | Keyboard input | Preserve separate press/release samples through LVGL, native Enter clicks, Tab traversal, held-key repeat, page KEY callbacks and application shortcuts. Track physical Shift/Fn release, ignore duplicate presses, recover from FIFO overflow and persistent I2C failure, and retry a missing optional keyboard. Respect modal focus groups and page-level ESC navigation before app exit. |
-| I2C allocation | SYS uses HP I2C0 on GPIO7/8; EXT uses HP I2C1 on GPIO20/21. Keyboard uses the vendor software-I2C driver on its separate connector. The latest official driver instead uses LP I2C for SYS, freeing HP I2C0 for the keyboard. Do not allocate that occupied controller a second time in this implementation. |
+| I2C allocation | SYS uses LP I2C0 on GPIO7/8 with the LP clock-source selector; EXT uses HP I2C1 on GPIO20/21; keyboard uses HP I2C0 on GPIO46/45. This matches LilyGO's current three-bus allocation. The keyboard's XL9555 owns the bus and its TCA8418 borrows it; failed probes explicitly remove both device handles before deleting the owning bus. |
 | SD card | SDMMC slot0, 4-bit GPIO39–44, separate from C6 slot1. P4 now selects the same shared SDMMC transfer policy as Wio L2: 32-sector direct batches, eight-sector aligned bounce buffer and 16 KiB map-read chunks. FAT16/FAT32/exFAT round trips and boundary/error paths are covered with real SdFat. |
 | USB mass storage | Existing storage ownership handoff and shared SDMMC host registry were reviewed. App storage and raw USB ownership must remain exclusive; releasing SD slot0 must not force-deinitialize C6 slot1. |
 | C6 companion | GPIO14–19 SDIO wiring and XL9535 IO13/IO14 boot/enable sequence reviewed. C6 transport uses slot1 and its own lifecycle/refcounts. Network/BT behavior and download-mode timing still need device acceptance. |
@@ -43,6 +43,32 @@ physical acceptance results must be recorded separately.
 | Power button/sleep | GPIO35 and existing bounded monitoring reviewed. Deep-sleep wake and actual off-state current need measurement; no unverified wake source is introduced. |
 
 ## Automated evidence
+
+### Device follow-up on 2026-10-16
+
+The TFT device was flashed from the current branch through its ESP32-P4 ROM
+USB identity. Display and touch were confirmed working on the device. Brightness
+and volume sliders initially returned to old values because native IDF did not
+pump quick-control requests; adding that pump also exposed a missing C6 user
+Wi-Fi switch implementation that the unused path had previously hidden from
+the linker. The control pump and guarded Wi-Fi switch are now tested, and the
+user confirmed slider operation with display/touch still working.
+
+The keyboard did not acknowledge XL9555 address `0x20` using either the old
+software bus or the official hardware-bus allocation. Hardware I2C alone is
+therefore not a demonstrated keyboard fix. The accessory data connector was
+reseated; factory-firmware keyboard operation has not been established.
+Startup diagnostics now report both controller addresses, alternate expander
+addresses, and SDA/SCL/INT levels. The official keyboard schematic separates
+5 V backlight power from 3.3 V controller power, so a lit backlight does not
+establish controller supply or data-bus continuity.
+
+Absent-accessory retries no longer wait 50 ms for an already powered I/O rail
+inside the LVGL timer. Address probes use a 5 ms SDK timeout and emit one short
+diagnostic summary per 30 seconds, while normal hot-plug checks retain their
+five-second cadence. Input initialization, hardware ACKs, actual Chat typing,
+and resource behavior during physical connection changes remain separate
+acceptance criteria.
 
 `tests/p4_keyboard` compiles the production keyboard adapter against real LVGL
 9.5 and fake hardware boundaries. It covers click edges, focus, repeat, stale

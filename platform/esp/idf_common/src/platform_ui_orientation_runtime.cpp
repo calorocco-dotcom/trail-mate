@@ -9,6 +9,15 @@
 namespace platform::ui::orientation
 {
 
+bool heading_supported()
+{
+#if defined(TRAIL_MATE_ESP_BOARD_TAB5) || defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool acquire_heading()
 {
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)

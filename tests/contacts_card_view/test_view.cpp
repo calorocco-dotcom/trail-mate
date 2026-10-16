@@ -76,6 +76,22 @@ int main()
         }
         lv_obj_send_event(view.next, LV_EVENT_CLICKED, nullptr);
         assert(clicks == 1);
+        // Long administrative paths retain their text and animate in one row.
+        const char* long_region = "~ China / Zhejiang Province / Hangzhou City / Xihu District / North Ridge";
+        lv_label_set_text(view.region, long_region);
+        lv_obj_update_layout(parent);
+        assert(std::string(lv_label_get_text(view.region)) == long_region);
+        assert(lv_anim_get(view.region, nullptr) != nullptr);
+        for (int step = 0; step < 60; ++step)
+        {
+            lv_tick_inc(50);
+            lv_timer_handler();
+        }
+        check_geometry(view.root, parent);
+        assert(objects(parent) == count);
+        lv_label_set_text(view.region, "~ Hangzhou / Xihu");
+        lv_obj_update_layout(parent);
+        assert(lv_anim_get(view.region, nullptr) == nullptr);
         lv_refr_now(display);
         write_frame(width == 320 ? "card-320.ppm" : "card-480.ppm", width, height, pixels);
         lv_mem_monitor_t monitor{};

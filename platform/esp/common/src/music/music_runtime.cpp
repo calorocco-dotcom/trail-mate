@@ -277,7 +277,10 @@ class Service final : public ::music::IService
             ::music::destroy(retired);
             if (finished) return;
             if (!active || ::platform::audio::music_blocked()) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-            else vTaskDelay(1);
+            // The synchronous output already waits for DMA space. An extra
+            // tick here consumes the small hardware queue's decode/SD budget.
+            // Yield to peers without imposing a second playback clock.
+            else taskYIELD();
         }
     }
     void wake()

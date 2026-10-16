@@ -13,16 +13,31 @@
 
 namespace platform::ui::orientation
 {
-bool acquire_heading() { return true; }
-void release_heading() {}
+#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
+static bool preview_magnetometer = true;
+#else
+static bool preview_magnetometer = false;
+#endif
+static unsigned heading_leases = 0;
+bool heading_supported() { return preview_magnetometer; }
+bool acquire_heading()
+{
+    if (!heading_supported()) return false;
+    ++heading_leases;
+    return true;
+}
+void release_heading()
+{
+    if (heading_leases) --heading_leases;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_magnetometer(int supported) { preview_magnetometer = supported != 0; }
+extern "C" EMSCRIPTEN_KEEPALIVE unsigned native_preview_heading_leases() { return heading_leases; }
 static HeadingState preview_heading{};
 HeadingState get_heading() { return preview_heading; }
 ScreenOrientationState get_screen_orientation()
 {
     ScreenOrientationState state;
-#if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4)
-    state.sensor_available = true;
-#endif
+    state.sensor_available = preview_magnetometer;
     state.sensor_ready = preview_heading.sensor_ready;
     return state;
 }

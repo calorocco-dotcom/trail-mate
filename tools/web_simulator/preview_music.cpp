@@ -2,6 +2,8 @@
 #include "../../modules/ui_shared/src/ui/screens/music/music_state.h"
 #include "lvgl.h"
 #include "music/service.h"
+#include "src/misc/lv_text_private.h"
+#include "ui/assets/fonts/font_utils.h"
 #include "ui/menu/menu_dashboard.h"
 #include "ui/screens/music/music_page_shell.h"
 #include <algorithm>
@@ -324,6 +326,60 @@ void preview_bind_music()
 }
 music::IService* preview_music_service() { return &source; }
 extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_music_playing(int value) { source.set_playing(value); }
+// Inject Unicode service data without replacing any production page or font logic.
+extern "C" EMSCRIPTEN_KEEPALIVE void native_preview_music_text(const char* title, const char* artist, const char* album,
+                                                               const char* previous, const char* current, const char* next)
+{
+    auto& value = source.out;
+    std::snprintf(value.current.title, sizeof(value.current.title), "%s", title);
+    std::snprintf(value.current.artist, sizeof(value.current.artist), "%s", artist);
+    std::snprintf(value.current.album, sizeof(value.current.album), "%s", album);
+    std::snprintf(value.category, sizeof(value.category), "%s", album);
+    std::snprintf(value.lyric_previous, sizeof(value.lyric_previous), "%s", previous);
+    std::snprintf(value.lyric_current, sizeof(value.lyric_current), "%s", current);
+    std::snprintf(value.lyric_next, sizeof(value.lyric_next), "%s", next);
+    if (value.row_count)
+    {
+        std::snprintf(value.rows[0].title, sizeof(value.rows[0].title), "%s", title);
+        std::snprintf(value.rows[0].subtitle, sizeof(value.rows[0].subtitle), "%s | %s", artist, album);
+    }
+    const char* fields[] = {title, artist, album};
+    for (unsigned i = 0; i < value.metadata.count && i < 3; ++i)
+        std::snprintf(value.metadata.fields[i].value, sizeof(value.metadata.fields[i].value), "%s", fields[i]);
+    ++value.library_revision;
+    ++value.metadata_revision;
+    ++value.revision;
+}
+namespace
+{
+unsigned inspect_content_fonts(lv_obj_t* object)
+{
+    if (lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN)) return 0;
+    unsigned errors = 0;
+    const bool input = lv_obj_check_type(object, &lv_textarea_class);
+    if (input || lv_obj_check_type(object, &lv_label_class))
+    {
+        const char* text = input ? lv_textarea_get_text(object) : lv_label_get_text(object);
+        const auto* font = lv_obj_get_style_text_font(object, LV_PART_MAIN);
+        const auto* binding = ui::fonts::find_localized_font_binding(ui::fonts::unwrap_localized_font(font), ui::fonts::FontScope::Content);
+        for (uint32_t at = 0; text[at];)
+        {
+            const auto cp = lv_text_encoded_next(text, &at);
+            if (cp < 0x80 || (cp >= 0xE000 && cp <= 0xF8FF)) continue;
+            if (!binding || font != &binding->composed) errors += 0x10000;
+            lv_font_glyph_dsc_t glyph{};
+            if (!lv_font_get_glyph_dsc(font, &glyph, cp, 0) || glyph.is_placeholder) ++errors;
+        }
+    }
+    for (uint32_t index = 0; index < lv_obj_get_child_count(object); ++index)
+        errors += inspect_content_fonts(lv_obj_get_child(object, index));
+    return errors;
+}
+} // namespace
+extern "C" EMSCRIPTEN_KEEPALIVE unsigned native_music_content_font_errors()
+{
+    return inspect_content_fonts(lv_screen_active());
+}
 // QA only: inspect the actual shared LVGL objects, including slider knob clearance.
 extern "C" EMSCRIPTEN_KEEPALIVE int native_music_geometry()
 {

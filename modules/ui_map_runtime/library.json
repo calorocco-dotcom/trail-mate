@@ -7,10 +7,11 @@
     "flags": [
       "-I../../modules/ui_map_runtime/include",
       "-I../../modules/ui_presentation/include",
-      "-I../../modules/core_sys/include"
+      "-I../../modules/core_sys/include",
+      "-I../../modules/core_track_sharing/include"
     ]
   },
   "dependencies": {
-    "tmap": "https://github.com/vicliu624/tmap.git#d8fc21550859bce1c242e6330b0e9ae2ddf9eecc"
+    "tmap": "https://github.com/vicliu624/tmap.git#d74b084acb61653149dec1ac161df58a92278cff"
   }
 }

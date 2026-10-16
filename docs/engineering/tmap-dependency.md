@@ -1,91 +1,129 @@
-# Released TMAP dependency
+# Released TMAP dependency and navigation integration
+
+Native navigation is integrated in the working firmware sources. See
+[Native saved-route navigation](native-navigation.md) for the current acceptance
+matrix, measured pipeline, UI/session tests and target/hardware evidence. The device audit below
+records the KML implementation before that work; it is not the current completion
+status of the native-route branch.
 
 Trail Mate consumes the independent [TMAP SDK](https://github.com/vicliu624/tmap)
-as a third-party dependency. The application owns filesystem/storage adapters,
-UI policy and task scheduling. SDK readers and algorithms are not maintained as
-a second copy under `modules/core_tmap`.
+as a third-party dependency. The application owns storage adapters, UI policy,
+GPS integration and task scheduling. SDK readers and algorithms are not maintained
+as a second copy under `modules/core_tmap`.
 
 ## Locked release
 
-- Version: `v0.1.1` (experimental pre-release).
-- Commit: `d8fc21550859bce1c242e6330b0e9ae2ddf9eecc`.
-- Source archive SHA-256: `d8377999b30703e870f9e5dab09f7de89eb6474cc01930fc3d330de6e85acb77`.
+- Version: `0.2.0`, experimental pre-release.
+- Commit: `d74b084acb61653149dec1ac161df58a92278cff`.
+- Published source archive SHA-256:
+  `50cda6657a184587a1901aba965b885b335d7bc332793fcbd90cbab2bcfce371`.
 - License/provenance: upstream AGPL-3.0-only, LICENSE, COPYRIGHT and NOTICE.
 
-PlatformIO declares the immutable Git dependency in `platformio.ini` and the
-consuming `ui_map_runtime/library.json`. This uses PlatformIO's normal package
-manager; no script copies headers into modules or relies on a sibling checkout.
+PlatformIO declares the immutable Git dependency in `platformio.ini` and
+`modules/ui_map_runtime/library.json`. CMake's `cmake/TrailMateTmap.cmake`
+downloads the release archive through FetchContent, verifies its hash and exposes
+`tmap::tmap` to ESP-IDF, Linux and native test consumers. Normal builds do not
+depend on a sibling source checkout. The documented FetchContent source override
+is an explicit offline-development option, not the release configuration.
 
-CMake uses `cmake/TrailMateTmap.cmake`, which downloads the published source
-archive through FetchContent and verifies its SHA-256. Consumers link
-`tmap::tmap`; include directories and compile definitions propagate through the
-target. ESP-IDF links it after component registration, outside early dependency
-expansion. Linux common targets and native TMAP tests use the same helper.
+Application builds disable SDK tests, examples, host producers and desktop file
+adapters, and enable the bounded-stack/no-exception configuration. The upstream
+PlatformIO manifest excludes both desktop file-adapter implementations. Device
+filesystem and external-memory adapters remain application code.
 
-Host producer tools, SDK test suites/examples and the SDK stdio adapter are
-disabled for application builds. Existing Trail Mate storage adapters remain
-the file-I/O owner. The upstream bounded-stack/no-exception configuration is
-enabled. The initial configure/install needs network access; subsequent builds
-reuse normal package-manager/FetchContent caches. CMake's documented
-`FETCHCONTENT_SOURCE_DIR_TRAILMATE_TMAP` override can use an explicitly supplied
-offline source tree; verify it matches the locked release before use.
+## What the SDK upgrade provides
 
-## Scope and compatibility
+The reader supports Center's native map containers, including display/search
+sections and selected outdoor sections in the same file. DEM selection can follow
+display zoom while analytical queries retain the finest stored grid.
 
-Existing map display/search still uses the v1 Reader API. Reader/search source
-content is preserved upstream; the SDK header's administrative adapter friend
-does not change Reader layout. The larger SDK is now available for subsequent
-outdoor feature requirements. Merely linking it does not add a routing UI or
-make existing firmware select outdoor-v2 files. MCU buffers, stacks and PSRAM
-allocation policy remain application integration responsibilities.
+The SDK also provides bounded leg sinks, temporary leg spools, self-contained
+`.tmroute` files and on-file spatial/distance indexes. These interfaces make it
+possible to release search/map memory before displaying a saved route. Updating
+the dependency does not connect those interfaces to the device's existing KML UI.
 
-Native validation uses the released archive, tests administrative paths and
-links the profile/routing/admin interfaces, including external-memory failure.
-The dependency contract also checks that PlatformIO and CMake pins agree and
-that no old reader/search implementation is compiled. These three tests run
-without map datasets in the dedicated Released TMAP dependency CI workflow.
-Optional real world/China probes validate exact pixels, annotations, search,
-Busy, session changes, CRC, capacity, cancellation and storage ownership. The
-catalog test accounts separately for the reader workspace and metadata holding
-three annotation continuation slots; it drains incremental annotation snapshots.
+See upstream [persistent-route API](https://github.com/vicliu624/tmap/blob/v0.2.0/docs/PERSISTENT_ROUTES.md)
+and [20 km resource evidence](https://github.com/vicliu624/tmap/blob/v0.2.0/docs/ROUTE_ARCHIVE_EVIDENCE.md).
+The SDK's 1,768 B saved-route reader measurement is not a measurement of Trail
+Mate's current navigation implementation or of complete firmware RAM.
 
-On the tested 32-bit host ABI, the real-map probe retains a 14,024 B v1 Workspace
-and a 120 B Reader. The two-package catalog retains 25,368 B in two allocations,
-including existing annotation continuation metadata; it is not whole-device RAM.
-World/China pixels, annotations, indexed search and page counts match the recorded
-upstream baseline. The normalized reader/search source SHA-256 values match the
-original module as well. The optional real-map configuration passes six tests.
+## Pre-native device navigation audit, 2026-10-15
+
+The following rows describe current working-source wiring, not physical-device
+acceptance. The full native route-archive workflow remains an integration task.
+
+| Stage | Current implementation | Remaining work |
+| --- | --- | --- |
+| Endpoints | Tracker navigation dialog uses a current GPS fix or searched origin and a searched destination | Preserve named endpoints and routing policy with a native saved-route collection |
+| Calculation | ESP Arduino worker runs bounded coordinate routing in PSRAM; explicit failure/cancellation | Integrate sink output, tested long-route budgets and suitable heuristics |
+| Persistence | Streaming KML writer creates a pending file, checks flush and renames on save under `/routes/navigation` | Add native archive/spool file adapters, finalize/publish/recovery and archive metadata |
+| Selection and activation | Saved KML list, preview, active-route configuration and manual stop | Add `.tmroute` list/load/delete and source-identity policy |
+| Map drawing | Existing KML overlay uses a reduced set of at most 96 points | Query the saved route by viewport and clip candidates without losing detailed geometry |
+| GPS progress | KML scan computes route position, remaining distance and ambiguity; independent scans gate estimated arrival | Adapt matching to bounded archive windows and test loops, intersections and stale fixes |
+| Deviation | Full KML matching supplies distance bounds and an off-route notice | Explicit deviation/recovery policy and bounded manual/automatic replanning |
+| Guidance and finish | Remaining-distance/progress and estimated route-end notices; manual stop exists | Maneuver lookahead/cues and an explicit completed-session transition |
+
+`navigation::RouteCalculation` currently selects `HeapDijkstra`, defaults to
+4,096 search states, 2,048 output legs, a 160 KiB search-storage limit and 50,000
+expansions. It retains the leg array and search storage through geometry export.
+Those defaults are not the SDK acceptance's integer ALT configuration and do not
+establish support for the real 20 km London/Kunming requests. Increasing a limit
+alone is not sufficient evidence of useful SD latency or available board PSRAM.
+
+The KML navigation matcher scans complete source geometry in bounded chunks;
+the display's reduced 96-point overlay is not the geometry used for that match.
+It does not use the new archive's spatial index. Existing KML following should
+remain available while native routes acquire their own bounded adapter path.
+
+The runtime implementation is guarded by `ARDUINO_ARCH_ESP32` and requires PSRAM.
+Other platforms currently receive unsupported stubs. The portable SDK's platform
+independence does not establish firmware navigation parity across targets.
+
+GitNexus reported an index 193 commits behind HEAD. The required `npx gitnexus
+analyze` refresh was attempted but exited with code 1 after parser-worker timeout
+retries, including the GPS runtime. The CMake helper and new route-calculation
+symbols were absent from the available graph. This audit therefore uses direct
+source inspection and the native regression suite; an empty graph result is not
+treated as proof that an integration has no callers. This upgrade changes release
+pins and documentation, not application functions or navigation state machines.
+
+## Integration validation
+
+`tests/tmap` uses the hash-verified published release. Its dependency contract
+checks that CMake and both PlatformIO pins agree and that the copied reader/search
+implementation is absent. Native tests cover administrative paths, released SDK
+interfaces/external-memory refusal, platform-link isolation, coordinate routing,
+Busy/cancellation and generated KML semantics.
+
+Optional world/China inputs exercise the application map source: pixel reads,
+annotations, search, media sessions, Busy, corruption, capacity and ownership.
+Use the current Center SD delivery paths, not removed artifact locations:
 
 ```sh
-cmake -S tests/tmap -B .codex-build/tmap-dependency -DCMAKE_BUILD_TYPE=Release
+cmake -S tests/tmap -B .codex-build/tmap-dependency -DCMAKE_BUILD_TYPE=Release \
+  -DTRAILMATE_TMAP_WORLD_MAP=/data/sd/maps/tmap/osm/world-osm-z0-7.tmap \
+  -DTRAILMATE_TMAP_CHINA_MAP=/data/sd/maps/tmap/osm/china-osm-z8-12.tmap
 cmake --build .codex-build/tmap-dependency
 ctest --test-dir .codex-build/tmap-dependency --output-on-failure
 ```
 
-Set `TRAILMATE_TMAP_WORLD_MAP` and `TRAILMATE_TMAP_CHINA_MAP` to local matching
-real files to enable the additional three data-dependent tests. These large
-datasets are not vendored or downloaded by the dependency helper.
+Large map datasets are not vendored or downloaded by the dependency helper.
+The 2026-10-15 upgrade configured and built against the downloaded SDK 0.2.0
+release, whose archive hash was checked again independently. All **10/10** native
+CTest cases passed, including the current Center-produced world and China files
+under `artifacts/sd-v2/maps/tmap/osm`. The real map-source probe retained a
+14,024 B Workspace, 120 B Reader and 25,368 B two-package catalog payload on the
+32-bit MinGW GCC 9.2 ABI. These are host typed sizes, not whole-device peaks.
 
-For upgrades, verify a published release and CI, update both PlatformIO pins and
-the CMake version/commit/archive hash together, then rerun native contracts and
-the target firmware build. Never substitute a moving branch or edit files in
-`.pio/libdeps` / `_deps` as the integration source of truth.
+The reproducible local evidence is retained in
+`.codex-build/tmap-dependency/integration-0.2.0.{log,xml,json}`. Results of an
+earlier SDK's firmware build must not be presented as validation of this release;
+a full target build and physical navigation acceptance remain separate.
 
-## Target build evidence
+## Historical target evidence
 
-The `tlora_pager_sx1262` PlatformIO build completed successfully on 2026-10-15
-using the installed PlatformIO 6.2.0 environment. The dependency graph reports
-`tmap @ 0.1.1+sha.d8fc215` and its checkout resolves to the locked full commit.
-Compiler dependencies resolve `tmap/reader.h` from the managed SDK package.
-The final firmware map contains only `reader.cpp.o` and `search.cpp.o` from
-`libtmap.a`, with no `libcore_tmap.a`. Unused outdoor/routing archive objects
-are not pulled into the current application by this dependency migration.
-
-The successful build reports 97,356 B static RAM and 4,662,485 B Flash. These
-are whole-build linker figures for this working branch, not an isolated TMAP
-delta, dynamic heap/PSRAM peak or hardware measurement. No device was flashed.
-The earlier attempt with a different local PlatformIO 6.1.19 installation failed
-on a SCons tool-module import before compilation; it is not counted as success.
-Native CMake validation includes all six optional real-map tests. Full Linux
-application and ESP-IDF firmware builds remain separate target checks; their
-build entrypoints now link the same pinned dependency through CMake.
+An earlier `tlora_pager_sx1262` PlatformIO build on 2026-10-15 used SDK 0.1.1 and
+reported 97,356 B static RAM and 4,662,485 B Flash. Those linker totals belong to
+that source/configuration and are not the upgraded firmware's resource figures.
+No new target build, flash, RAM/PSRAM peak, task-stack watermark, SD latency or
+power measurement is implied by changing the dependency pins.

@@ -6,6 +6,34 @@ it opens the SD library. Songs, artists, albums and folders are indexed on SD;
 playlists are editable M3U8 files under `/.trailmate/music/playlists`. Song files
 are never deleted by a playlist operation.
 
+## Preparing an SD card
+
+Create `Music` at the SD card root. The library scans `/Music` recursively, so
+albums and artists may have their own subfolders:
+
+```text
+/Music/Song.mp3
+/Music/Song.lrc
+/Music/Artist/Album/01 - Song.mp3
+```
+
+After adding or replacing songs, open Music's library menu and select
+**Scan for music**. Embed album artwork and other ID3 metadata in each MP3.
+Optional external lyrics use the same base name as the song with a `.lrc`
+extension, in the same folder. The firmware manages its catalog and playlists
+under `/.trailmate/music`; audio files belong under `/Music`.
+
+Song titles, artists, albums, library categories, metadata values, lyrics and
+user playlist names use the shared **content-font** scope. They are kept as raw
+UTF-8 and are never passed through UI-string translation. Buttons and other
+interface text keep the UI-language scope. This allows Chinese music in an
+English interface when a matching external content font pack is installed under
+`/trailmate/packs/fonts`. Music uses the existing lazy font-pack loader and PSRAM
+ownership; it adds no compiled-in CJK font, private font cache or worker.
+The shared registry recognizes both the LVGL 9.4 binfont header and its LVGL 9.5
+`src/font/binfont_loader/` location, so an available external loader is not
+mistakenly disabled after an LVGL update.
+
 Now Playing includes embedded artwork, title, artist, album, elapsed/total time,
 seek, previous/pause/next and repeat-all/repeat-one/shuffle. The artwork frame and
 seek knob have disjoint bounds on every supported screen. Compact screens place
@@ -127,6 +155,20 @@ so a simultaneous entry snapshot keeps Now Playing routing. Published snapshots
 are also scoped to their SD media session. The same test checks both conditions.
 Preview screenshots use explicit deterministic fixtures; they are not evidence
 of physical audio quality, bus timing, PSRAM peaks or real-device latency.
+
+Continuous playback is paced by the blocking hardware output; the worker yields
+to peers without sleeping an extra RTOS tick after every frame. Compressed input
+is refilled in batches using the existing 8 KiB PSRAM window, rather than seeking
+and reading the SD card after each frame. Neither change adds a task, DMA buffer
+or internal-RAM audio queue. Runtime and decoder regressions cover both rules.
+
+On L2, a music rate transition silences the amplifier and clears the DMA queue,
+sets the I2S clock, then configures and reads back ES8311 slave/16-bit/I2S/MCLK
+settings before enabling the amplifier. Start diagnostics include the requested
+and driver-reported rate. Closing playback reports the maximum producer gap and
+the number of gaps exceeding the entire DMA queue (11.6 ms at 44.1 kHz).
+Those counters diagnose definite starvation, but a zero count does not establish
+gap-free output or analog sound quality. Physical MP3 listening remains required.
 
 ## Actual LVGL captures
 

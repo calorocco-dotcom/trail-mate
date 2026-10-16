@@ -5,6 +5,7 @@
 #include "platform/esp/arduino_common/app_config_sd_tms_runtime.h"
 #include "platform/esp/arduino_common/hostlink/hostlink_service.h"
 #include "platform/esp/boards/board_runtime.h"
+#include "platform/ui/quick_controls_runtime.h"
 
 #include <atomic>
 #include <cstddef>
@@ -56,6 +57,9 @@ void tickBoundLifecycle(std::size_t max_events)
     // task on ESP-IDF targets. Only the actual UI projection below needs the
     // display lock.
     lifecycle.updateCoreServices();
+    // Consume UI intents on the existing service task, outside the LVGL lock.
+    // Arduino pumps this from AppContext; native IDF has its own lifecycle.
+    ::platform::ui::service_quick_controls();
     ::hostlink::tick_publication_tasks();
     // Configuration emission reads the live object and platform settings.
     // Serialize it with UI edits without allocating a second AppConfig. The

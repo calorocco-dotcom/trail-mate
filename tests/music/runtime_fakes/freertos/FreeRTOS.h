@@ -13,4 +13,5 @@ inline void (*scheduled)(void*) = nullptr;
 inline void* task_context = nullptr;
 inline void (*on_delay)() = nullptr;
 inline unsigned task_starts = 0;
+inline unsigned delays = 0, yields = 0;
 } // namespace runtime_test

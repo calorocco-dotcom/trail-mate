@@ -50,7 +50,7 @@ class SdTmapStorage final : public ::ui::map_tiles::TmapStorage
     {
         if (ended_) return tmap::Status::Missing;
         static constexpr const char* raster_roots[] = {"/maps/tmap/osm", "/maps/tmap/terrain", "/maps/tmap/satellite", "/maps/tmap"};
-        static constexpr const char* routing_roots[] = {"/maps/navigation", "/maps/tmap/navigation", "/maps/tmap/osm", "/maps/tmap/terrain", "/maps/tmap/satellite", "/maps/tmap"};
+        static constexpr const char* routing_roots[] = {"/maps/tmap/osm", "/maps/tmap/terrain", "/maps/tmap/satellite", "/maps/tmap", "/maps/navigation", "/maps/tmap/navigation"};
         const auto* roots = routing_ ? routing_roots : raster_roots;
         const size_t root_count = routing_ ? sizeof(routing_roots) / sizeof(routing_roots[0]) : sizeof(raster_roots) / sizeof(raster_roots[0]);
         const auto* root = roots[root_index_];

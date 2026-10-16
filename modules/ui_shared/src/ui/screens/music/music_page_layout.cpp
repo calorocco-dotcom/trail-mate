@@ -1,5 +1,6 @@
 #include "music_state.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
+#include "ui/assets/fonts/font_utils.h"
 #include "ui/localization.h"
 #include "ui/ui_common.h"
 #include "ui/ui_theme.h"
@@ -22,16 +23,24 @@ namespace ui::music_page
 {
 namespace
 {
+using ui::fonts::FontScope;
+
 lv_obj_t* label(lv_obj_t* parent, const char* text, lv_coord_t x, lv_coord_t y, lv_coord_t width,
-                const lv_font_t* font = &lv_font_montserrat_14, bool muted = false)
+                const lv_font_t* font = &lv_font_montserrat_14, bool muted = false, FontScope scope = FontScope::Ui)
 {
     auto* object = lv_label_create(parent);
     lv_obj_set_pos(object, x, y);
     lv_obj_set_width(object, width);
     lv_obj_set_style_text_font(object, font, 0);
     lv_obj_set_style_text_color(object, muted ? ui::theme::text_muted() : ui::theme::text(), 0);
-    ui::i18n::set_label_text(object, text);
+    if (scope == FontScope::Content) ui::i18n::set_content_label_text_raw(object, text);
+    else ui::i18n::set_label_text(object, text);
     return object;
+}
+lv_obj_t* content_label(lv_obj_t* parent, const char* text, lv_coord_t x, lv_coord_t y, lv_coord_t width,
+                        const lv_font_t* font = &lv_font_montserrat_14, bool muted = false)
+{
+    return label(parent, text, x, y, width, font, muted, FontScope::Content);
 }
 lv_obj_t* card(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h)
 {
@@ -46,9 +55,16 @@ lv_obj_t* card(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_co
     lv_obj_clear_flag(object, LV_OBJ_FLAG_SCROLLABLE);
     return object;
 }
-void changed(lv_obj_t* object, const char* text)
+void changed(lv_obj_t* object, const char* text, FontScope scope = FontScope::Ui)
 {
-    if (object && std::strcmp(lv_label_get_text(object), text) != 0) ui::i18n::set_label_text_raw(object, text);
+    if (!object || std::strcmp(lv_label_get_text(object), text) == 0) return;
+    if (scope == FontScope::Content) ui::i18n::set_content_label_text_raw(object, text);
+    else ui::i18n::set_label_text_raw(object, text);
+}
+void playlist_name_changed(lv_event_t* event)
+{
+    auto* editor = lv_event_get_target_obj(event);
+    ui::fonts::apply_content_font(editor, lv_textarea_get_text(editor), &lv_font_montserrat_14);
 }
 void spacer(lv_obj_t* parent)
 {
@@ -82,9 +98,9 @@ void lyrics(lv_obj_t* parent, lv_coord_t w, lv_coord_t h)
     auto& self = *state();
     label(parent, "Lyrics", 18, 14, w - 36, &lv_font_montserrat_14, true);
     const lv_coord_t center = h / 2;
-    self.lyric[0] = label(parent, "", 18, center - 44, w - 36, &lv_font_montserrat_14, true);
-    self.lyric[1] = label(parent, "", 18, center - 14, w - 36, &lv_font_montserrat_16);
-    self.lyric[2] = label(parent, "", 18, center + 44, w - 36, &lv_font_montserrat_14, true);
+    self.lyric[0] = content_label(parent, "", 18, center - 44, w - 36, &lv_font_montserrat_14, true);
+    self.lyric[1] = content_label(parent, "", 18, center - 14, w - 36, &lv_font_montserrat_16);
+    self.lyric[2] = content_label(parent, "", 18, center + 44, w - 36, &lv_font_montserrat_14, true);
     for (auto* line : self.lyric)
     {
         lv_obj_set_style_text_align(line, LV_TEXT_ALIGN_CENTER, 0);
@@ -126,13 +142,13 @@ void now_playing(lv_coord_t width, lv_coord_t height)
     }
     else text_x = edge + 24;
     const lv_coord_t text_w = w - text_x - 14;
-    self.title = label(panel, self.snapshot.current.title[0] ? self.snapshot.current.title : "Choose a song",
-                       text_x, title_y, text_w, &lv_font_montserrat_16);
+    self.title = content_label(panel, self.snapshot.current.title[0] ? self.snapshot.current.title : ui::i18n::tr("Choose a song"),
+                               text_x, title_y, text_w, &lv_font_montserrat_16);
     lv_label_set_long_mode(self.title, LV_LABEL_LONG_DOT);
     lv_obj_set_height(self.title, 20);
-    self.artist = label(panel, self.snapshot.current.artist, text_x, title_y + 26, text_w, &lv_font_montserrat_14, true);
+    self.artist = content_label(panel, self.snapshot.current.artist, text_x, title_y + 26, text_w, &lv_font_montserrat_14, true);
     lv_label_set_long_mode(self.artist, LV_LABEL_LONG_DOT);
-    self.album = label(panel, self.snapshot.current.album, text_x, title_y + 46, text_w - 44, &lv_font_montserrat_12, true);
+    self.album = content_label(panel, self.snapshot.current.album, text_x, title_y + 46, text_w - 44, &lv_font_montserrat_12, true);
     lv_label_set_long_mode(self.album, LV_LABEL_LONG_DOT);
     char volume[16];
     std::snprintf(volume, sizeof(volume), "%u%%", self.snapshot.volume);
@@ -230,10 +246,10 @@ void library(lv_coord_t width, lv_coord_t height)
         lv_obj_add_event_cb(row, row_event, LV_EVENT_CLICKED, reinterpret_cast<void*>(index));
         lv_obj_add_event_cb(row, row_event, LV_EVENT_FOCUSED, reinterpret_cast<void*>(index));
         lv_obj_add_event_cb(row, key_event, LV_EVENT_KEY, nullptr);
-        auto* title = label(row, data.title, 10, 3, w - 48, &lv_font_montserrat_14);
+        auto* title = content_label(row, data.title, 10, 3, w - 48, &lv_font_montserrat_14);
         lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
         lv_obj_set_height(title, 17);
-        auto* subtitle = label(row, data.subtitle, 10, row_h - 16, w - 48, &lv_font_montserrat_12, true);
+        auto* subtitle = content_label(row, data.subtitle, 10, row_h - 16, w - 48, &lv_font_montserrat_12, true);
         lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
         lv_obj_set_height(subtitle, 14);
         const bool tracks = self.snapshot.browse == ::music::Browse::Songs || self.snapshot.browse >= ::music::Browse::PlaylistTracks;
@@ -347,6 +363,8 @@ void draw()
         lv_textarea_set_one_line(self.editor, true);
         lv_textarea_set_max_length(self.editor, 48);
         lv_textarea_set_placeholder_text(self.editor, "e.g. Evening trail");
+        ui::fonts::apply_content_font(self.editor, "", &lv_font_montserrat_14);
+        lv_obj_add_event_cb(self.editor, playlist_name_changed, LV_EVENT_VALUE_CHANGED, nullptr);
         lv_obj_add_event_cb(self.editor, editor_ready, LV_EVENT_READY, nullptr);
         ui::widgets::attach_touch_text_editor(self.editor);
         lv_group_focus_obj(self.editor);
@@ -372,7 +390,7 @@ void draw()
             std::snprintf(caption, sizeof(caption), "%s%s%s", field.name, field.id[0] ? " / " : "", field.id);
             auto* name = label(panel, caption, 0, 0, LV_PCT(100), &lv_font_montserrat_12, true);
             (void)name;
-            label(panel, field.value[0] ? field.value : "--", 0, 0, LV_PCT(100));
+            content_label(panel, field.value[0] ? field.value : "--", 0, 0, LV_PCT(100));
             if (field.truncated) label(panel, "Text shortened", 0, 0, LV_PCT(100), &lv_font_montserrat_12, true);
         }
         if (self.snapshot.metadata.unsupported_flags) label(panel, "Some compressed or encrypted tags could not be read", 0, 0, LV_PCT(100), &lv_font_montserrat_12, true);
@@ -382,7 +400,7 @@ void draw()
     else if (self.view == View::ConfirmDelete)
     {
         label(self.body, "Delete this playlist?", 16, 24, width - 32, &lv_font_montserrat_16);
-        label(self.body, self.snapshot.category, 16, 60, width - 32);
+        content_label(self.body, self.snapshot.category, 16, 60, width - 32);
         label(self.body, "Songs on the SD card are kept.", 16, 90, width - 32, &lv_font_montserrat_12, true);
     }
     if (self.view == View::ConfirmDelete)
@@ -462,11 +480,11 @@ void update()
         {
             char caption[160];
             std::snprintf(caption, sizeof(caption), "%s  |  %u", self.snapshot.category[0] ? self.snapshot.category : ui::i18n::tr(browse_name(self.snapshot.browse)), static_cast<unsigned>(self.snapshot.total));
-            changed(self.notice, caption);
+            changed(self.notice, caption, FontScope::Content);
         }
     }
     const char* lines[] = {self.snapshot.lyric_previous, self.snapshot.has_lyrics ? self.snapshot.lyric_current : ui::i18n::tr("No lyrics found"), self.snapshot.has_lyrics ? self.snapshot.lyric_next : ui::i18n::tr("Add a .lrc file beside the song")};
-    for (unsigned index = 0; index < 3; index++) changed(self.lyric[index], lines[index]);
+    for (unsigned index = 0; index < 3; index++) changed(self.lyric[index], lines[index], self.snapshot.has_lyrics ? FontScope::Content : FontScope::Ui);
     if (self.cover && self.service && self.rendered_artwork != self.snapshot.artwork_revision)
     {
         // Detach LVGL before releasing the borrowed pixels. Both UI and worker hold references.

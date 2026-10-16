@@ -102,27 +102,24 @@ for (const [device,width,height] of boards.filter(([name])=>!process.env.WIDGET_
     key('s');runtime._native_encoder(1);tick();
     assert.equal(runtime._native_widget_page(),0,'modal help owns keyboard and encoder input');
     key('h');
-    for(let page=0;page<7;page++){
+    for(let page=0;page<6;page++){
       assert.equal(runtime._native_widget_page(),page);
       assert.equal(runtime._native_widget_count(),1,'one widget at a time');
       assert.equal(runtime._native_widget_leases(),1,'one independent PSRAM owner');
       assert.equal(runtime._native_dashboard_geometry(),0,`${device}: widget ${page} geometry`);
       if(page===1)checkSkyplot();
-      if(page===3) {
-        assert.ok(snapshot().some(item=>item.text==='Awaiting teammate'));
-        assert.ok(!snapshot().some(item=>item.text.includes('warming up')),'absent sensor is not described as warming up');
-      }
+      assert.ok(!snapshot().some(item=>item.text==='Mini Compass'),'targets without a magnetometer omit Compass');
       await capture(`widget-${page}`);
-      if(page===4) {
+      if(page===3) {
         assert.ok(snapshot().some(item=>item.text.includes('Trail check-in')),'Agenda reads the provided service port');
         checkAgenda();
       }
-      if(page<6){if(device==='pager'){runtime._native_encoder(1);tick();}else swipe(width/2,height-65,0,-70);}
+      if(page<5){if(device==='pager'){runtime._native_encoder(1);tick();}else swipe(width/2,height-65,0,-70);}
     }
-    key('s');assert.equal(runtime._native_widget_page(),6,'bounded at final widget');
-    runtime._native_encoder(-1);tick();assert.equal(runtime._native_widget_page(),5);
-    key('w');assert.equal(runtime._native_widget_page(),4);
+    key('s');assert.equal(runtime._native_widget_page(),5,'bounded at final widget');
+    runtime._native_encoder(-1);tick();assert.equal(runtime._native_widget_page(),4);
     key('w');assert.equal(runtime._native_widget_page(),3);
+    key('w');assert.equal(runtime._native_widget_page(),2);
     const before=runtime._native_preview_agenda_queries();
     tick(35000);assert.equal(runtime._native_preview_agenda_queries(),before,'hidden Agenda is never queried');
     if(device==='pager')key('d');else swipe(width-30,80,-100,0);

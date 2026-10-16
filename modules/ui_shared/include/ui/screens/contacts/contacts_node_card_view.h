@@ -75,6 +75,7 @@ inline View create(lv_obj_t* parent, const lv_font_t* body, const lv_font_t* cap
     lv_obj_set_height(view.distance, lv_font_get_line_height(heading));
     lv_obj_set_style_text_color(view.distance, lv_color_hex(0x245B50), 0);
     view.region = label(location_section, false);
+    lv_label_set_long_mode(view.region, LV_LABEL_LONG_SCROLL);
     lv_obj_set_style_text_color(view.region, lv_color_hex(0x416F65), 0);
     view.status = label(view.root, true);
     lv_obj_set_style_bg_color(view.status, lv_color_hex(0xEEEDE7), 0);

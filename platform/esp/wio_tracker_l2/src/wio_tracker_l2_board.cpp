@@ -54,6 +54,8 @@ audio_driver::AudioDriverES8311Class s_codec;
 constexpr uint32_t kAudioSampleRate = 16000;
 int16_t s_tone_pcm[256];
 bool s_music_active = false; // Protected by the existing audio mutex.
+uint32_t s_music_rate = 0, s_music_last_write_us = 0, s_music_max_gap_us = 0;
+uint32_t s_music_writes = 0, s_music_late_writes = 0;
 
 class BusLock
 {
@@ -900,13 +902,26 @@ bool WioTrackerL2Board::beginMusic(uint32_t rate)
     config.output_device = audio_driver::DAC_OUTPUT_ALL;
     config.i2s.bits = audio_driver::BIT_LENGTH_16BITS;
     if (config.setRateNumeric(rate) != static_cast<int>(rate)) return false;
+    // Configure a running, silent clock before resetting the slave codec.
+    // No amplifier output may escape during a format/rate transition.
+    if (!writeExpander(ExpanderPin::AudioAmplifierEnable, false)) return false;
+    i2s_zero_dma_buffer(I2S_NUM_0);
     bool configured = false;
+    const bool clocked = i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO) == ESP_OK;
+    const float actual_rate = clocked ? i2s_get_clk(I2S_NUM_0) : 0;
     {
         BusLock i2c(s_i2c_mutex);
-        if (!i2c) return false;
-        configured = s_codec.setConfig(config) && s_codec.setVolume(75);
+        if (i2c && clocked && std::abs(actual_rate - static_cast<float>(rate)) <= rate / 100.0F)
+        {
+            uint8_t reset = 0, format = 0, clock = 0;
+            configured = s_codec.setConfig(config) && s_codec.setVolume(75) &&
+                         readBytes(0x18, 0x00, &reset, 1) && readBytes(0x18, 0x09, &format, 1) && readBytes(0x18, 0x01, &clock, 1) &&
+                         !(reset & 0x40) && (format & 0x5F) == 0x0C && !(clock & 0x80);
+            Serial.printf("[WioL2] music requested=%luHz actual=%.1fHz ES8311 reset=%02x format=%02x clock=%02x ready=%u\n",
+                          static_cast<unsigned long>(rate), actual_rate, reset, format, clock, configured);
+        }
     }
-    if (!configured || i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO) != ESP_OK || !writeExpander(ExpanderPin::AudioAmplifierEnable, true))
+    if (!configured || !writeExpander(ExpanderPin::AudioAmplifierEnable, true))
     {
         (void)writeExpander(ExpanderPin::AudioAmplifierEnable, false);
         (void)i2s_set_clk(I2S_NUM_0, kAudioSampleRate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
@@ -915,6 +930,8 @@ bool WioTrackerL2Board::beginMusic(uint32_t rate)
         if (i2c) (void)s_codec.setConfig(config);
         return false;
     }
+    s_music_rate = rate;
+    s_music_last_write_us = s_music_max_gap_us = s_music_writes = s_music_late_writes = 0;
     s_music_active = true;
     return true;
 }
@@ -922,6 +939,15 @@ bool WioTrackerL2Board::writeMusic(const int16_t* mono, size_t samples)
 {
     BusLock lock(s_audio_mutex);
     if (!lock || !s_music_active || !mono) return false;
+    const uint32_t now = micros();
+    if (s_music_writes)
+    {
+        const uint32_t gap = now - s_music_last_write_us;
+        s_music_max_gap_us = std::max(s_music_max_gap_us, gap);
+        // A gap longer than even a full DMA queue proves the producer was
+        // late. Report once when closing, never log in the streaming loop.
+        if (gap > UINT64_C(4) * 128 * 1000000 / s_music_rate) ++s_music_late_writes;
+    }
     for (size_t offset = 0; offset < samples;)
     {
         const auto count = std::min<size_t>(128, samples - offset);
@@ -931,6 +957,8 @@ bool WioTrackerL2Board::writeMusic(const int16_t* mono, size_t samples)
         if (i2s_write(I2S_NUM_0, s_tone_pcm, bytes, &written, pdMS_TO_TICKS(100)) != ESP_OK || written != bytes) return false;
         offset += count;
     }
+    s_music_last_write_us = micros();
+    ++s_music_writes;
     return true;
 }
 void WioTrackerL2Board::endMusic()
@@ -953,6 +981,9 @@ void WioTrackerL2Board::endMusic()
             (void)s_codec.setVolume(75);
         }
     }
+    Serial.printf("[WioL2] music writes=%lu late=%lu max_gap=%luus dma_budget=%luus\n",
+                  static_cast<unsigned long>(s_music_writes), static_cast<unsigned long>(s_music_late_writes),
+                  static_cast<unsigned long>(s_music_max_gap_us), static_cast<unsigned long>(UINT64_C(4) * 128 * 1000000 / s_music_rate));
     s_music_active = false;
 }
 

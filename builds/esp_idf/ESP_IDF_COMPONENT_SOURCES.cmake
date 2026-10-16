@@ -534,6 +534,7 @@ set(TRAILMATE_ESP_IDF_PLATFORM_COMMON_SOURCES
     "${TRAILMATE_ROOT}/platform/esp/idf_common/src/platform_ui_reticulum_group_config_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_reticulum_network_config_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_route_storage.cpp"
+    "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/platform_ui_navigation_runtime.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/route_png_cache.cpp"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/route_png_codec.c"
     "${TRAILMATE_ROOT}/platform/esp/arduino_common/src/ui/screens/team/team_ui_store.cpp"

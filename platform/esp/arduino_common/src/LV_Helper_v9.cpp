@@ -196,14 +196,16 @@ lv_fs_res_t sd_fs_read(lv_fs_drv_t* drv, void* file_p, void* buf, uint32_t btr, 
         return LV_FS_RES_INV_PARAM;
     }
     const int result = file->read(buf, btr);
+    if (br != nullptr) *br = result > 0 ? static_cast<uint32_t>(result) : 0;
+    if (file->read_busy())
+    {
+        mark_external_font_fs_busy();
+        return LV_FS_RES_BUSY;
+    }
     if (result < 0)
     {
         mark_external_font_fs_busy();
         return sd_fs_error_to_res();
-    }
-    if (br != nullptr)
-    {
-        *br = static_cast<uint32_t>(result);
     }
     return LV_FS_RES_OK;
 }
@@ -246,9 +248,19 @@ lv_fs_res_t sd_fs_seek(lv_fs_drv_t* drv, void* file_p, uint32_t pos, lv_fs_whenc
     {
     case LV_FS_SEEK_CUR:
         target = file->position() + pos;
+        if (file->read_busy())
+        {
+            mark_external_font_fs_busy();
+            return LV_FS_RES_BUSY;
+        }
         break;
     case LV_FS_SEEK_END:
         target = file->size() + pos;
+        if (file->read_busy())
+        {
+            mark_external_font_fs_busy();
+            return LV_FS_RES_BUSY;
+        }
         break;
     case LV_FS_SEEK_SET:
     default:
@@ -259,7 +271,7 @@ lv_fs_res_t sd_fs_seek(lv_fs_drv_t* drv, void* file_p, uint32_t pos, lv_fs_whenc
     if (!file->seek(target))
     {
         mark_external_font_fs_busy();
-        return sd_fs_error_to_res();
+        return file->read_busy() ? LV_FS_RES_BUSY : sd_fs_error_to_res();
     }
     return LV_FS_RES_OK;
 }
@@ -272,7 +284,13 @@ lv_fs_res_t sd_fs_tell(lv_fs_drv_t* drv, void* file_p, uint32_t* pos_p)
     {
         return LV_FS_RES_INV_PARAM;
     }
-    *pos_p = static_cast<uint32_t>(file->position());
+    const auto position = file->position();
+    if (file->read_busy())
+    {
+        mark_external_font_fs_busy();
+        return LV_FS_RES_BUSY;
+    }
+    *pos_p = static_cast<uint32_t>(position);
     return LV_FS_RES_OK;
 }
 

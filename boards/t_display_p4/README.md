@@ -38,7 +38,7 @@ Primary source reference:
 - Expander interrupt: `5`
 - Backlight: `51`
 - Optional keyboard module:
-  - software I2C: `SDA=46`, `SCL=45`
+  - hardware HP I2C0: `SDA=46`, `SCL=45` (SYS uses LP I2C0 on GPIO7/8)
   - TCA8418: `0x34`, 10 x 7 scan window, interrupt `48`
   - keyboard backlight: `47`
 

@@ -49,7 +49,25 @@ target_include_directories(agenda_widget PRIVATE agenda_fakes fakes
     "${REPO}/modules/ui_presentation/include" "${REPO}/platform/esp/common/include"
     "${REPO}/platform/esp/arduino_common/include")
 target_compile_definitions(agenda_widget PRIVATE ESP_PLATFORM=1 TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4=1)
-foreach(TARGET widget_ownership widget_idf_allocator widget_allocator_link widget_orientation agenda_widget)
+add_executable(widget_idf_service test_idf_service.cpp
+    "${REPO}/platform/esp/idf_common/src/app_runtime_support.cpp")
+target_include_directories(widget_idf_service PRIVATE runtime_fakes
+    "${REPO}/platform/esp/idf_common/include" "${REPO}/modules/core_sys/include")
+set(C6_WIFI_SOURCE "${REPO}/platform/esp/idf_common/src/platform_ui_wifi_runtime.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${C6_WIFI_SOURCE}")
+file(READ "${C6_WIFI_SOURCE}" C6_WIFI_TEXT)
+string(FIND "${C6_WIFI_TEXT}" "bool set_user_enabled(bool enabled)" C6_WIFI_FIRST)
+string(FIND "${C6_WIFI_TEXT}" "bool suspend_for_external_storage(" C6_WIFI_LAST)
+if(C6_WIFI_FIRST LESS 0 OR C6_WIFI_LAST LESS C6_WIFI_FIRST)
+    message(FATAL_ERROR "Cannot find the C6 user-switch production boundary")
+endif()
+math(EXPR C6_WIFI_LENGTH "${C6_WIFI_LAST}-${C6_WIFI_FIRST}")
+string(SUBSTRING "${C6_WIFI_TEXT}" ${C6_WIFI_FIRST} ${C6_WIFI_LENGTH} C6_WIFI_SWITCH)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/c6_user_switch.inc" "${C6_WIFI_SWITCH}")
+add_executable(widget_c6_switch test_c6_switch.cpp)
+target_include_directories(widget_c6_switch PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
+    "${REPO}/modules/core_sys/include")
+foreach(TARGET widget_ownership widget_idf_allocator widget_allocator_link widget_orientation agenda_widget widget_idf_service widget_c6_switch)
     if(MSVC)
         target_compile_options(${TARGET} PRIVATE /UNDEBUG)
     else()

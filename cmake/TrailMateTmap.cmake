@@ -3,9 +3,9 @@ include(FetchContent)
 
 # Keep this release/commit aligned with PlatformIO's lib_deps pin. No sibling
 # checkout or copied implementation is used by a normal build.
-set(TRAILMATE_TMAP_VERSION "0.1.1")
-set(TRAILMATE_TMAP_COMMIT "d8fc21550859bce1c242e6330b0e9ae2ddf9eecc")
-set(TRAILMATE_TMAP_ARCHIVE_SHA256 "d8377999b30703e870f9e5dab09f7de89eb6474cc01930fc3d330de6e85acb77")
+set(TRAILMATE_TMAP_VERSION "0.2.0")
+set(TRAILMATE_TMAP_COMMIT "d74b084acb61653149dec1ac161df58a92278cff")
+set(TRAILMATE_TMAP_ARCHIVE_SHA256 "50cda6657a184587a1901aba965b885b335d7bc332793fcbd90cbab2bcfce371")
 
 function(trailmate_add_tmap)
     if(TARGET tmap::tmap)

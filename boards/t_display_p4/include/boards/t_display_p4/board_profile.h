@@ -198,7 +198,9 @@ inline constexpr BoardProfile makeBoardProfile()
     profile.identity.short_name = "TMP4";
     profile.identity.ble_name = "trailmate-p4";
 
-    profile.sys_i2c = {0, 7, 8};
+    // ESP32-P4 LP_I2C_NUM_0 (2): LilyGO's SYS bus uses LP-capable GPIO7/8.
+    // Reserve HP I2C0 for the keyboard and HP I2C1 for the external devices.
+    profile.sys_i2c = {2, 7, 8};
     profile.ext_i2c = {1, 20, 21};
     // The LilyGO signal names are from the GNSS module's perspective:
     // GPS_RX (GPIO23) is the P4 UART TX pin and GPS_TX (GPIO22) is the P4

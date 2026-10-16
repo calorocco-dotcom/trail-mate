@@ -1,9 +1,11 @@
 #pragma once
 #include "lvgl.h"
+#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <vector>
 #define DEVICE_MAX_BRIGHTNESS_LEVEL 255
+constexpr int I2C_NUM_0 = 0;
 namespace fake
 {
 inline bool attached = true;
@@ -16,10 +18,29 @@ inline std::vector<int> reset_steps;
 } // namespace fake
 namespace cpp_bus_driver
 {
-class SoftwareI2c
+class HardwareI2c1
 {
   public:
-    SoftwareI2c(int, int) {}
+    HardwareI2c1(int sda, int scl, int port)
+    {
+        assert(sda == 46 && scl == 45 && port == I2C_NUM_0);
+    }
+    explicit HardwareI2c1(const std::shared_ptr<HardwareI2c1>& owner) : owner_(owner) {}
+    bool InitBus() { return true; }
+    HardwareI2c1* bus_handle() { return this; }
+    bool Probe(unsigned address)
+    {
+        if (address == 0x20) ++fake::probes;
+        return fake::attached && (address == 0x20 || address == 0x34);
+    }
+    bool Deinit(bool delete_bus)
+    {
+        assert(delete_bus == !owner_);
+        return true;
+    }
+
+  private:
+    std::shared_ptr<HardwareI2c1> owner_;
 };
 class Xl95x5
 {
@@ -32,10 +53,9 @@ class Xl95x5
     {
         kOutput
     };
-    Xl95x5(std::shared_ptr<SoftwareI2c>, uint16_t) {}
+    Xl95x5(std::shared_ptr<HardwareI2c1>, uint16_t) {}
     bool Init()
     {
-        ++fake::probes;
         return fake::attached;
     }
     bool SetGpioMode(Pin, Mode)
@@ -93,7 +113,7 @@ class Tca8418
         return fake::transfer_ok;
     }
     inline static std::vector<TouchInfo> fifo;
-    Tca8418(std::shared_ptr<SoftwareI2c>, uint16_t) {}
+    Tca8418(std::shared_ptr<HardwareI2c1>, uint16_t) {}
     bool Init() { return fake::attached; }
     bool SetKeypadScanWindow(int x, int y, int w, int h) { return x == 0 && y == 0 && w == 10 && h == 7; }
     bool SetInterruptEnable(IrqMask) { return true; }

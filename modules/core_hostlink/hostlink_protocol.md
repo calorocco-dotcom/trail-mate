@@ -359,7 +359,12 @@ LinkState values:
 - 5: Error
 
 ### EV_LOG (0x83)
-Reserved for optional logs. Not emitted by default.
+Optional UTF-8 diagnostic text, up to 383 bytes per payload. Navigation emits
+`[Navigation]` lines on Arduino targets with the USB CDC transport enabled,
+after HELLO establishes READY. No command or navigation operation is performed
+by receiving a log event. The existing bounded transmit queue may drop logs;
+clients must not use this diagnostic stream as an authoritative task protocol.
+Lines omit endpoint names and exact coordinates. Other targets may omit events.
 
 ### EV_GPS (0x84)
 Payload:

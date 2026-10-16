@@ -95,6 +95,10 @@ and supports configuration backup/restore and explicit identity maintenance.
 Identity backups are sensitive: normal author operations use device-side signing
 and do not require exposing the private key in the browser.
 
+Keep the device's SD card installed for configuration exchange and stored-content
+maintenance. Device author proof itself is independent of the card; a successful
+identity check does not imply that its file storage is available.
+
 ![Web configuration percentage control](docs/images/release-1.0.0/web-config-percent.png)
 
 *Actual browser configuration control with simulated-device data. The screenshot
@@ -136,12 +140,22 @@ The card uses the full content width. **Menu** in the bottom bar selects
 **Tracks**, **Routes** or **Nav** on supported navigation targets. Contacts,
 Chat, Settings, Extensions and Network use the same bottom-menu components;
 Contacts and Chat expose their radio status through **Menu → Info**.
+Tracks and Nav provide **View**, **New** and **Current** submenus instead of
+separate creation commands in the root menu. An active recording retains a direct
+**Stop recording** action.
 
 ![Firmware Tracker card](docs/images/release-1.0.0/firmware-tracker-card-native.png)
 
 *Actual Wio native LVGL preview from CI with sample KML and simulated GPS. The
 preview has no TMAP administrative data, so its region remains unknown. This is
 not a physical-device capture.*
+
+![Tracker route actions](docs/images/release-1.0.0/firmware-tracker-actions-native.png)
+
+*Current production LVGL native render: flat action rows, a light focus state,
+content-sized height and a compact title-bar close button. X/x closes the current
+frame-based Map/Tracker dialogs on keyboard devices; touch uses the same close
+control. Other legacy dialogs have not all been migrated.*
 
 The [Tracks workspace](https://vicliu624.github.io/trail-mate/tracks/) combines
 **your own trail library**, **shared-trail discovery**, and **trail details and
@@ -388,14 +402,14 @@ designed for fast navigation on a physical keyboard without deep menu nesting.
 
 | Layer Menu | OSM Base Map |
 | --- | --- |
-| ![map menu](docs/images/map_menu.png) | ![map osm](docs/images/map_osm.png) |
+| ![map menu](docs/images/release-1.0.0/firmware-map-menu-native.png) | ![map osm](docs/images/map_osm.png) |
 
 | Terrain Base Map | Satellite Base Map |
 | --- | --- |
 | ![map terrain](docs/images/map_terrain.png) | ![map satellite](docs/images/map_satellite.png) |
 
 * Fixed **North-Up** map orientation (no rotation)
-* Fully **offline** map rendering from SD card tiles
+* Fully **offline** map rendering from SD-hosted TMAP packages
 * Three switchable base layers: **OSM / Terrain / Satellite**
 * Optional contour overlay for terrain shape awareness
 * Real-time position marker for the current GPS fix
@@ -403,24 +417,66 @@ designed for fast navigation on a physical keyboard without deep menu nesting.
 * Simple breadcrumb trails for path awareness
 * Fast in-page layer switching via map layer menu (no page restart)
 
+The current bottom bar keeps zoom at the left and **Pos**, **Help**, conditional
+**Team**, and **Menu** at the right. Menu opens upward: **Map Layer** selects OSM,
+Terrain or Satellite directly; **Search** opens the existing place picker;
+**Navigation**, **Tracks** and **Contours** open dedicated management dialogs.
+Load/unload and contour visibility are managed inside those dialogs. Team has a
+separate quick menu and appears only while joined to a valid team.
+
+| Navigation management | Touch-accessible Help |
+| --- | --- |
+| ![Navigation manager](docs/images/release-1.0.0/firmware-map-navigation-native.png) | ![Map Help](docs/images/release-1.0.0/firmware-map-help-native.png) |
+
+*The Menu, Navigation and Help images are production LVGL native renders
+with sample map/GPS data from the candidate before the saved-route replan/Finish
+controls were added. Follow the workflow below for the current controls. The
+base-layer images illustrate existing map display. Native renders are not physical-device
+acceptance captures. Each layer displays only the coverage and zoom levels
+contained in its installed packages.*
+
+On supported PSRAM-capable ESP targets, create a foot route through **Tracker →
+Menu → Nav → New**. Use the current GNSS fix as the origin, or select both endpoints
+with the existing POI search. Calculate from an installed routing graph, then save
+and preview a self-contained `.tmroute` file. Load the saved plan and open Map
+for indexed viewport rendering, progress/remaining distance and geometric turn
+hints. Map's Navigation dialog offers manual/automatic replanning, cancel/retry,
+reload and a fixed Stop/Finish action. A replacement is opened before activation;
+a failed or cancelled replan preserves the previous saved route. Confirmed
+arrival ends the active session. Unloading does not delete its file.
+
+Following runs while Map is open and resumes the saved active path on reentry.
+Geometry cues have no street-name or intersection semantics. Routing coverage
+depends on the installed package's graph, independently of its raster coverage.
+The released TMAP SDK **0.2.0** is pinned by commit and source hash. See the
+[native navigation implementation and resource evidence](docs/engineering/native-navigation.md)
+for the Center London **20.779 km** replay, fixed reader/screen budgets, failure
+behavior and the distinction between host measurements and physical-device
+acceptance. A few KiB of free RAM cannot run the complete planner.
+
 #### Node inspection from the map
 
 ![map node information](docs/images/nodeinfo-1.png)
 
 Select a discovered node directly on the map to inspect its protocol, last-seen state, zoom level, coordinates, and surrounding offline-map context without leaving the situational view.
 
-Expected SD card tile layout:
+Recommended TMAP package layout on the SD card:
 
 ```text
-/maps/base/osm/{z}/{x}/{y}.png
-/maps/base/terrain/{z}/{x}/{y}.png
-/maps/base/satellite/{z}/{x}/{y}.png
-/maps/contour/major-500/{z}/{x}/{y}.png
-/maps/contour/major-200/{z}/{x}/{y}.png
-/maps/contour/major-100/{z}/{x}/{y}.png
-/maps/contour/major-50/{z}/{x}/{y}.png
-/maps/contour/major-25/{z}/{x}/{y}.png
+/maps/tmap/osm/<region>-osm-z<min>-<max>.tmap
+/maps/tmap/terrain/<region>-terrain-z<min>-<max>.tmap
+/maps/tmap/satellite/<region>-satellite-z<min>-<max>.tmap
+/routes/navigation/*.tmroute              # saved calculated plans
+/trailmate/packs/fonts/<resource-id>/     # required generated map fonts
 ```
+
+Copy the packages and their generated font resources from Center. POIs, names and
+search indexes are carried by the OSM TMAP; detailed Center packages can also
+contain their routing graph and digital elevation. The current TMAP workflow does not
+require the former per-tile PNG/JSON export. The reader also discovers flat
+`/maps/tmap/*.tmap` packages and supported routing locations described in the
+guide. See [TMAP maps and terrain](https://github.com/vicliu624/trail-mate/wiki/6.2-TMAP-Maps-and-Terrain)
+for export, installation and font details.
 
 ### 🛰️ GNSS Sky Plot
 
@@ -779,11 +835,15 @@ This section provides a searchable implementation index. The [Trail Mate Wiki](h
 
 - Offline map rendering (north-up, no rotation)
 - Runtime base layer switching: OSM / Terrain / Satellite
-- Contour overlay toggle in map layer menu
-- SD tile layout support for OSM/Terrain PNG and Satellite JPG
+- Contour visibility through a dedicated Map management dialog
+- SD-hosted TMAP packages with independent labels, POIs and place search
 - Real-time position marker and coordinate display
 - Discrete zoom levels and low-power tuning
-- Track recording and route modes (record/route list)
+- Track recording, route and navigation cards with selected-item hydration
+- Foot-route calculation from current/searched origin to a searched destination
+- Persistent `.tmroute` plans, indexed viewport reads, geometric turn hints,
+  confirmed off-route replanning and arrival/Stop/Finish while Map is open
+- Tracker View/New/Current submenus and Map load/unload management
 - KML route overlays and focus
 - GPX tracks exportable via USB Mass Storage
 

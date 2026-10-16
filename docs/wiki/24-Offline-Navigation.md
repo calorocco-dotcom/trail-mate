@@ -8,15 +8,17 @@ their presence in this guide is not a stable-release announcement.
 
 Rendering a map and calculating a path require different data. An OSM, terrain
 or satellite package may display normally while containing no routing graph.
-Export a compatible foot-routing `navigation.tmap` with Trail Mate Center and
-copy it to `/maps/navigation` or `/maps/tmap/navigation` on the device's SD card.
-The firmware also checks the existing `/maps/tmap` packages for routing data.
+Use Trail Mate Center's detailed OSM export with an embedded foot-routing graph,
+and copy its generated SD tree directly, including
+`/maps/tmap/osm/<region>-osm-z<min>-<max>.tmap` and font resources.
+London and Kunming detailed packages carry navigation; world/country overview
+packages are not a promise of navigable road coverage.
 Keep the relevant map and POI packages installed for visual context and place
 search. The terrain and satellite layers show only the zoom levels present in
 their respective packages.
 
 The current calculation runtime is available on supported PSRAM-capable Arduino
-ESP targets, including Wio L2. The Nav menu choice is hidden when the runtime
+ESP and ESP-IDF targets. The Nav menu choice is hidden when the runtime
 is unavailable. This integration currently calculates foot routes within one
 installed routing package. It does not offer car/bicycle profiles, runtime
 conditional-rule evaluation, or route stitching across separate graphs. Prepare
@@ -38,18 +40,35 @@ Missing routing data, endpoints outside coverage, no available path, and storage
 or memory admission failures are separate outcomes. An unsuccessful calculation
 does not become a straight line labelled as a navigable path.
 
-Saved plans are KML files in `/routes/navigation`. They retain their chosen
-endpoints and computed geometry. Reopening a saved plan does not recalculate its
-origin from the current position. Plans remain local until the user separately
-imports and publishes them through a sharing workflow.
+Saved plans are self-contained `.tmroute` files in `/routes/navigation`. They
+retain computed geometry, cumulative distances and file indexes. Filenames use
+the endpoint names; the archive does not store the original POI records or
+semantic maneuvers. Reopening does not recalculate from the current position.
+The geometric route end, snapped within 50 m during planning, is the destination
+used for following/replanning. Saved navigation and KML trail publishing are
+separate workflows; saving navigation does not publish a shared trail.
 
 ## Follow a saved plan
 
 Choose a saved Navigation card in Tracker, open **Actions**, and use its preview
-or load action. Alternatively, open the Map menu and choose **Load navigation**.
-Loading activates the route overlay and the existing route-following displays
-for current position, route progress, remaining distance, deviation and arrival.
-Stopping navigation does not delete the saved plan.
+or load action. Alternatively, open **Map → Menu → Navigation** to load a plan.
+An active plan shows progress/remaining distance and geometric left/right/U-turn
+cues. The reader queries the visible viewport; it does not load the whole route.
+Geometric cues have no road names or intersection semantics.
+
+The Navigation dialog offers **Replan from here**, **Reload route** and
+**Automatic replan**, with a fixed **Stop navigation** footer. A running replan
+shows **Cancel replan**; failure offers **Retry replan** and keeps the saved route.
+A candidate is opened before the active configuration is replaced. Automatic
+replanning requires sustained deviation and a fresh fix, permits one attempt per
+continuous deviation and waits at least 30 seconds between automatic attempts.
+
+Arrival requires prior progress, proximity to the geometric endpoint and five
+seconds of fresh observations. It clears the active route, releases the session's
+GPS lease and leaves a completed view with **Finish navigation**. Other features
+may still hold their own GPS leases. Stop/Finish does not delete saved plans.
+Following runs while Map is open; leaving releases the session and reopening Map
+resumes the saved active path. Background guidance from other pages is not supplied.
 
 Tracker's bottom **Menu** keeps **Tracks**, **Routes** and **Nav** separate. Tracks contains
 recordings, Routes contains ordinary route files, and Navigation contains saved
@@ -66,7 +85,7 @@ and **Menu** appear at the right, in that order. **Team** is visible only while
 the device has joined a team with a valid team ID.
 
 **Menu** opens upward and contains contour visibility, map-layer selection,
-**Search**, **Load navigation** and **Load track**. **Map Layer** opens a second
+**Search**, **Navigation** and **Tracks** management. **Map Layer** opens a second
 level with direct **OSM**, **Terrain** and **Satellite** choices, marking the
 current source. **Team** opens its own upward
 menu for member selection and member-track actions, making team operations
@@ -84,10 +103,29 @@ visible counts depend on zoom, package contents and available screen space.
 
 ## Storage and resource use
 
-Calculation workspaces and route output are temporary PSRAM allocations on
-supported ESP targets. Saving streams the calculated geometry into KML. Planning
-buffers and the calculation task are released after completion or cancellation;
-there is no second road-graph cache kept alive while Tracker is idle.
+Search arrays, reader workspaces and route UI owners explicitly request PSRAM on
+ESP; they do not fall back to internal RAM. Planning streams legs to an exclusive
+SD spool, releases search arrays, then exports `.tmroute`. Planning buffers and
+the task are released after completion or cancellation. Following keeps a fixed
+reader and a 128-segment screen snapshot. Dense overview views request zooming
+in instead of silently truncating geometry. Stale GPS, SD loss, corruption and
+memory/storage limits have visible states.
+
+Center's real London route is 20,778.62 m, with 1,171 geometry points and a
+43,776-byte saved archive. A 32-bit host run of the actual production worker and
+SD adapters measured a 2,143,140-byte external allocation payload peak and about
+1.54 GB of map/spool reads. Actual LVGL replay matched all 1,170 segment endpoints;
+the eight fitting tested viewports were pixel-identical to a full-geometry host
+oracle, with zero route reads during drawing. The Map owner measured 1,576 B and
+its separate reader/page/cursor payload 2,160 B. Four coarser views requested zoom
+in; all tested z16/z18 views fit the fixed snapshot.
+
+These measurements exclude real driver/allocator overhead, task stack, display,
+other features and concurrent readers. They do not establish physical PSRAM/RAM
+high-water, MCU calculation time, SD latency or energy use. A device with a few
+KiB of free RAM cannot run the complete planner. Reproducible tests and raw
+evidence are maintained in `docs/engineering/native-navigation.md` and
+`native-navigation-application-evidence.json` in the firmware repository.
 
 Navigation calculation and following do not require an Internet account or a
 Reticulum directory. Publishing a trail is a separate operation using the

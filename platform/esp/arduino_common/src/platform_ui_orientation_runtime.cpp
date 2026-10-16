@@ -2,6 +2,7 @@
 
 namespace platform::ui::orientation
 {
+bool heading_supported() { return false; }
 bool acquire_heading() { return false; }
 void release_heading() {}
 // These targets expose GPS/team bearings but have no heading-sensor service.

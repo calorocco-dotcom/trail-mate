@@ -4,6 +4,8 @@ if(NOT EMSCRIPTEN)
   message(FATAL_ERROR "Configure with the Emscripten toolchain")
 endif()
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+include("${REPO_ROOT}/cmake/TrailMateTmap.cmake")
+trailmate_add_tmap()
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h" CACHE STRING "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -86,6 +88,9 @@ add_executable(${PREVIEW_TARGET}
   "${UI}/widgets/system_notification.cpp"
   "${UI}/assets/alert.c"
   "${REPO_ROOT}/modules/core_sys/src/sys/clock.cpp")
+target_link_libraries(${PREVIEW_TARGET} PRIVATE tmap::tmap)
+# Every preview target has PSRAM on the device; use its content-font budget.
+set_source_files_properties("${UI}/runtime/memory_profile.cpp" PROPERTIES COMPILE_DEFINITIONS "BOARD_HAS_PSRAM=1")
 target_sources(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_sys/src/app/app_facade_access.cpp"
   "${REPO_ROOT}/modules/core_chat/src/domain/chat_model.cpp"
@@ -218,7 +223,7 @@ target_link_options(${PREVIEW_TARGET} PRIVATE
   "-sSTACK_SIZE=262144" "-sENVIRONMENT=web,node"
   "SHELL:--preload-file \"${CMAKE_CURRENT_LIST_DIR}/data@/\""
   "SHELL:--preload-file \"${REPO_ROOT}/docs/reticulum/pages/trail-mate/index.mu@/pages/index.mu\""
-  "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','ccall','HEAPU8']")
+  "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','ccall','HEAPU8','FS']")
 set_target_properties(${PREVIEW_TARGET} PROPERTIES SUFFIX ".js" OUTPUT_NAME "${OUTPUT_NAME}"
   RUNTIME_OUTPUT_DIRECTORY "${REPO_ROOT}/site/assets/native")
 file(GLOB_RECURSE PREVIEW_DATA_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/data/*")

@@ -107,6 +107,7 @@ void refresh_compass_widget(void* context);
 
 WidgetHandle create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
 {
+    if (!platform::ui::orientation::heading_supported()) return {};
     auto* memory = create_widget_state<CompassWidgetUi>();
     if (!memory) return {};
     auto& compass = *memory;
@@ -206,7 +207,7 @@ void refresh_compass_widget(void* context)
 
     const auto self = platform::ui::gps::get_data();
     const auto heading = platform::ui::orientation::get_heading();
-    const bool has_heading_sensor = platform::ui::orientation::get_screen_orientation().sensor_available;
+    const bool has_heading_sensor = platform::ui::orientation::heading_supported();
     const bool self_valid = self.valid;
 
     double best_distance = 0.0;

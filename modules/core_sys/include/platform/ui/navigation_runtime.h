@@ -35,7 +35,7 @@ struct Snapshot
     double distance_m = 0;
     char path[160]{};
 };
-#if defined(ARDUINO_ARCH_ESP32)
+#if defined(ARDUINO_ARCH_ESP32) || defined(ESP_PLATFORM)
 bool supported();
 bool submit(const Request& request);
 bool poll(Snapshot& snapshot);

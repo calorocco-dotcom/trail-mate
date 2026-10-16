@@ -11,6 +11,7 @@
 #include "hostlink/c6/c6_protocol.h"
 #include "platform/esp/idf_common/wireless_companion/c6_companion.h"
 #include "platform/ui/settings_store.h"
+#include "platform/ui/wifi_access_runtime.h"
 
 #if defined(TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4) || defined(TRAIL_MATE_ESP_BOARD_TAB5)
 #define TRAIL_MATE_WIFI_RUNTIME_C6_ASYNC_SCAN 1
@@ -597,6 +598,40 @@ bool apply_enabled(bool enabled)
         return saved && !enabled;
     }
     return saved && c6::c6_companion().configureWifi(make_companion_wifi_config(config));
+}
+
+bool set_user_enabled(bool enabled)
+{
+    const auto access = wifi_access::status();
+    if (!is_supported() || access.non_preemptible_active || access.ota_active ||
+        access.exclusive_owner != wifi_access::ExclusiveOwner::None || (enabled && !c6_present()))
+        return false;
+    if (!s_runtime.config_cached) (void)load_saved_config();
+    const bool previous = s_runtime.saved_config.enabled;
+    const auto persist = [](bool value)
+    {
+        settings_store::put_bool(kSettingsNs, kWifiEnabledKey, value);
+        if (settings_store::get_bool(kSettingsNs, kWifiEnabledKey, !value) != value) return false;
+        s_runtime.saved_config.enabled = value;
+        return true;
+    };
+    // A toggle edits only the enabled preference, preserving credentials and
+    // profile order. Revoke client leases before stopping the C6 transport.
+    if (!persist(enabled)) return false;
+    const bool clients_stopped = enabled || wifi_access::set_transport_enabled(false);
+    const bool configured = clients_stopped && (!c6_present() ||
+                                                c6::c6_companion().configureWifi(make_companion_wifi_config(s_runtime.saved_config)));
+    if (configured && (!enabled || wifi_access::set_transport_enabled(true)))
+    {
+        reset_automatic_profile_attempts();
+        return true;
+    }
+    (void)persist(previous);
+    // Restore the C6's requested configuration even when transmission failed.
+    s_runtime.saved_config.enabled = previous;
+    if (c6_present()) (void)c6::c6_companion().configureWifi(make_companion_wifi_config(s_runtime.saved_config));
+    (void)wifi_access::set_transport_enabled(previous);
+    return false;
 }
 
 bool suspend_for_external_storage(ExternalStorageSuspension* out_suspension)

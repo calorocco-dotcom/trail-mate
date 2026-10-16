@@ -47,7 +47,10 @@ DecodeResult Decoder::next(PcmFrame& out)
     // Limit garbage scanning per iteration so storage corruption cannot starve focus/stop commands.
     for (unsigned attempt = 0; attempt < 4; attempt++)
     {
-        if (self.used < sizeof(self.input_bytes) && self.offset < self.input->size())
+        // Refill in batches from the existing PSRAM window. Topping it up after
+        // every MP3 frame turns sequential playback into small SD seek/reads.
+        // Half a window still exceeds the decoder's largest supported frame.
+        if (self.used < sizeof(self.input_bytes) / 2 && self.offset < self.input->size())
         {
             const auto wanted = std::min<uint32_t>(sizeof(self.input_bytes) - self.used, self.input->size() - self.offset);
             const auto count = self.input->read_at(self.offset, self.input_bytes + self.used, wanted);

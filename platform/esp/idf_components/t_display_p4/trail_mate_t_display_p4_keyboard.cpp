@@ -6,9 +6,11 @@
 #include <memory>
 
 #include "boards/t_display_p4/t_display_p4_board.h"
-#include "bus/i2c/software_i2c.h"
+#include "bus/i2c/hardware_i2c_1.h"
 #include "chip/i2c/tca8418.h"
 #include "chip/i2c/xl95x5.h"
+#include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,9 +31,9 @@ namespace
 
 constexpr const char* kTag = "t-display-p4-kbd";
 
-// P2 is a dedicated, bit-banged two-device bus on the K270 keyboard. It is
-// not the board SYS-I2C or external I2C bus, so this adapter owns its two
-// LilyGO SoftwareI2c instances for the lifetime of the P4 keyboard.
+// P2 has a dedicated HP I2C0 bus. SYS devices use LP I2C0 and the external
+// devices use HP I2C1, matching LilyGO's three-bus allocation. The TCA8418
+// device borrows the XL9555 bus; it never owns or reconfigures its GPIOs.
 constexpr uint32_t kPowerSettleMs = 50;
 constexpr uint32_t kResetDelayMs = 10;
 constexpr uint32_t kPollIntervalMs = 30;
@@ -106,8 +108,8 @@ uint8_t s_i2c_failures = 0;
 uint32_t s_next_attach_ms = 0;
 uint8_t s_ptt_number = 0;
 lv_obj_t* s_ptt_screen = nullptr;
-std::shared_ptr<cpp_bus_driver::SoftwareI2c> s_xl9555_bus;
-std::shared_ptr<cpp_bus_driver::SoftwareI2c> s_tca8418_bus;
+std::shared_ptr<cpp_bus_driver::HardwareI2c1> s_xl9555_bus;
+std::shared_ptr<cpp_bus_driver::HardwareI2c1> s_tca8418_bus;
 std::unique_ptr<cpp_bus_driver::Xl95x5> s_xl9555;
 std::unique_ptr<cpp_bus_driver::Tca8418> s_tca8418;
 
@@ -118,6 +120,10 @@ const boards::t_display_p4::BoardProfile::KeyboardModule& keyboard_module()
 
 void reset_vendor_driver_state()
 {
+    // The vendor wrappers have no RAII Deinit. Remove the borrowed device
+    // before the owning device/bus, including after a failed probe or retry.
+    if (s_tca8418_bus) s_tca8418_bus->Deinit(false);
+    if (s_xl9555_bus) s_xl9555_bus->Deinit(true);
     s_tca8418.reset();
     s_xl9555.reset();
     s_tca8418_bus.reset();
@@ -143,6 +149,13 @@ bool reset_tca8418_via_xl9555()
     return true;
 }
 
+bool probe_keyboard_bus(uint16_t address)
+{
+    // Hot-plug detection runs on the UI task: never use the vendor's 1 s
+    // timeout when an optional accessory or one of its lines is unavailable.
+    return s_xl9555_bus && i2c_master_probe(s_xl9555_bus->bus_handle(), address, 5) == ESP_OK;
+}
+
 bool initialize_controller()
 {
     const auto& keyboard = keyboard_module();
@@ -152,15 +165,49 @@ bool initialize_controller()
         ESP_LOGW(kTag, "P4 keyboard cannot prepare GPIO45/46 I/O domain at 3300mV");
         return false;
     }
-    vTaskDelay(pdMS_TO_TICKS(kPowerSettleMs));
+    // The I/O supply is held for the board's lifetime. Settle it before UI
+    // startup only; sleeping for 50 ms on every missing-keyboard retry would
+    // stall rendering/touch and cause periodic display-lock timeouts.
+    if (s_poll_timer == nullptr) vTaskDelay(pdMS_TO_TICKS(kPowerSettleMs));
 
     reset_vendor_driver_state();
-    s_xl9555_bus = std::make_shared<cpp_bus_driver::SoftwareI2c>(keyboard.sda, keyboard.scl);
-    s_tca8418_bus = std::make_shared<cpp_bus_driver::SoftwareI2c>(keyboard.sda, keyboard.scl);
+    s_xl9555_bus = std::make_shared<cpp_bus_driver::HardwareI2c1>(keyboard.sda, keyboard.scl, I2C_NUM_0);
+    if (!s_xl9555_bus->InitBus())
+    {
+        ESP_LOGW(kTag, "Keyboard HP I2C0 bus initialization failed");
+        reset_vendor_driver_state();
+        return false;
+    }
+    if (!probe_keyboard_bus(keyboard.xl9555))
+    {
+        // Probe before constructing/configuring devices: an absent accessory
+        // should not flood the console with five vendor config lines per retry.
+        const uint32_t now = lv_tick_get();
+        if (!s_last_i2c_failure_log_ms || static_cast<uint32_t>(now - s_last_i2c_failure_log_ms) >= 30000)
+        {
+            s_last_i2c_failure_log_ms = now ? now : 1;
+            const bool tca_ack = probe_keyboard_bus(keyboard.tca8418);
+            uint8_t expander_mask = 0;
+            for (unsigned index = 1; index < 8; ++index)
+                if (probe_keyboard_bus(0x20 + index)) expander_mask |= 1U << index;
+            const auto irq = static_cast<gpio_num_t>(keyboard.interrupt);
+            (void)gpio_set_direction(irq, GPIO_MODE_INPUT);
+            (void)gpio_set_pull_mode(irq, GPIO_PULLDOWN_ONLY);
+            ESP_LOGW(kTag, "Keyboard P2 idle SDA%d=%d SCL%d=%d INT%d=%d",
+                     keyboard.sda, gpio_get_level(static_cast<gpio_num_t>(keyboard.sda)),
+                     keyboard.scl, gpio_get_level(static_cast<gpio_num_t>(keyboard.scl)),
+                     keyboard.interrupt, gpio_get_level(irq));
+            ESP_LOGW(kTag, "Keyboard ACK XL9555=0 TCA8418=%u alternate_expanders=0x%02X",
+                     tca_ack ? 1U : 0U, expander_mask);
+        }
+        reset_vendor_driver_state();
+        return false;
+    }
+    s_tca8418_bus = std::make_shared<cpp_bus_driver::HardwareI2c1>(s_xl9555_bus);
     s_xl9555 = std::make_unique<cpp_bus_driver::Xl95x5>(s_xl9555_bus, keyboard.xl9555);
     s_tca8418 = std::make_unique<cpp_bus_driver::Tca8418>(s_tca8418_bus, keyboard.tca8418);
 
-    // The device protocol is not reimplemented here. SoftwareI2c, Xl95x5,
+    // The device protocol is not reimplemented here. HardwareI2c1, Xl95x5,
     // Tca8418::Init(), matrix setup, FIFO decoding, and IRQ clearing are all
     // LilyGO cpp_bus_driver calls. This file only binds that vendor driver to
     // P4 LDO/reset wiring and Trail's event route.

@@ -16,8 +16,14 @@ inline void vTaskDelete(TaskHandle_t) {}
 inline TickType_t xTaskGetTickCount() { return runtime_test::tick; }
 inline void vTaskDelay(TickType_t ticks)
 {
+    ++runtime_test::delays;
     runtime_test::tick += ticks;
     assert(runtime_test::tick < 20000);
+    if (runtime_test::on_delay) runtime_test::on_delay();
+}
+inline void taskYIELD()
+{
+    ++runtime_test::yields;
     if (runtime_test::on_delay) runtime_test::on_delay();
 }
 inline void ulTaskNotifyTake(int, TickType_t wait) { vTaskDelay(wait); }

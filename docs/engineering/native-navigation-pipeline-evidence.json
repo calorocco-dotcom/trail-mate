@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-15",
+  "scope": "Application archive pipeline; production-worker and LVGL/session evidence is recorded separately in native-navigation-application-evidence.json",
+  "source_map": "maps/tmap/osm/london-osm-z13-17.tmap",
+  "source_map_sha256": "122b58d9ae7eb124f5f67d23dba204deb53506fd3ede17cdafb2022a814e75a1",
+  "runs": [
+    {
+      "route": "london",
+      "busy_every": 0,
+      "length_cm": 2077862,
+      "legs": 550,
+      "points": 1171,
+      "search_provider_peak": 2108244,
+      "after_search": 10024,
+      "export_provider_peak": 11800,
+      "map_search_read_bytes": 2229930944,
+      "archive_bytes": 43776,
+      "live_after_complete": 0
+    },
+    {
+      "route": "london",
+      "busy_every": 7,
+      "length_cm": 2077862,
+      "legs": 550,
+      "points": 1171,
+      "search_provider_peak": 2108244,
+      "after_search": 10024,
+      "export_provider_peak": 11800,
+      "map_search_read_bytes": 2229930944,
+      "archive_bytes": 43776,
+      "live_after_complete": 0
+    }
+  ],
+  "output_sha256": "f59deefa7e709227248cea21380c337abb3df83b95cf2f88e878e8a763e2fbea",
+  "esp32s3_max_individual_frame_bytes": 208,
+  "esp32s3_stack_gate": 240,
+  "physical_board_resources": "not measured"
+}

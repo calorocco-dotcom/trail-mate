@@ -32,10 +32,13 @@ using Projection = gps::ui::shell::Projection;
 #include "ui/support/kml_navigation_match.h"
 #include "ui/support/kml_route_projection.h"
 #include "ui/support/lvgl_fs_utils.h"
+#include "ui/support/native_navigation_controls.h"
+#include "ui/support/native_navigation_session.h"
 #include "ui/support/route_image_kml_reader.h"
 #include "ui/support/route_image_memory.h"
 #include "ui/support/route_image_source_state.h"
 #include "ui/support/route_segment_sampling.h"
+#include "ui/support/tmroute_map.h"
 #include "ui/team_presentation/team_member_label.h"
 #include "ui/ui_common.h"
 #include "ui/widgets/map/map_viewport.h"
@@ -275,6 +278,13 @@ bool s_route_image_cache_build_running = false;
 bool s_route_deviation_active = false;
 double s_route_deviation_distance_m = 0.0;
 ::ui::support::KmlNavigationMatch* s_route_navigation = nullptr;
+::ui::support::TmRouteMap* s_native_route = nullptr;
+::ui::support::TmRouteMap* s_native_candidate = nullptr;
+::ui::support::NativeNavigationSession* s_native_session = nullptr;
+std::string s_native_candidate_path;
+uint32_t s_native_candidate_started = 0;
+::ui::support::NativeNavigationControls s_native_controls;
+bool s_native_center_pending = false;
 std::size_t s_route_selected_image = 0;
 uint32_t s_route_image_strip_items_hash = 0;
 std::vector<lv_obj_t*> s_member_buttons;
@@ -299,6 +309,32 @@ void sync_map_tile_loader_pause();
 void sync_map_chrome_visibility();
 void rebuild_map_control_group();
 bool load_map_track_file_impl(const char* path, bool show_fail_toast);
+void clear_map_track_overlay();
+
+void clear_native_session()
+{
+    ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+    ::ui::support::RouteUiMemory::destroy(s_native_session);
+    s_native_candidate_path.clear();
+}
+
+void sync_native_controls()
+{
+    using Session = ::ui::support::NativeNavigationSession;
+    ::ui::support::NativeNavigationControls::View view;
+    const auto& config = app::appFacade().readConfig();
+    const auto phase = s_native_session ? s_native_session->phase() : Session::Phase::Stopped;
+    view.active = config.route_enabled && s_track_file == config.route_path;
+    view.ready = s_native_route && s_native_route->ready();
+    view.session = s_native_session != nullptr;
+    view.replanning = phase == Session::Phase::Replanning || phase == Session::Phase::Applying;
+    view.failed = phase == Session::Phase::Failed;
+    view.arrived = phase == Session::Phase::Arrived;
+    view.automatic = !s_native_session || s_native_session->automatic();
+    view.storage = platform::ui::device::sd_ready();
+    view.planning_supported = platform::ui::navigation::supported();
+    s_native_controls.update(view, s_track_file.c_str());
+}
 
 ::ui::map::MapOverlaySnapshot* allocate_overlay_snapshot()
 {
@@ -660,8 +696,14 @@ void set_button_label(lv_obj_t* btn, const char* text)
 
 void clear_map_controls()
 {
+    clear_native_session();
     s_map_popup.reset();
     if (s_route_navigation) s_route_navigation->cancel();
+    if (s_native_route)
+    {
+        ::ui::support::RouteUiMemory::destroy(s_native_route);
+        s_track_overlay_active = false;
+    }
     ::ui::components::map_poi_search::close();
     s_map_search_btn = nullptr;
     s_map_pick_btn = s_map_cancel_btn = nullptr;
@@ -1054,7 +1096,116 @@ bool route_deviation_mode_active()
 {
     return s_track_overlay_active &&
            s_track_overlay_kind == TrackOverlayFileKind::Route &&
-           !s_track_points.empty();
+           (!s_track_points.empty() || s_native_route);
+}
+
+bool project_native_route(void*, tmap::GeoPoint point, tmap::ScreenPoint& output)
+{
+    lv_point_t screen;
+    if (!::ui::widgets::map::project_point(s_map_runtime, {true, point.latitude / 1e7, point.longitude / 1e7}, screen)) return false;
+    output.x = static_cast<float>(screen.x);
+    output.y = static_cast<float>(screen.y);
+    return true;
+}
+
+void sync_native_viewport()
+{
+    if (!s_native_route || !s_map_viewport || !lv_obj_is_valid(s_map_viewport)) return;
+    ::ui::widgets::map::GeoPoint center;
+    if (!::ui::widgets::map::screen_center(s_map_runtime, center)) return;
+    tmap::MapViewport viewport;
+    viewport.center = {static_cast<int32_t>(std::llround(center.lat * 1e7)), static_cast<int32_t>(std::llround(center.lon * 1e7))};
+    viewport.zoom = static_cast<uint8_t>(current_map_zoom());
+    viewport.width = static_cast<float>(lv_obj_get_content_width(s_map_viewport));
+    viewport.height = static_cast<float>(lv_obj_get_content_height(s_map_viewport));
+    if (viewport.width <= 0 || viewport.height <= 0 || viewport.width > 32000 || viewport.height > 32000) return;
+    // In China the renderer can transform WGS coordinates. Expand only the
+    // index query; projection/clipping uses the exact existing renderer.
+    const auto padding = app::configFacade().readConfig().map_coord_system ? 200000 : 0;
+    s_native_route->setViewport(viewport, project_native_route, nullptr, padding);
+    s_native_route->attach(::ui::widgets::map::widgets(s_map_runtime).overlay_layer);
+}
+
+void advance_native_session(tmap::GeoPoint point, bool valid, uint32_t age, uint32_t now, bool following)
+{
+    using Session = ::ui::support::NativeNavigationSession;
+    if (!s_native_route || !s_native_route->ready()) return;
+    if (!following)
+    {
+        if (s_native_session && s_native_session->phase() != Session::Phase::Arrived) clear_native_session();
+        return;
+    }
+    if (!s_native_session)
+    {
+        s_native_session = ::ui::support::RouteUiMemory::create<Session>();
+        if (!s_native_session)
+        {
+            set_map_notice("Not enough PSRAM for navigation", 3000);
+            return;
+        }
+        s_native_session->destination(s_native_route->destination());
+    }
+    const auto action = s_native_session->tick(s_native_route->guidance(now), point, valid, age, now);
+    if (action == Session::Action::ApplyCandidate)
+    {
+        s_native_candidate_path = s_native_session->candidatePath();
+        s_native_candidate = ::ui::support::RouteUiMemory::create<::ui::support::TmRouteMap>();
+        s_native_candidate_started = now;
+        if (!s_native_candidate || !s_native_candidate->begin(s_native_candidate_path.c_str()))
+        {
+            ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+            s_native_session->applied(false);
+        }
+    }
+    if (s_native_candidate)
+    {
+        s_native_candidate->poll(false, {}, now, 6000, false, sys::millis_now);
+        if (s_native_candidate->ready())
+        {
+            auto edit = app::appFacade().beginConfigEdit();
+            if (edit && s_native_candidate_path.size() < sizeof(edit.config().route_path))
+            {
+                edit.config().route_enabled = true;
+                std::strcpy(edit.config().route_path, s_native_candidate_path.c_str());
+                auto* previous = s_native_route;
+                s_native_route = s_native_candidate;
+                s_native_candidate = nullptr;
+                s_track_file = s_native_candidate_path;
+                s_native_candidate_path.clear();
+                s_native_session->destination(s_native_route->destination());
+                s_native_session->applied(true);
+                ::ui::support::RouteUiMemory::destroy(previous);
+                edit.commit(app::AppConfigChangeSet::route());
+                set_map_notice("New route active", 1500);
+                request_refresh_view();
+                return;
+            }
+        }
+        if (now - s_native_candidate_started > 15000 ||
+            (s_native_candidate->error() != tmap::Result::More && s_native_candidate->error() != tmap::Result::Ok))
+        {
+            ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+            s_native_candidate_path.clear();
+            s_native_session->applied(false);
+            request_refresh_view();
+        }
+    }
+    // Arrival is latched. Retry a temporarily busy config edit without
+    // recalculating or replaying arrival, then retain the completed summary.
+    if (s_native_session->phase() == Session::Phase::Arrived)
+    {
+        ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+        s_native_candidate_path.clear();
+        auto edit = app::appFacade().beginConfigEdit();
+        if (edit)
+        {
+            edit.config().route_enabled = false;
+            edit.config().route_path[0] = 0;
+            edit.commit(app::AppConfigChangeSet::route());
+            set_map_notice("Arrived at destination", 2000);
+            request_refresh_view();
+        }
+    }
 }
 
 void project_route_point_to_local_m(double ref_lat,
@@ -1128,6 +1279,40 @@ bool nearest_route_distance_m(double self_lat,
 
 void advance_route_navigation()
 {
+    if (s_native_route && s_root && s_projection == Projection::Map)
+    {
+        if (!platform::ui::device::sd_ready())
+        {
+            clear_native_session();
+            s_native_route->storageLost();
+            request_refresh_view();
+            return;
+        }
+        sync_native_viewport();
+        const auto fix = platform::ui::gps::get_data();
+        const bool valid = fix.valid && std::isfinite(fix.lat) && std::isfinite(fix.lng) && std::abs(fix.lat) <= 90 && std::abs(fix.lng) <= 180;
+        const auto& config = app::configFacade().readConfig();
+        const bool following = config.route_enabled && s_track_file == config.route_path && !s_location_request && !s_map_target;
+        const tmap::GeoPoint point{valid ? static_cast<int32_t>(std::llround(fix.lat * 1e7)) : 0,
+                                   valid ? static_cast<int32_t>(std::llround(fix.lng * 1e7)) : 0};
+        const bool changed = s_native_route->poll(valid, point, sys::millis_now(), fix.age, following, sys::millis_now);
+        if (s_native_center_pending && s_native_route->ready())
+        {
+            auto viewport = map_workspace_model().viewport();
+            const auto center = valid && following ? point : s_native_route->destination();
+            viewport.center_lat = center.latitude / 1e7;
+            viewport.center_lon = center.longitude / 1e7;
+            viewport.zoom = kDefaultTrackerZoom;
+            (void)map_workspace_model().setViewport(viewport);
+            s_map_zoom = kDefaultTrackerZoom;
+            s_map_pan_x = s_map_pan_y = 0;
+            s_native_center_pending = false;
+            request_refresh_view();
+        }
+        if (changed) request_refresh_view();
+        advance_native_session(point, valid, fix.age, sys::millis_now(), following);
+        return;
+    }
     if (!s_route_navigation) return;
     double lat = 0, lon = 0;
     if (!s_root || s_projection != Projection::Map || s_location_request || s_map_target ||
@@ -1792,6 +1977,58 @@ void sync_map_notice_overlay()
 
     s_map_notice_text[0] = '\0';
     s_map_notice_until_ms = 0;
+    if (s_native_route)
+    {
+        char text[128]{};
+        const char* message = ::ui::i18n::tr("Loading saved route...");
+        const auto& config = app::configFacade().readConfig();
+        const auto guide = s_native_route->guidance(now);
+        using Session = ::ui::support::NativeNavigationSession;
+        if (!platform::ui::device::sd_ready()) message = ::ui::i18n::tr("Route storage unavailable");
+        else if (s_native_route->error() != tmap::Result::Ok && s_native_route->error() != tmap::Result::More)
+            message = ::ui::i18n::tr("Route file unavailable or damaged; reload route");
+        else if (!s_native_route->ready())
+        {
+        }
+        else if (s_native_session && (s_native_session->phase() == Session::Phase::Replanning || s_native_session->phase() == Session::Phase::Applying))
+            message = ::ui::i18n::tr("Replanning route... | Menu to cancel");
+        else if (s_native_session && s_native_session->phase() == Session::Phase::Failed)
+            message = ::ui::i18n::tr("Replan failed; original route kept | Menu to retry");
+        else if (s_native_session && s_native_session->phase() == Session::Phase::Arrived)
+            message = ::ui::i18n::tr("Arrived | Navigation finished");
+        else if (s_native_route->dense()) message = ::ui::i18n::tr("Zoom in to show route detail");
+        else if (!config.route_enabled || s_track_file != config.route_path)
+        {
+            std::snprintf(text, sizeof(text), ::ui::i18n::tr("Route preview | %.1f km"), s_native_route->lengthM() / 1000.0);
+            message = text;
+        }
+        else if (guide.status == ::navigation::GuidanceStatus::OffRoute)
+        {
+            std::snprintf(text, sizeof(text), ::ui::i18n::tr("Off route %.0fm"), guide.deviation_m);
+            message = text;
+        }
+        else if (guide.status == ::navigation::GuidanceStatus::Arrived) message = ::ui::i18n::tr("Arrived at destination");
+        else if (guide.status == ::navigation::GuidanceStatus::Ambiguous) message = ::ui::i18n::tr("Route position ambiguous");
+        else if (guide.status == ::navigation::GuidanceStatus::NoFix) message = ::ui::i18n::tr("Route: waiting for GPS");
+        else if (guide.status == ::navigation::GuidanceStatus::Following)
+        {
+            char remaining[20]{}, turn[20]{};
+            ::ui::menu::dashboard::format_distance(guide.remaining_m, remaining, sizeof(remaining));
+            ::ui::menu::dashboard::format_distance(guide.turn_m, turn, sizeof(turn));
+            const char* pattern = guide.turn == ::navigation::Turn::Left ? "Left in %s | %s left" : guide.turn == ::navigation::Turn::Right ? "Right in %s | %s left"
+                                                                                                : guide.turn == ::navigation::Turn::UTurn   ? "U-turn in %s | %s left"
+                                                                                                                                            : nullptr;
+            if (pattern) std::snprintf(text, sizeof(text), ::ui::i18n::tr(pattern), turn, remaining);
+            else std::snprintf(text, sizeof(text), ::ui::i18n::tr("Continue | %s left"), remaining);
+            message = text;
+        }
+        else message = ::ui::i18n::tr("Matching route...");
+        ::ui::i18n::set_content_label_text_raw(s_map_notice_label, message);
+        lv_obj_set_style_bg_color(s_map_notice_panel, lv_color_hex(guide.status == ::navigation::GuidanceStatus::OffRoute ? 0x8F2E1D : 0x25170D), 0);
+        lv_obj_clear_flag(s_map_notice_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_map_notice_panel);
+        return;
+    }
     if (s_route_deviation_active && std::isfinite(s_route_deviation_distance_m))
     {
         char notice[40]{};
@@ -2782,6 +3019,9 @@ void keep_only_current_position_overlay(::ui::map::MapOverlaySnapshot& snapshot)
 
 void clear_map_track_overlay()
 {
+    clear_native_session();
+    ::ui::support::RouteUiMemory::destroy(s_native_route);
+    s_native_center_pending = false;
     ::ui::support::KmlNavigationMatch::destroy(s_route_navigation);
     s_track_overlay_active = false;
     s_track_points.clear();
@@ -2817,10 +3057,21 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
     ElevationSampleBuffer elevation_samples;
     const std::string normalized = ::ui::fs::normalize_path(path);
     TrackOverlayFileKind file_kind = TrackOverlayFileKind::Track;
+    clear_native_session();
+    ::ui::support::RouteUiMemory::destroy(s_native_route);
     ::ui::support::KmlNavigationMatch::destroy(s_route_navigation);
     ::ui::support::KmlNavigationMatch* navigation = nullptr;
+    const char* native_error = nullptr;
     bool loaded = false;
-    if (ends_with_ignore_case(normalized, ".csv"))
+    if (ends_with_ignore_case(normalized, ".tmroute"))
+    {
+        s_native_route = ::ui::support::RouteUiMemory::create<::ui::support::TmRouteMap>();
+        loaded = s_native_route && s_native_route->begin(path);
+        if (!loaded) native_error = s_native_route ? "Invalid route path" : "Not enough PSRAM for navigation";
+        s_native_center_pending = loaded;
+        file_kind = TrackOverlayFileKind::Route;
+    }
+    else if (ends_with_ignore_case(normalized, ".csv"))
     {
         loaded = load_csv_track_points(path, points);
     }
@@ -2840,7 +3091,7 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
         ::ui::support::KmlNavigationMatch::destroy(navigation);
         if (show_fail_toast)
         {
-            set_map_notice("No track yet", 1500);
+            set_map_notice(native_error ? native_error : "No track yet", 1500);
             request_refresh_view();
         }
         clear_map_track_overlay();
@@ -2858,7 +3109,8 @@ bool load_map_track_file_impl(const char* path, bool show_fail_toast)
     {
         s_route_elevation_samples = std::move(elevation_samples);
         s_route_asset_id = route_asset_id_for_path(path);
-        (void)load_kml_route_images(path);
+        if (navigation) (void)load_kml_route_images(path);
+        else s_route_images.clear();
         if (s_route_images.empty())
         {
             s_route_image_strip_visible = false;
@@ -2989,6 +3241,7 @@ void apply_map_drag_preview()
     ::ui::widgets::map::apply_model_lightweight(
         s_map_runtime,
         build_map_model(snapshot));
+    sync_native_viewport();
 }
 
 void sync_map_tile_loader_pause()
@@ -3088,6 +3341,8 @@ void refresh_view()
         ::ui::widgets::map::clear(s_map_runtime);
     }
     sync_map_control_labels(snapshot);
+    sync_native_viewport();
+    sync_native_controls();
     sync_map_route_image_strip();
 }
 
@@ -3472,6 +3727,7 @@ void open_map_help_modal()
 
 void close_tracker_modal()
 {
+    s_native_controls.reset();
     if (!s_tracker_modal || !lv_obj_is_valid(s_tracker_modal))
     {
         s_tracker_modal = nullptr;
@@ -3700,6 +3956,65 @@ void map_management_action(lv_event_t* event)
     open_map_management(action);
 }
 
+void native_navigation_action(lv_event_t* event)
+{
+    using Session = ::ui::support::NativeNavigationSession;
+    const auto action = reinterpret_cast<uintptr_t>(lv_event_get_user_data(event));
+    close_tracker_modal();
+    if (!s_native_route) return;
+    if (action == 0) // Replan or cancel the in-flight candidate.
+    {
+        if (!s_native_session)
+        {
+            set_map_notice("Navigation is not active", 1500);
+            return;
+        }
+        const auto phase = s_native_session->phase();
+        if (phase == Session::Phase::Replanning || phase == Session::Phase::Applying)
+        {
+            ::ui::support::RouteUiMemory::destroy(s_native_candidate);
+            s_native_candidate_path.clear();
+            s_native_session->cancelReplan();
+            set_map_notice("Replan cancelled; original route kept", 1500);
+        }
+        else
+        {
+            const auto fix = platform::ui::gps::get_data();
+            const bool valid = fix.valid && std::isfinite(fix.lat) && std::isfinite(fix.lng) && std::abs(fix.lat) <= 90 && std::abs(fix.lng) <= 180;
+            const tmap::GeoPoint point{valid ? static_cast<int32_t>(std::llround(fix.lat * 1e7)) : 0,
+                                       valid ? static_cast<int32_t>(std::llround(fix.lng * 1e7)) : 0};
+            if (!valid || fix.age > 5000) set_map_notice("No GPS fix", 1500);
+            else if (!s_native_session->replan(point, valid, fix.age, sys::millis_now())) set_map_notice("Replan unavailable; retry", 1500);
+        }
+    }
+    else if (action == 1) // Reload after a transient storage/parse failure.
+    {
+        const std::string path = s_track_file;
+        (void)load_map_track_file_impl(path.c_str(), true);
+    }
+    else // Stop, acknowledge arrival, or close an inactive preview.
+    {
+        const auto& cfg = app::appFacade().readConfig();
+        const bool restore = cfg.route_enabled && s_track_file != cfg.route_path;
+        if (!restore)
+        {
+            auto edit = app::appFacade().beginConfigEdit();
+            if (!edit)
+            {
+                set_map_notice("Navigation settings busy; retry", 1500);
+                return;
+            }
+            edit.config().route_enabled = false;
+            edit.config().route_path[0] = 0;
+            edit.commit(app::AppConfigChangeSet::route());
+        }
+        clear_map_track_overlay();
+        if (restore) (void)load_configured_route_overlay(true);
+        set_map_notice("Navigation finished", 1500);
+    }
+    request_refresh_view();
+}
+
 void open_map_management(MapControlAction action)
 {
     close_tracker_modal();
@@ -3708,7 +4023,8 @@ void open_map_management(MapControlAction action)
     const auto frame = ::ui::components::dialog_frame::create(s_root,
                                                               {contours ? "Contours" : navigation ? "Navigation"
                                                                                                   : "Tracks",
-                                                               304, contours ? 116 : 180,
+                                                               304, contours ? 116 : navigation && s_native_route ? 224
+                                                                                                                  : 180,
                                                                tracker_modal_close_event_cb, tracker_modal_key_event_cb});
     s_tracker_modal = frame.overlay;
     lv_obj_add_event_cb(s_tracker_modal, tracker_modal_bg_event_cb, LV_EVENT_CLICKED, nullptr);
@@ -3751,6 +4067,46 @@ void open_map_management(MapControlAction action)
             if (unload && !active) lv_obj_add_state(button, LV_STATE_DISABLED);
             else if (app_g) lv_group_add_obj(app_g, button);
             if (!unload) first = button;
+        }
+        if (navigation && s_native_route)
+        {
+            s_native_controls.status = label;
+            s_native_controls.close = frame.close;
+            using Session = ::ui::support::NativeNavigationSession;
+            const auto phase = s_native_session ? s_native_session->phase() : Session::Phase::Stopped;
+            const bool replanning = phase == Session::Phase::Replanning || phase == Session::Phase::Applying;
+            const bool arrived = phase == Session::Phase::Arrived;
+            auto* replan = create_tracker_modal_button(frame.body, ::ui::i18n::tr(replanning ? "Cancel replan" : phase == Session::Phase::Failed ? "Retry replan"
+                                                                                                                                                 : "Replan from here"),
+                                                       native_navigation_action, nullptr);
+            s_native_controls.replan = replan;
+            if (!s_native_session || arrived) lv_obj_add_state(replan, LV_STATE_DISABLED);
+            else if (app_g) lv_group_add_obj(app_g, replan);
+            auto* reload = create_tracker_modal_button(frame.body, ::ui::i18n::tr("Reload route"), native_navigation_action, reinterpret_cast<void*>(1));
+            s_native_controls.reload = reload;
+            if (app_g) lv_group_add_obj(app_g, reload);
+            if (s_native_session && !arrived)
+            {
+                auto* automatic = lv_checkbox_create(frame.body);
+                s_native_controls.automatic = automatic;
+                lv_checkbox_set_text(automatic, ::ui::i18n::tr("Automatic replan"));
+                if (s_native_session->automatic()) lv_obj_add_state(automatic, LV_STATE_CHECKED);
+                lv_obj_add_event_cb(
+                    automatic, [](lv_event_t* event)
+                    {
+                    if (s_native_session) s_native_session->setAutomatic(lv_obj_has_state(static_cast<lv_obj_t*>(lv_event_get_target(event)), LV_STATE_CHECKED)); },
+                    LV_EVENT_VALUE_CHANGED, nullptr);
+                lv_obj_add_event_cb(automatic, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+                if (app_g) lv_group_add_obj(app_g, automatic);
+            }
+            // Session stop remains reachable without scrolling the action list.
+            auto* stop = s_native_controls.createStop(frame.panel,
+                                                      ::ui::i18n::tr(arrived ? "Finish navigation" : active ? "Stop navigation"
+                                                                                                            : "Close preview"),
+                                                      native_navigation_action, reinterpret_cast<void*>(2), ::ui::page_profile::current().large_touch_hitbox);
+            lv_obj_add_event_cb(stop, tracker_modal_key_event_cb, LV_EVENT_KEY, nullptr);
+            if (app_g) lv_group_add_obj(app_g, stop);
+            sync_native_controls();
         }
     }
     if (app_g)

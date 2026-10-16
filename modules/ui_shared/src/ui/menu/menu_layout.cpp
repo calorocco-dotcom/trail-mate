@@ -742,7 +742,17 @@ void createAppButton(lv_obj_t* parent, AppScreen* app, size_t idx)
                          static_cast<int>(lv_image_get_src_width(icon)),
                          static_cast<int>(lv_image_get_src_height(icon)));
 
-        if (profile.icon_scale != 256)
+        if (profile.variant == ui::menu_profile::LayoutVariant::CompactGrid)
+        {
+            // Flex can make the image object shorter than its source. Scaling
+            // that already-cropped object loses the source's top/bottom rows.
+            // Fit the source inside its layout box instead; no bitmap copy.
+            const auto icon_width = std::max<lv_coord_t>(1, lv_image_get_src_width(icon) * profile.icon_scale / 256);
+            const auto icon_height = std::max<lv_coord_t>(1, lv_image_get_src_height(icon) * profile.icon_scale / 256);
+            lv_obj_set_size(icon, icon_width, icon_height);
+            lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CONTAIN);
+        }
+        else if (profile.icon_scale != 256)
         {
             const lv_coord_t icon_width = lv_image_get_src_width(icon);
             const lv_coord_t icon_height = lv_image_get_src_height(icon);
@@ -1175,6 +1185,7 @@ void createAppGrid()
             (profile.grid_pad_column * (profile.max_columns - 1)));
     }
     lv_coord_t grid_top = profile.grid_top_offset;
+    lv_coord_t grid_pad_vertical = 0;
     lv_obj_set_size(panel, panel_width, LV_PCT(profile.grid_height_pct));
     if (profile.variant == ui::menu_profile::LayoutVariant::CompactGrid)
     {
@@ -1183,13 +1194,18 @@ void createAppGrid()
         const lv_coord_t rows = std::max<lv_coord_t>(1, (available + profile.grid_pad_row) /
                                                             (profile.card_height + profile.grid_pad_row));
         const lv_coord_t height = rows * profile.card_height + (rows - 1) * profile.grid_pad_row;
-        lv_obj_set_height(panel, height);
-        grid_top = (screen_height - height) / 2;
+        // The viewport ends at the fixed bars. Centering a smaller viewport
+        // clips moving icons in empty space before they reach either bar.
+        const lv_coord_t bottom_bar = profile.show_node_id ? profile.top_bar_height : 0;
+        const lv_coord_t viewport_height = std::max<lv_coord_t>(1, screen_height - profile.top_bar_height - bottom_bar);
+        lv_obj_set_height(panel, viewport_height);
+        grid_top = profile.top_bar_height;
+        grid_pad_vertical = std::max<lv_coord_t>(0, (viewport_height - height) / 2);
     }
     lv_obj_set_style_pad_row(panel, profile.grid_pad_row, 0);
     lv_obj_set_style_pad_column(panel, profile.grid_pad_column, 0);
-    lv_obj_set_style_pad_top(panel, 0, 0);
-    lv_obj_set_style_pad_bottom(panel, 0, 0);
+    lv_obj_set_style_pad_top(panel, grid_pad_vertical, 0);
+    lv_obj_set_style_pad_bottom(panel, grid_pad_vertical, 0);
     lv_obj_set_style_pad_left(panel, profile.grid_pad_left, 0);
     lv_obj_set_style_pad_right(panel, profile.grid_pad_right, 0);
     lv_obj_set_scroll_dir(panel, profile.vertical_scroll ? LV_DIR_VER : LV_DIR_HOR);

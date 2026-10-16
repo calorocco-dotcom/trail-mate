@@ -181,7 +181,7 @@ class SdRuntimeFile
     bool seek(uint64_t offset);
     uint64_t position() const;
     uint64_t size() const;
-    // Only describes the most recent open/read/seek/size call. Busy leaves
+    // Only describes the most recent open/read/seek/size/position call. Busy leaves
     // the requested operation incomplete; callers may yield and try again.
     bool read_busy() const { return read_busy_; }
     bool flush();

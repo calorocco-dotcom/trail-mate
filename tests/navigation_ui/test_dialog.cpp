@@ -44,7 +44,7 @@ bool save()
 {
     assert(response.status == Status::Ready);
     response.status = Status::Saved;
-    std::strcpy(response.path, "/routes/navigation/nav-origin-ridge-12345678.kml");
+    std::strcpy(response.path, "/routes/navigation/nav-origin-ridge-12345678.tmroute");
     ++response.revision;
     return true;
 }
@@ -157,7 +157,7 @@ int main()
     tick();
     assert(find(lv_screen_active(), "Route ready: 1.2 km"));
     click("Save and preview");
-    assert(!dialog::is_open() && saved_path == "/routes/navigation/nav-origin-ridge-12345678.kml");
+    assert(!dialog::is_open() && saved_path == "/routes/navigation/nav-origin-ridge-12345678.tmroute");
     assert(lv_group_get_default() == original_group && leases == 0);
 
     fix = {};
@@ -166,7 +166,9 @@ int main()
     choose("Choose destination", "Summit", 301000000, 1201000000);
     click("Calculate route");
     assert(submitted == 2 && requested.origin.latitude_e7 == 300000000 && std::strcmp(requested.origin.name, "Park") == 0);
-    auto* cancel = lv_obj_get_parent(find(lv_screen_active(), "Cancel"));
+    auto* close_label = find(lv_screen_active(), LV_SYMBOL_CLOSE);
+    assert(close_label);
+    auto* cancel = lv_obj_get_parent(close_label);
     auto* overlay = lv_obj_get_parent(lv_obj_get_parent(cancel));
     auto* body = lv_obj_get_child(overlay, 1);
     lv_obj_update_layout(overlay);
@@ -176,7 +178,7 @@ int main()
     lv_obj_update_layout(overlay);
     lv_obj_get_coords(cancel, &after);
     assert(std::memcmp(&before, &after, sizeof(before)) == 0 && before.y1 >= 0 && before.y2 < 240);
-    click("Cancel");
+    click(LV_SYMBOL_CLOSE);
     assert(!dialog::is_open() && leases == 0 && lv_group_get_default() == original_group);
     lv_group_delete(original_group);
     lv_display_delete(display);

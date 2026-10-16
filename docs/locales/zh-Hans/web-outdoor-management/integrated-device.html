@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en" dir="ltr"><head><base href="../../../../site/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trail Mate — Outdoor communication and navigation</title>
+    <meta name="description" content="Trail Mate is an offline-first handheld firmware project for navigation, LoRa messaging, and field communication on ESP32 hardware.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&amp;family=Noto+Sans+SC:wght@400;500;700&amp;family=Zen+Maru+Gothic:wght@400;500;700&amp;display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="./assets/showcase/brand-logo.png">
+    <link rel="stylesheet" href="./components-dist/components.css">
+    <link rel="stylesheet" href="./styles.css?v=language-picker-2">
+    <link rel="stylesheet" href="./explorer.css?v=reading-surfaces-5">
+
+
+
+
+  <style type="text/css">.proposal-tag{display:inline-block;background:#ffcc00;color:#794f27;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:800;margin-left:6px}.proposal-nav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}.proposal-nav button{font-size:12px;padding:8px 12px}.proposal-nav .active{background:#19c8b9;color:#0f3e38}.proposal-card{border:2px solid #c4b89e;border-radius:20px;padding:20px;background:#fffaf0;box-shadow:0 5px 0 #bdaea080;margin-bottom:18px}.proposal-card h2,.proposal-card h3{color:#794f27;margin:0 0 12px}.proposal-card input,.proposal-card select,.proposal-card textarea{width:100%;box-sizing:border-box;background:#fffaf0;border:2px solid #c4b89e;border-radius:12px;padding:10px;color:#725d42;font:inherit}.proposal-card label{display:block;margin:12px 0 4px;font-size:13px}.proposal-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.proposal-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px dashed #c4b89e}.proposal-note{background:#fff0bc;padding:12px 16px;border-radius:12px;font-size:13px;margin:12px 0}.proposal-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.proposal-bottom{display:flex;justify-content:space-between;align-items:center;gap:14px;border:2px solid #c4b89e;background:#f7f3df;border-radius:16px;padding:14px 18px}.proposal-device{font-size:12px;color:#0f655d;background:#e6f9f6;border:1px solid #19c8b9;border-radius:14px;padding:7px 12px}.proposal-editor{position:absolute;z-index:700;right:18px;top:18px;bottom:18px;width:360px;overflow:auto}.proposal-editor .proposal-card{height:100%;overflow:auto}.proposal-map-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#725d42;background:repeating-linear-gradient(0deg,#c4b89e30 0 1px,transparent 1px 64px),repeating-linear-gradient(90deg,#c4b89e30 0 1px,transparent 1px 64px),#e6f9f6}.proposal-map-placeholder span{margin-right:360px}.proposal-tools{position:absolute;bottom:24px;left:24px;z-index:700;display:flex;gap:8px}.sidebar .intro{padding:16px;background:#ffefb1;border:2px solid #c4b89e;border-radius:20px;box-shadow:0 4px 0 #bdaea080}.sidebar .intro h1{font-size:23px}.proposal-content{padding:25px;overflow:auto;grid-column:2;background:#fffaf0}.proposal-list{display:flex;flex-direction:column;gap:10px}.proposal-list button{text-align:left;padding:13px}.proposal-list small{display:block;color:#8a7b66}.proposal-empty{padding:36px;background:#e6f9f6;border:2px dashed #c4b89e;border-radius:18px;text-align:center}.proposal-map-preview{height:240px;background:repeating-linear-gradient(90deg,#c4b89e30 0 1px,transparent 1px 48px),#e6f9f6;border-radius:18px;display:grid;place-items:center}.proposal-map-preview svg{width:100%;height:190px}@media(max-width:760px){.proposal-grid{grid-template-columns:1fr}.proposal-editor{position:relative;inset:auto;width:auto}.proposal-content{grid-column:1}.proposal-map-placeholder span{margin:0}.proposal-bottom{flex-wrap:wrap}}</style></head>
+  <body><div id="island-decoration"><div class="animal-background-tX6OV animal-bg-sprinkles-IgYnr page-island-background" aria-hidden="true"></div></div>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="./" data-i18n-aria="document.title" aria-label="Trail Mate — Outdoor communication and navigation">
+          <img class="brand-logo" src="../docs/images/logo_big.png" alt="" width="608" height="400">
+          <span class="brand-text">Trail Mate</span>
+        </a>
+
+        <div class="top-actions">
+          <a class="top-link" href="./geocaching/">Geocaching</a><a class="top-link" href="./tracks/">轨迹与路线<span class="proposal-tag">新增</span></a><a class="top-link" href="./device/">设备管理<span class="proposal-tag">新增</span></a>
+          <a class="top-link" href="https://github.com/vicliu624/trail-mate" data-i18n="top.github">GitHub</a>
+          <a class="top-link" href="https://github.com/vicliu624/trail-mate/wiki" data-i18n="top.wiki">Wiki</a>
+          <a class="top-link top-link-strong" href="#webflasher" data-i18n="top.flash">Flash</a>
+          <div class="language-toggle" role="group" data-i18n-aria="common.language" aria-label="Language">
+            <select id="site-language" data-i18n-aria="common.language" aria-label="Language" hidden=""><option value="en">English</option><option value="zh-Hans">简体中文</option><option value="zh-Hant-TW">繁體中文（台灣）</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="ar">العربية</option><option value="ru">Русский</option><option value="de">Deutsch</option><option value="es">Español</option><option value="fr">Français</option><option value="it">Italiano</option></select><div><div class="animal-wrapper-pbOTq "><div class="animal-trigger-2-Ahh " role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-label="Language" tabindex="0"><span class="animal-value-623RB">English</span><span class="animal-arrow-xNbxA" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></div></div></div>
+          </div>
+        </div>
+      </header>
+
+      <div class="content-shell">
+        <aside class="sidebar" data-i18n-aria="side.label" aria-label="Trail Guide">
+          <p class="sidebar-label" data-i18n="side.label">设备管理</p>
+          <nav class="side-nav"><span class="navigation-icon">◇</span><a href="#">设备与身份</a><span class="navigation-icon">◇</span><a href="#">无线与协议</a><span class="navigation-icon">◇</span><a href="#">Reticulum 网络</a><span class="navigation-icon">◇</span><a href="#">频道与消息</a><span class="navigation-icon">◇</span><a href="#">GPS 与定位</a><span class="navigation-icon">◇</span><a href="#">Tracker 与路线</a><span class="navigation-icon">◇</span><a href="#">地图</a><span class="navigation-icon">◇</span><a href="#">显示与电源</a><span class="navigation-icon">◇</span><a href="#">蓝牙与外设</a><span class="navigation-icon">◇</span><a href="#">备份与恢复</a></nav>
+        </aside>
+
+        <main class="main-content"><div class="proposal-title"><div><p class="eyebrow">设备管理 · RETICULUM</p><h1 style="font-size:32px;margin:0">Reticulum 网络</h1></div><span class="proposal-device">● 山野行者 · T-Deck<br>设备身份 8e42…c719 · USB 已连接</span></div><section class="proposal-card"><h2>TCP 接口</h2><p>最多 3 个接口。按设备能力编辑，保留其他网络配置。</p><div class="proposal-grid"><div><label>接口 1 · 服务器地址</label><input value="sydney.reticulum.au" style=""></div><div><label>端口</label><input value="4242" style=""></div><div><label>接口 2 · 服务器地址</label><input value="node.example.org" style=""></div><div><label>端口</label><input value="4242" style=""></div></div><div class="proposal-row"><span>接口 2 已启用</span><button class="button button-secondary">＋ 添加接口</button></div></section><div class="proposal-grid"><section class="proposal-card"><h2>接口访问保护</h2><label>网络名称</label><input value="山野小队" style=""><label>网络口令</label><input placeholder="已设置 · 留空保留" style=""><p><button class="button button-secondary">替换口令</button></p></section><section class="proposal-card"><h2>LXMF 消息传播</h2><label>发送策略</label><select><option>自动：优先直连，必要时传播</option></select><div class="proposal-row"><span>自动选择传播节点</span><strong>已启用</strong></div><p>身份备份在“设备与身份”中单独管理。</p></section></div><div class="proposal-bottom"><div><strong>2 项未保存修改</strong><br>保存后重新连接接口，无需重启。</div><button class="button button-secondary">放弃修改</button><button class="button button-primary">查看变更并保存</button></div></main>
+      </div>
+
+      <footer class="site-footer">
+        <div class="site-footer-card">
+          <div>
+            <p class="feature-kicker" data-i18n="footer.eyebrow">Trail Mate Field Notes</p>
+            <h2 data-i18n="footer.title">For the places where maps and signal both matter.</h2>
+            <p data-i18n="footer.copy">Follow the repository for firmware releases, device notes, map and language-pack updates, and field-focused fixes.</p>
+          </div>
+          <div class="site-footer-links">
+            <a href="https://github.com/vicliu624/trail-mate" data-i18n="footer.repo">Repository</a>
+            <a href="https://github.com/vicliu624/trail-mate/releases" data-i18n="footer.releases">Releases</a>
+            <a href="https://github.com/vicliu624/trail-mate/wiki" data-i18n="footer.wiki">Wiki</a>
+            <a href="https://guokaigdg.github.io/animal-island-ui/" dir="ltr">Animal Island UI © guokaigdg</a>
+            <a href="https://github.com/guokaigdg/animal-island-ui/blob/main/LICENSE" dir="ltr">Animal Island UI · MIT</a>
+            <a href="./THIRD_PARTY.md" dir="ltr">Third-party notices</a>
+          </div>
+        </div>
+        <div class="animal-footer-art" aria-hidden="true"></div>
+      </footer>
+    </div>
+
+
+<div id="island-backtop"><div class="animal-backtop-5ePXP" role="button" tabindex="0" aria-label="Back to top" style="right: 16px; bottom: 20px;"><img class="animal-img-iiltk" src="./rocket.f6aa9466-62VJIZWE.svg" alt="Back to top"></div></div></body></html>

@@ -263,6 +263,10 @@ bool sd_mutation_blocked_by_external_owner(const char* op,
 
 oflag_t sdfat_open_flags(const char* mode)
 {
+    if (mode && (std::strcmp(mode, "wx+") == 0 || std::strcmp(mode, "w+x") == 0))
+    {
+        return O_RDWR | O_CREAT | O_EXCL;
+    }
     if (mode == nullptr || std::strcmp(mode, "r") == 0 || std::strcmp(mode, "rb") == 0)
     {
         return O_RDONLY;
