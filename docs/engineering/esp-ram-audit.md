@@ -160,6 +160,13 @@ settings, music and controls regressions exercise real UI construction. ESP
 stack hygiene and clang-format 14 are required. Full target linking checks the
 actual SDK APIs and configuration choices.
 
+`tests/site/settings-catalog-native.test.mjs` additionally visits every visible
+settings category on all five displays, opens dynamic locale/timezone options,
+saves timezone changes and verifies bindings after normal page reconstruction.
+Compact Pager rows are reached with the encoder; touch rows are reached by
+swiping. The test repeats visits rather than relying only on a first-render
+screenshot.
+
 Every firmware CI build now uploads `ram-report-<target>` for seven days. To
 reproduce locally with an existing matching ELF and `pyelftools` installed:
 
