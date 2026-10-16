@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
@@ -49,14 +50,37 @@ def report(path):
             "totals": totals, "sections": section_rows, "symbols": symbols}
 
 
+def memory_config(path):
+    prefixes = ("CONFIG_SPIRAM", "CONFIG_ESP_WIFI_", "CONFIG_MBEDTLS_", "CONFIG_LWIP_",
+                "CONFIG_LV_USE_", "CONFIG_LV_MEM_", "CONFIG_ESP_MAIN_TASK_STACK_SIZE")
+    result = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"(CONFIG_\w+)=(.*)", line)
+        disabled = re.fullmatch(r"# (CONFIG_\w+) is not set", line)
+        if match and match[1].startswith(prefixes):
+            result[match[1]] = match[2]
+        elif disabled and disabled[1].startswith(prefixes):
+            result[disabled[1]] = "n"
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--revision", default="unknown")
+    parser.add_argument("--sdkconfig", type=Path, help="Resolved IDF sdkconfig, not defaults")
+    parser.add_argument("--expect-config", action="append", default=[], metavar="CONFIG_NAME=value")
     args = parser.parse_args()
     result = report(args.elf)
     result["revision"] = args.revision
+    if args.sdkconfig:
+        result["memory_config"] = memory_config(args.sdkconfig)
+    for expected in args.expect_config:
+        key, value = expected.split("=", 1)
+        actual = result.get("memory_config", {}).get(key)
+        if actual != value:
+            parser.error(f"Resolved {key}: expected {value}, got {actual!r}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"RAM report ({args.revision}): {json.dumps(result['totals'], sort_keys=True)}")

@@ -10,7 +10,9 @@ The baseline is `976e84510700c38a1cd7ccfdb04f2fb2057f18a7`: it adds reporting
 without changing firmware behavior relative to `e73fa53b`. The complete target
 reports are artifacts of [baseline CI](https://github.com/vicliu624/trail-mate/actions/runs/38856889758).
 Each report contains its source revision, ELF SHA-256, allocated sections and
-RAM symbols. Flash sections and linker dummy/address-gap sections are excluded.
+RAM symbols. P4/C6 reports also retain resolved SDK memory settings; CI asserts
+external P4 TLS/LVGL allocation and the C6 RX/NVS profile. Flash sections and
+linker dummy/address-gap sections are excluded.
 `internal_data` is linked data/BSS/noinit, not the whole application's runtime
 RAM use. `internal_code` reports IRAM separately. RTC/TCM are separate again.
 Symbol sizes must not be added to section totals: aliases and padding make
