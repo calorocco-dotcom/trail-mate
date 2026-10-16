@@ -4,11 +4,13 @@
 #include "platform/esp/boards/board_runtime.h"
 #include "platform/esp/common/memory_budget.h"
 #include "platform/esp/common/wifi_profile_snapshot.h"
+#include "platform/memory/psram_ptr.h"
 #include "platform/ui/settings_store.h"
 #include "platform/ui/wifi_access_runtime.h"
 #include "platform/ui/wifi_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -104,7 +106,6 @@ struct RuntimeState
     Config config{};
     Config profiles[kWifiProfileCapacity] = {};
     wifi_config_t station_config{};
-    wifi_ap_record_t auto_scan_records[kWifiAutoScanMaxRecords] = {};
     std::size_t profile_count = 0;
     std::size_t next_profile_index = 0;
     std::size_t automatic_profile_failures = 0;
@@ -378,6 +379,9 @@ const char* wifi_profile_name(WifiInitProfile profile)
 
 void apply_wifi_init_profile(wifi_init_config_t& config, WifiInitProfile profile)
 {
+    // Credentials are owned by settings_store. Avoid a second driver NVS
+    // owner, and bound AMPDU reordering to this profile's actual RX capacity.
+    config.nvs_enable = 0;
     config.tx_buf_type = kWifiTxBufferTypeDynamic;
     config.static_tx_buf_num = 0;
 
@@ -385,6 +389,7 @@ void apply_wifi_init_profile(wifi_init_config_t& config, WifiInitProfile profile
     {
     case WifiInitProfile::Lightweight:
         config.static_rx_buf_num = kWifiPrimaryStaticRxBufNum;
+        config.rx_ba_win = config.ampdu_rx_enable ? kWifiPrimaryStaticRxBufNum : 0;
         config.dynamic_rx_buf_num = kWifiPrimaryDynamicRxBufNum;
         config.dynamic_tx_buf_num = kWifiPrimaryDynamicTxBufNum;
         config.cache_tx_buf_num = std::max(1, kWifiPrimaryCacheTxBufNum);
@@ -1917,6 +1922,14 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
         return false;
     }
 
+    using ScanRecords = std::array<wifi_ap_record_t, kWifiAutoScanMaxRecords>;
+    ::platform::memory::PsramPtr<ScanRecords> records(::platform::memory::createPsram<ScanRecords>());
+    if (!records)
+    {
+        set_status_message("Wi-Fi scan memory unavailable");
+        return false;
+    }
+
     if (!ensure_wifi_started())
     {
         return false;
@@ -1942,11 +1955,7 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
     }
 
     uint16_t record_count = std::min<uint16_t>(ap_count, kWifiAutoScanMaxRecords);
-    for (wifi_ap_record_t& record : s_runtime.auto_scan_records)
-    {
-        record = wifi_ap_record_t{};
-    }
-    if (esp_wifi_scan_get_ap_records(&record_count, s_runtime.auto_scan_records) != ESP_OK)
+    if (esp_wifi_scan_get_ap_records(&record_count, records->data()) != ESP_OK)
     {
         set_status_message("Read scan results failed");
         return false;
@@ -1954,7 +1963,7 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
 
     for (uint16_t i = 0; i < record_count; ++i)
     {
-        insert_scan_result_sorted(out_results, capacity, out_count, s_runtime.auto_scan_records[i]);
+        insert_scan_result_sorted(out_results, capacity, out_count, (*records)[i]);
     }
 
     char buffer[kMaxStatusMessageLength + 1];

@@ -2,6 +2,7 @@
 
 #include "hostlink/c6/c6_frame_codec.h"
 #include "hostlink/c6/c6_protocol.h"
+#include "platform/memory/psram_ptr.h"
 #include "platform/ui/settings_store.h"
 #include "platform/ui/wifi_runtime.h"
 
@@ -1192,6 +1193,11 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         }
 
         reset_tcp_state(WifiTcpState::Disconnected, "opening_reset");
+        if (!prepare_tcp_rx())
+        {
+            set_tcp_state(WifiTcpState::Error, TM_C6_ERROR_INTERNAL, "rx_memory_unavailable");
+            return false;
+        }
         tcp_status_.connection_id = next_tcp_connection_id_++;
         if (next_tcp_connection_id_ == 0)
         {
@@ -1251,11 +1257,18 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         const size_t read_len = std::min(max_len, tcp_rx_size_);
         for (size_t i = 0; i < read_len; ++i)
         {
-            out[i] = tcp_rx_buffer_[tcp_rx_tail_];
-            tcp_rx_tail_ = (tcp_rx_tail_ + 1) % tcp_rx_buffer_.size();
+            out[i] = (*tcp_rx_buffer_)[tcp_rx_tail_];
+            tcp_rx_tail_ = (tcp_rx_tail_ + 1) % kWifiTcpRxBufferSize;
         }
         tcp_rx_size_ -= read_len;
         tcp_status_.buffered_bytes = tcp_rx_size_;
+        // A remote EOF may follow the final payload in the same poll. Keep
+        // those bytes readable, then return the session's PSRAM after draining.
+        if (tcp_rx_size_ == 0 &&
+            (tcp_status_.state == WifiTcpState::Disconnected || tcp_status_.state == WifiTcpState::Error))
+        {
+            tcp_rx_buffer_.reset();
+        }
         return read_len;
     }
 
@@ -1264,6 +1277,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         if (tcp_status_.state == WifiTcpState::Disconnected ||
             tcp_status_.state == WifiTcpState::Unsupported)
         {
+            reset_tcp_rx();
             return;
         }
 
@@ -1633,6 +1647,16 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
                                  sizeof(header) + len);
     }
 
+    bool prepare_tcp_rx()
+    {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
+        if (!tcp_rx_buffer_)
+        {
+            tcp_rx_buffer_.reset(::platform::memory::createPsram<TcpRxBuffer>());
+        }
+        return tcp_rx_buffer_ != nullptr;
+    }
+
     void reset_tcp_rx()
     {
         std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
@@ -1640,13 +1664,19 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         tcp_rx_tail_ = 0;
         tcp_rx_size_ = 0;
         tcp_status_.buffered_bytes = 0;
+        tcp_rx_buffer_.reset();
     }
 
     void set_tcp_state(WifiTcpState state, uint16_t error_code, const char* detail)
     {
+        std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
         tcp_status_.state = state;
         tcp_status_.error_code = error_code;
         tcp_status_.detail = detail;
+        if (tcp_rx_size_ == 0 && (state == WifiTcpState::Disconnected || state == WifiTcpState::Error))
+        {
+            tcp_rx_buffer_.reset();
+        }
     }
 
     void reset_tcp_state(WifiTcpState state, const char* detail)
@@ -1662,14 +1692,14 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
     bool append_tcp_rx(const uint8_t* data, size_t len)
     {
         std::lock_guard<std::mutex> lock(tcp_rx_mutex_);
-        if ((!data && len != 0) || len > tcp_rx_buffer_.size() - tcp_rx_size_)
+        if ((!data && len != 0) || !tcp_rx_buffer_ || len > kWifiTcpRxBufferSize - tcp_rx_size_)
         {
             return false;
         }
         for (size_t i = 0; i < len; ++i)
         {
-            tcp_rx_buffer_[tcp_rx_head_] = data[i];
-            tcp_rx_head_ = (tcp_rx_head_ + 1) % tcp_rx_buffer_.size();
+            (*tcp_rx_buffer_)[tcp_rx_head_] = data[i];
+            tcp_rx_head_ = (tcp_rx_head_ + 1) % kWifiTcpRxBufferSize;
         }
         tcp_rx_size_ += len;
         tcp_status_.buffered_bytes = tcp_rx_size_;
@@ -2227,7 +2257,10 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
     size_t frame_rx_stream_size_ = 0;
     uint32_t frame_rx_resync_count_ = 0;
     std::array<uint8_t, TM_C6_MAX_PAYLOAD> wifi_tcp_tx_buffer_{};
-    std::array<uint8_t, kWifiTcpRxBufferSize> tcp_rx_buffer_{};
+    // The SDIO transport stages bytes through its separate internal DMA
+    // scratch. TCP data has no DMA requirement and belongs to an open session.
+    using TcpRxBuffer = std::array<uint8_t, kWifiTcpRxBufferSize>;
+    ::platform::memory::PsramPtr<TcpRxBuffer> tcp_rx_buffer_{};
     size_t tcp_rx_head_ = 0;
     size_t tcp_rx_tail_ = 0;
     size_t tcp_rx_size_ = 0;

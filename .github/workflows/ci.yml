@@ -618,6 +618,12 @@ jobs:
           cmake --build .codex-build/music --parallel 2
           ctest --test-dir .codex-build/music --output-on-failure
 
+      - name: Verify demand-driven TCP and Wi-Fi memory ownership
+        run: |
+          cmake -S tests/ram -B .codex-build/ram-audit/native -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build .codex-build/ram-audit/native --parallel 2
+          ctest --test-dir .codex-build/ram-audit/native --output-on-failure
+
   p4_rendered_ui:
     name: T-Display P4 Rendered UI
     runs-on: ubuntu-latest

@@ -3,7 +3,6 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
-#include "mbedtls/platform.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,8 +14,6 @@ namespace platform::ui::http_client
 {
 namespace
 {
-
-constexpr std::size_t kTlsLargeAllocThresholdBytes = 1024;
 
 bool http_buffer_prefers_psram(const Request& request)
 {
@@ -95,55 +92,6 @@ void log_memory_snapshot(const char* stage)
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
 }
 
-void* mbedtls_calloc_prefer_psram(std::size_t count, std::size_t size)
-{
-    if (count == 0 || size == 0)
-    {
-        return nullptr;
-    }
-    if (count > (static_cast<std::size_t>(-1) / size))
-    {
-        return nullptr;
-    }
-
-    const std::size_t bytes = count * size;
-    const bool prefer_psram =
-        heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0 &&
-        bytes >= kTlsLargeAllocThresholdBytes;
-
-    const uint32_t primary_caps = prefer_psram ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-                                               : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const uint32_t secondary_caps = prefer_psram ? (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
-                                                 : (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-
-    return heap_caps_calloc_prefer(count, size, 2, primary_caps, secondary_caps);
-}
-
-void mbedtls_free_prefer_psram(void* ptr)
-{
-    heap_caps_free(ptr);
-}
-
-bool ensure_tls_allocator_configured()
-{
-    static bool attempted = false;
-    static bool configured = false;
-    if (attempted)
-    {
-        return configured;
-    }
-
-    attempted = true;
-    log_memory_snapshot("before allocator config");
-    configured = mbedtls_platform_set_calloc_free(&mbedtls_calloc_prefer_psram,
-                                                  &mbedtls_free_prefer_psram) == 0;
-    std::printf("[HTTP][TLS] allocator configured=%u threshold=%lu\n",
-                configured ? 1U : 0U,
-                static_cast<unsigned long>(kTlsLargeAllocThresholdBytes));
-    log_memory_snapshot("after allocator config");
-    return configured;
-}
-
 bool memory_preflight_ready(const Request& request)
 {
     if (request.min_internal_free_bytes == 0 &&
@@ -175,7 +123,6 @@ bool require_memory_preflight(const Request& request,
 
 void configure_http_client(esp_http_client_config_t& config, const Request& request)
 {
-    (void)ensure_tls_allocator_configured();
     config = esp_http_client_config_t{};
     config.url = request.url;
     config.method = HTTP_METHOD_GET;
