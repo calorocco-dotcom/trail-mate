@@ -2204,6 +2204,7 @@ class C6CompanionRuntime final : public WirelessCompanion, public WifiTcpTranspo
         transport_.reset(new (std::nothrow) SdioC6Transport());
         if (!transport_)
         {
+            status_.started = false; // An explicit begin/open may retry after heap recovery.
             set_detail(status_, CompanionState::Missing, "sdio_internal_memory_unavailable");
             return false;
         }
