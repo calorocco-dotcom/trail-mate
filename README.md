@@ -331,15 +331,29 @@ See [SECURITY.md](SECURITY.md) to report a suspected vulnerability privately.
 
 ![logo](docs/images/logo_big.png)
 
-Humanity has never possessed a greater capacity to connect, yet the authority to establish a connection is becoming increasingly concentrated. Accounts determine whether an identity exists. Applications hold the relationships between people. Platforms decide whether information can arrive. Location, searches, reading, conversations, and movement accumulate into digital records that can become more complete than a person's memory and more influential than a person's own explanation.
+On a walk, the useful things are straightforward: see where you are, find a
+route, keep a record and stay in touch with your group. Trail Mate puts those
+tools on a device with its own controls, local maps and a radio. Installed map
+data remains useful when Internet access is unavailable; communication uses
+the protocol and links you configure.
 
-When communication gateways, identity systems, accumulated data, and interpretive authority converge in a few centers, convenience gradually becomes governing power. Algorithms begin to decide who is visible, who is suspicious, who receives an opportunity, and who is excluded. Those decisions disappear into models, policies, and risk scores where responsibility is difficult to identify and appeal is difficult to reach. Countless local choices made in the name of efficiency can accumulate into a vast and silent algorithmic bureaucracy.
+**The person carrying the device should keep control of its identity and data.**
+The device holds its author key. Maps, recordings, messages and contacts have
+local storage. Public discovery, direct contacts, Team position and personal
+tracks have separate sharing rules, so joining a network does not have to mean
+handing one service your complete activity history.
 
-**Decentralization returns the authority to establish digital life to the individual.** A person can generate and hold an identity. Contacts can remain in personally controlled storage. Messages can move directly between devices. Position can be shared only with recipients selected by the user. Changing platforms leaves identity intact. A discontinued service leaves human relationships intact. Infrastructure failure leaves people with the ability to communicate and coordinate.
+When a larger screen helps, use the browser or Center to edit settings, prepare
+maps or work on a trail. The device can authorize a specific publication while
+the computer handles its network connection. Independent directories index
+signed content, and recipients can verify the author's signature. Publishing
+still makes that chosen content public; the privacy section above explains what
+others can retain.
 
-**Trail Mate turns that authority into a system people can hold.** It runs on personally held embedded devices and Linux portable terminals, keeping identity, contacts, messages, position, maps, and tracks on the user's devices. Meshtastic, MeshCore, and Reticulum provide selectable decentralized network paths. Offline maps and on-device TAK capabilities keep navigation, situational awareness, and team coordination available beyond the public Internet.
-
-Trail Mate is something close to a decentralized phone. Users hold their data directly, choose their connection paths, and can understand every sharing relationship. Links may be narrow, device resources may be constrained, and the environment may be completely off-grid; identity, communication, navigation, and coordination remain in human hands.
+Portable files, device-held identity and independently operated services give
+people alternatives when a provider changes or disappears. That is the reason
+for bringing offline navigation, Meshtastic, MeshCore, Reticulum and team tools
+together: keep a useful field companion in the user's hands.
 
 > **Connection is a capability people can hold. Trail Mate keeps that capability in the hands of each user.**
 
@@ -454,10 +468,17 @@ Ongoing work focuses on bug fixes, reliability and security, protocol interopera
 
 ### 🧭 Main Menu Overview
 
-![main menu](docs/images/main.png)
+![main menu](docs/images/menu-widgets/pager-menu.png)
 
-The main menu provides quick access to GPS, LoRa chat, tracker, and system utilities,
-designed for fast navigation on a physical keyboard without deep menu nesting.
+The main menu provides quick access to maps, chat, Tracker, Music and utilities.
+Pager, T-Deck and Wio L2 use the same grid with a column count that adapts to the
+available width. Pager uses W/A/S/D or the wheel to select an app, V to switch
+between apps and widgets, and H for Help. Touch devices expose the same pages
+through their controls and gestures.
+
+*Current native Pager preview with simulated service state. The footer keeps
+the V shortcut visible; this image demonstrates the interface rather than a
+physical-device test.*
 
 
 ### 🧭 GPS Map (Performance-First)
@@ -581,7 +602,7 @@ Messages view shows recent conversations and history for quick review.
 * Compatible with **MeshCore networks** (native MeshCore packet path)
 * Standalone operation with on-device controls and optional USB tools; Meshtastic / MeshCore companion-app connections are outside the supported product workflow
 * Designed for high latency, low bandwidth, and packet-loss environments
-* Contacts, conversations, and messages are persisted on-device; the SD card is the configuration source for Reticulum networking and its editable contact directory
+* Contacts, conversations and messages persist on-device. Reticulum networking uses the SD working configuration; the firmware manages its binary peer directory.
 
 For the Reticulum SD-card format, file locations, contact import, and on-device operations, see the [Reticulum Mode User Guide](https://github.com/vicliu624/trail-mate/wiki/3.5-Configuration-Guide).
 
@@ -619,7 +640,13 @@ Nomad Network renders Reticulum Micron pages directly on the device. The embedde
 
 Contacts is a persistent on-device communication directory. It combines discovered and user-maintained contacts, recent activity, and protocol identities, with quick access to direct messaging, calls, ping, or team actions when supported by the active protocol and hardware.
 
-On keyboard-equipped interfaces, press `S` to search contacts. Contacts may also be saved from discovery results or added in bulk by editing the Reticulum contact file on the SD card. The Wiki guide above documents the full key and file workflow.
+On keyboard-equipped interfaces, press `S` to search contacts. Save a discovered
+peer from Nearby or use Contacts > Add. A Reticulum destination entered without
+verified identity keys remains `Address pending` until a valid announce or path
+response supplies them. The firmware owns `/mesh/peers.bin`; current firmware
+does not import contacts from a hand-edited TSV/JSON file. See the
+[Reticulum guide](https://github.com/vicliu624/trail-mate/wiki/4.1-Reticulum,-LXMF-and-RNode-Bridge)
+for the supported workflow.
 
 ### 💻 Data Exchange (PC Link)
 
@@ -915,7 +942,7 @@ This section provides a searchable implementation index. The [Trail Mate Wiki](h
 - Meshtastic public mesh compatibility (LongFast/PSK)
 - MeshCore network compatibility (native MeshCore packet path)
 - On-device Reticulum/LXMF runtime with LoRa, AutoInterface, and TCP gateway interfaces
-- SD-card-based Reticulum configuration and editable contact directory
+- SD-backed Reticulum network/LXMF settings and a device-managed persistent contact directory
 - Standalone controls and optional USB tooling; no supported Meshtastic / MeshCore companion-app workflow
 - Message history and conversation list
 - Routing confirmations and reliability diagnostics
