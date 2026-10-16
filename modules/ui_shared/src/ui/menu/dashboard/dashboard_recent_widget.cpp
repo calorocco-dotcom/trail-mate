@@ -1,5 +1,6 @@
 #include "ui/menu/dashboard/dashboard_widgets.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -8,7 +9,7 @@
 #include "chat/domain/chat_types.h"
 #include "chat/usecase/chat_service.h"
 #include "ui/localization.h"
-#include "ui/menu/dashboard/dashboard_state.h"
+#include "ui/menu/dashboard/dashboard_style.h"
 
 #if !defined(LV_FONT_MONTSERRAT_12) || !LV_FONT_MONTSERRAT_12
 #define lv_font_montserrat_12 lv_font_montserrat_14
@@ -19,16 +20,33 @@ namespace ui::menu::dashboard
 namespace
 {
 
+struct RecentWidgetUi : WidgetLifetime
+{
+    DashboardCardChrome chrome{};
+    lv_obj_t* rows[2]{};
+    lv_obj_t* row_dots[2]{};
+    lv_obj_t* row_names[2]{};
+    lv_obj_t* row_previews[2]{};
+    std::array<char, 256> row_name_text[2]{};
+    std::array<char, 1024> row_preview_text[2]{};
+    lv_obj_t* row_badges[2]{};
+    lv_obj_t* row_badge_labels[2]{};
+    lv_obj_t* scan_track = nullptr;
+    lv_obj_t* scan_runner = nullptr;
+    lv_obj_t* footer_label = nullptr;
+};
+
 constexpr size_t kVisibleRows = 2;
 
-void set_recent_text(lv_obj_t* label, std::string& cached, const char* text)
+template <size_t N>
+void set_recent_text(lv_obj_t* label, std::array<char, N>& cached, const char* text)
 {
     // DOT mode temporarily modifies LVGL's text buffer. Compare the full source
     // instead, otherwise an unchanged elided label is redrawn every second.
-    if (label != nullptr && text != nullptr && cached != text)
+    if (label != nullptr && text != nullptr && std::strcmp(cached.data(), text) != 0)
     {
-        cached = text;
-        ::ui::i18n::set_label_text_raw(label, cached.c_str());
+        std::snprintf(cached.data(), cached.size(), "%s", text);
+        ::ui::i18n::set_label_text_raw(label, text);
     }
 }
 
@@ -61,9 +79,13 @@ void set_label_text_if_changed(lv_obj_t* label, const char* english)
 
 } // namespace
 
-void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
+void refresh_recent_widget(void* context);
+
+WidgetHandle create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
 {
-    auto& recent = dashboard_state().recent;
+    auto* memory = create_widget_state<RecentWidgetUi>();
+    if (!memory) return {};
+    auto& recent = *memory;
     recent.chrome = create_card_chrome(parent, ::ui::i18n::tr("Recent Activity"), card_w, card_h);
 
     const lv_coord_t body_w = lv_obj_get_content_width(recent.chrome.body);
@@ -107,7 +129,7 @@ void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h
         lv_obj_set_width(recent.row_previews[i], static_cast<lv_coord_t>(body_w - 80));
         lv_obj_align(recent.row_previews[i], LV_ALIGN_BOTTOM_LEFT, 18, -1);
         lv_label_set_long_mode(recent.row_previews[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_height(recent.row_previews[i], 2 * lv_font_get_line_height(&lv_font_montserrat_12));
+        lv_obj_set_height(recent.row_previews[i], (body_h < 132 ? 1 : 2) * lv_font_get_line_height(&lv_font_montserrat_12));
         ::ui::i18n::set_label_text_raw(recent.row_previews[i], "");
 
         recent.row_badges[i] = lv_obj_create(recent.rows[i]);
@@ -148,11 +170,12 @@ void create_recent_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h
     style_footer_label(recent.footer_label);
     lv_obj_align(recent.footer_label, LV_ALIGN_RIGHT_MID, 0, 0);
     ::ui::i18n::set_label_text(recent.footer_label, "no recent traffic");
+    return own_widget(recent.chrome.card, memory, refresh_recent_widget, 2000);
 }
 
-void refresh_recent_widget()
+void refresh_recent_widget(void* context)
 {
-    auto& recent = dashboard_state().recent;
+    auto& recent = *static_cast<RecentWidgetUi*>(context);
     if (recent.chrome.card == nullptr)
     {
         return;

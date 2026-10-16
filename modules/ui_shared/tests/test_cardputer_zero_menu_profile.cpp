@@ -20,13 +20,12 @@ lv_coord_t lv_display_get_physical_vertical_resolution(lv_display_t*)
 
 int main()
 {
-    const auto pager = ui::menu_profile::make_pager_profile();
     const auto& profile = ui::menu_profile::current();
 
     assert(std::strcmp(profile.name, "cardputer_zero") == 0);
     assert(profile.variant == ui::menu_profile::LayoutVariant::PagerFocus);
-    assert(profile.badge_anchor_mode == pager.badge_anchor_mode);
-    assert(profile.snap_center == pager.snap_center);
+    assert(profile.badge_anchor_mode == ui::menu_profile::BadgeAnchorMode::IconTopLeft);
+    assert(profile.snap_center);
     assert(!profile.vertical_scroll);
     assert(!profile.wrap_grid);
 

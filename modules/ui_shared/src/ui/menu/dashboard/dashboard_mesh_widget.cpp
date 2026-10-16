@@ -6,7 +6,7 @@
 
 #include "platform/ui/device_runtime.h"
 #include "ui/localization.h"
-#include "ui/menu/dashboard/dashboard_state.h"
+#include "ui/menu/dashboard/dashboard_style.h"
 #include "ui/presentation_sources/runtime_mesh_status_source.h"
 #include "ui_presentation/mesh/mesh_status_model.h"
 
@@ -18,6 +18,23 @@ namespace ui::menu::dashboard
 {
 namespace
 {
+
+struct MeshWidgetUi : WidgetLifetime
+{
+    DashboardCardChrome chrome{};
+    lv_obj_t* orbit_outer = nullptr;
+    lv_obj_t* orbit_mid = nullptr;
+    lv_obj_t* orbit_core = nullptr;
+    lv_obj_t* hero_value = nullptr;
+    lv_obj_t* hero_caption = nullptr;
+    lv_obj_t* stat_tiles[3]{};
+    lv_obj_t* stat_values[3]{};
+    lv_obj_t* stat_captions[3]{};
+    lv_obj_t* signal_bar_wrap = nullptr;
+    lv_obj_t* signal_bars[12]{};
+    lv_obj_t* footer_label = nullptr;
+    ui::mesh::MeshStatusModel model{ui::presentation_sources::runtime_mesh_status_source()};
+};
 
 void set_label_text_if_changed_raw(lv_obj_t* label, const char* text)
 {
@@ -69,21 +86,23 @@ void create_stat_column(MeshWidgetUi& mesh, lv_obj_t* parent, lv_coord_t x, lv_c
         style_body_label(mesh.stat_captions[i], &lv_font_montserrat_12, color_text_dim());
         lv_obj_align(mesh.stat_captions[i], LV_ALIGN_BOTTOM_LEFT, 0, 0);
         ::ui::i18n::set_label_text(mesh.stat_captions[i], kCaptions[i]);
+        if (body_h < 132)
+        {
+            lv_obj_align(mesh.stat_values[i], LV_ALIGN_LEFT_MID, 0, 0);
+            lv_obj_align(mesh.stat_captions[i], LV_ALIGN_RIGHT_MID, 0, 0);
+        }
     }
-}
-
-::ui::mesh::MeshStatusModel& meshStatusModel()
-{
-    static ::ui::mesh::MeshStatusModel model(
-        ::ui::presentation_sources::runtime_mesh_status_source());
-    return model;
 }
 
 } // namespace
 
-void create_mesh_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
+void refresh_mesh_widget(void* context);
+
+WidgetHandle create_mesh_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
 {
-    auto& mesh = dashboard_state().mesh;
+    auto* memory = create_widget_state<MeshWidgetUi>();
+    if (!memory) return {};
+    auto& mesh = *memory;
     mesh.chrome = create_card_chrome(parent, ::ui::i18n::tr("Mesh Status"), card_w, card_h);
 
     const lv_coord_t body_w = lv_obj_get_content_width(mesh.chrome.body);
@@ -114,6 +133,11 @@ void create_mesh_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
     mesh.hero_caption = lv_label_create(mesh.orbit_core);
     style_body_label(mesh.hero_caption, &lv_font_montserrat_12, lv_color_hex(0xFFF7E8));
     lv_obj_align(mesh.hero_caption, LV_ALIGN_CENTER, 0, 10);
+    if (hero_d < 105)
+    {
+        lv_obj_add_flag(mesh.hero_caption, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(mesh.hero_value, LV_ALIGN_CENTER, 0, 0);
+    }
     ::ui::i18n::set_label_text(mesh.hero_caption, "online");
 
     create_stat_column(mesh, mesh.chrome.body, hero_d + 16, body_h);
@@ -141,17 +165,18 @@ void create_mesh_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
     style_footer_label(mesh.footer_label);
     lv_obj_align(mesh.footer_label, LV_ALIGN_RIGHT_MID, 0, 0);
     ::ui::i18n::set_label_text(mesh.footer_label, "waiting for traffic");
+    return own_widget(mesh.chrome.card, memory, refresh_mesh_widget, 4000);
 }
 
-void refresh_mesh_widget()
+void refresh_mesh_widget(void* context)
 {
-    auto& mesh = dashboard_state().mesh;
+    auto& mesh = *static_cast<MeshWidgetUi*>(context);
     if (mesh.chrome.card == nullptr)
     {
         return;
     }
 
-    const auto status = meshStatusModel().snapshot();
+    const auto status = mesh.model.snapshot();
     const bool has_team = status.header.valid && status.team_linked;
     const int unread = status.header.valid ? static_cast<int>(status.unread_messages) : 0;
     const auto battery = platform::ui::device::battery_info();

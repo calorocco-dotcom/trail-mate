@@ -32,6 +32,7 @@ add_executable(${PREVIEW_TARGET}
   native_chat.cpp
   preview_platform.cpp
   preview_sensors.cpp
+  preview_agenda.cpp
   preview_facade.cpp
   preview_status.cpp
   preview_extensions.cpp
@@ -116,6 +117,7 @@ target_include_directories(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_sys/include"
   "${REPO_ROOT}/modules/core_chat/include"
   "${REPO_ROOT}/modules/core_gps/include"
+  "${REPO_ROOT}/modules/core_agenda/include"
   "${REPO_ROOT}/modules/core_track_sharing/include"
   "${REPO_ROOT}/modules/core_geocaching/include"
   "${REPO_ROOT}/third_party/yxml"
@@ -124,6 +126,11 @@ target_compile_features(${PREVIEW_TARGET} PRIVATE cxx_std_17)
 target_compile_options(${PREVIEW_TARGET} PRIVATE -O2)
 target_compile_definitions(${PREVIEW_TARGET} PRIVATE LV_CONF_INCLUDE_SIMPLE TRAIL_MATE_LORA_TX_POWER_MAX_DBM=22 ${BOARD_DEFINITION}=1)
 target_link_libraries(${PREVIEW_TARGET} PRIVATE lvgl)
+file(GLOB DASHBOARD_WIDGET_SOURCES "${UI}/menu/dashboard/*.cpp")
+target_sources(${PREVIEW_TARGET} PRIVATE "${UI}/menu/menu_dashboard.cpp" ${DASHBOARD_WIDGET_SOURCES}
+  preview_p4_dashboard.cpp
+  "${UI}/presentation_sources/runtime_mesh_status_source.cpp"
+  "${REPO_ROOT}/modules/ui_presentation/src/mesh/mesh_status_model.cpp")
 file(GLOB PREVIEW_ASSETS "${UI}/assets/*.c")
 target_sources(${PREVIEW_TARGET} PRIVATE ${PREVIEW_ASSETS})
 file(GLOB CHAT_VIEW_SOURCES
@@ -188,7 +195,6 @@ target_sources(${PREVIEW_TARGET} PRIVATE
   "${REPO_ROOT}/modules/core_sys/src/platform/ui/timezone_profile.cpp"
   "${REPO_ROOT}/modules/core_sys/src/platform/ui/screen_power_state_machine.cpp"
   "${UI}/team_presence/team_presence_model.cpp"
-  "${UI}/menu/dashboard/dashboard_style.cpp"
   "${UI}/presentation_sources/runtime_map_workspace_source.cpp"
   "${UI}/presentation_sources/team_map_overlay_source.cpp"
   "${REPO_ROOT}/modules/ui_presentation/src/map/map_workspace_model.cpp"
@@ -240,12 +246,6 @@ if(TRAIL_MATE_PREVIEW_P4)
   foreach(PANEL IN ITEMS tft amoled)
     add_native_preview(trailmate_p4_${PANEL} TRAIL_MATE_ESP_BOARD_T_DISPLAY_P4 t-display-p4-${PANEL})
     target_include_directories(trailmate_p4_${PANEL} PRIVATE "${REPO_ROOT}/boards/t_display_p4/include")
-    file(GLOB P4_DASHBOARD_SOURCES "${UI}/menu/dashboard/*.cpp")
-    target_sources(trailmate_p4_${PANEL} PRIVATE "${UI}/menu/menu_dashboard.cpp" ${P4_DASHBOARD_SOURCES})
-    target_sources(trailmate_p4_${PANEL} PRIVATE
-      preview_p4_dashboard.cpp
-      "${UI}/presentation_sources/runtime_mesh_status_source.cpp"
-      "${REPO_ROOT}/modules/ui_presentation/src/mesh/mesh_status_model.cpp")
   endforeach()
   target_compile_definitions(trailmate_p4_tft PRIVATE CONFIG_TRAIL_MATE_T_DISPLAY_P4_PANEL_HI8561=1)
 endif()

@@ -3,6 +3,7 @@
 #include "ui/app_catalog.h"
 #include "ui/app_catalog_builder.h"
 #include "ui/app_runtime.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_layout.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/runtime/ui_feedback.h"
@@ -10,6 +11,11 @@
 #include <cstring>
 
 extern "C" void native_open_page(int page);
+namespace ui::agenda
+{
+class IAgendaSource;
+}
+ui::agenda::IAgendaSource* preview_agenda_source();
 static bool menu_created = false;
 static AppScreen* active_app = nullptr;
 static ui::AppCatalog catalog;
@@ -37,6 +43,7 @@ void preview_menu_enter()
 #endif
         catalog = ui::app_catalog_builder::build(flags);
         ui::menu_layout::InitOptions options;
+        ui::menu::dashboard::bindAgendaSource(preview_agenda_source());
         options.apps = catalog;
         ui::menu_layout::init(options);
         if (previous_group) lv_group_delete(previous_group);
@@ -58,6 +65,7 @@ void preview_menu_exit()
 {
     if (menu_created)
     {
+        ui::menu::dashboard::setActive(false);
         ui::menu_runtime::setScene(ui::menu_runtime::Scene::App);
         lv_obj_add_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
     }

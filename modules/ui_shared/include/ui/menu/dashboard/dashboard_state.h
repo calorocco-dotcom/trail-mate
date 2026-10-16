@@ -1,90 +1,31 @@
 #pragma once
-
-#include "ui/menu/dashboard/dashboard_style.h"
-#include <string>
+#include "ui/menu/dashboard/dashboard_widget.h"
+#include <array>
 
 namespace ui::menu::dashboard
 {
-
-struct MeshWidgetUi
-{
-    DashboardCardChrome chrome{};
-    lv_obj_t* orbit_outer = nullptr;
-    lv_obj_t* orbit_mid = nullptr;
-    lv_obj_t* orbit_core = nullptr;
-    lv_obj_t* hero_value = nullptr;
-    lv_obj_t* hero_caption = nullptr;
-    lv_obj_t* stat_tiles[3]{};
-    lv_obj_t* stat_values[3]{};
-    lv_obj_t* stat_captions[3]{};
-    lv_obj_t* signal_bar_wrap = nullptr;
-    lv_obj_t* signal_bars[12]{};
-    lv_obj_t* footer_label = nullptr;
-};
-
-struct GpsWidgetUi
-{
-    DashboardCardChrome chrome{};
-    lv_obj_t* radar = nullptr;
-    lv_obj_t* radar_rings[3]{};
-    lv_obj_t* radar_cross_h = nullptr;
-    lv_obj_t* radar_cross_v = nullptr;
-    lv_obj_t* sat_dots[8]{};
-    lv_obj_t* sat_labels[8]{};
-    lv_obj_t* sat_use_tags[8]{};
-    lv_obj_t* stat_tiles[3]{};
-    lv_obj_t* stat_values[3]{};
-    lv_obj_t* stat_captions[3]{};
-    lv_obj_t* footer_label = nullptr;
-};
-
-struct RecentWidgetUi
-{
-    DashboardCardChrome chrome{};
-    lv_obj_t* rows[2]{};
-    lv_obj_t* row_dots[2]{};
-    lv_obj_t* row_names[2]{};
-    lv_obj_t* row_previews[2]{};
-    std::string row_name_text[2];
-    std::string row_preview_text[2];
-    lv_obj_t* row_badges[2]{};
-    lv_obj_t* row_badge_labels[2]{};
-    lv_obj_t* scan_track = nullptr;
-    lv_obj_t* scan_runner = nullptr;
-    lv_obj_t* footer_label = nullptr;
-};
-
-struct CompassWidgetUi
-{
-    DashboardCardChrome chrome{};
-    lv_obj_t* dial = nullptr;
-    lv_obj_t* dial_ring = nullptr;
-    lv_obj_t* dial_inner_ring = nullptr;
-    lv_obj_t* north_marker = nullptr;
-    lv_obj_t* needle = nullptr;
-    lv_point_precise_t needle_points[2]{};
-    lv_obj_t* center_dot = nullptr;
-    lv_obj_t* cardinal_labels[4]{};
-    lv_obj_t* target_name = nullptr;
-    lv_obj_t* distance_value = nullptr;
-    lv_obj_t* bearing_value = nullptr;
-    lv_obj_t* footer_label = nullptr;
-};
-
+// Container state only. No child controls or service data belong here.
+// This owner is allocated in PSRAM; the registry retains one pointer.
 struct DashboardUi
 {
     lv_obj_t* panel = nullptr;
     lv_obj_t* grid = nullptr;
+    lv_obj_t* menu_grid = nullptr;
+    lv_obj_t* pager = nullptr;
     lv_timer_t* timer = nullptr;
+    std::array<WidgetHandle, 4> widgets{};
     uint32_t tick = 0;
     bool dock_right = false;
-    MeshWidgetUi mesh{};
-    GpsWidgetUi gps{};
-    RecentWidgetUi recent{};
-    CompassWidgetUi compass{};
+    bool feed_open = false;
+    bool active = true;
+    uint8_t page = 0;
+    lv_indev_t* pointer = nullptr;
+    lv_point_t start{};
+    bool pressed = false;
+    bool inside_dashboard = false;
 };
 
-DashboardUi& dashboard_state();
+DashboardUi* dashboard_state();
+bool dashboard_create();
 void dashboard_reset();
-
 } // namespace ui::menu::dashboard

@@ -4,6 +4,7 @@
 #include "platform/ui/walkie_runtime.h"
 #include "ui/app_runtime.h"
 #include "ui/localization.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/page/page_profile.h"
 #include "ui/screens/calculator/calculator_page_runtime.h"
@@ -232,6 +233,7 @@ extern "C"
     }
     EMSCRIPTEN_KEEPALIVE void native_encoder(int delta)
     {
+        if (ui::menu::dashboard::handleEncoder(delta)) return;
         if (auto* group = input_group())
         {
             if (delta < 0) lv_group_focus_prev(group);

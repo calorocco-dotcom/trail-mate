@@ -4,24 +4,19 @@ namespace ui::menu::dashboard
 {
 namespace
 {
-
-DashboardUi s_dashboard{};
-
-} // namespace
-
-DashboardUi& dashboard_state()
-{
-    return s_dashboard;
+DashboardUi* s_dashboard = nullptr;
 }
-
+DashboardUi* dashboard_state() { return s_dashboard; }
+bool dashboard_create()
+{
+    s_dashboard = create_widget_state<DashboardUi>();
+    return s_dashboard != nullptr;
+}
 void dashboard_reset()
 {
-    if (s_dashboard.timer != nullptr)
-    {
-        lv_timer_del(s_dashboard.timer);
-        s_dashboard.timer = nullptr;
-    }
-    s_dashboard = DashboardUi{};
+    if (!s_dashboard) return;
+    if (s_dashboard->timer) lv_timer_delete(s_dashboard->timer);
+    delete_widget_state(s_dashboard);
+    s_dashboard = nullptr;
 }
-
 } // namespace ui::menu::dashboard

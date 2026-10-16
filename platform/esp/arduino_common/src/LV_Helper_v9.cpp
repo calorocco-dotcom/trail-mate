@@ -17,6 +17,7 @@
 #include "sys/clock.h"
 #include "ui/LV_Helper.h"
 #include "ui/app_runtime.h"
+#include "ui/menu/menu_dashboard.h"
 #include "ui/menu/menu_runtime.h"
 #include "ui/support/lvgl_fs_utils.h"
 #include "walkie/walkie_service.h"
@@ -1175,6 +1176,7 @@ static void lv_encoder_read(lv_indev_t* drv, lv_indev_data_t* data)
 #endif
         break;
     }
+    if (::ui::menu::dashboard::handleEncoder(data->enc_diff)) data->enc_diff = 0;
     if (msg.centerBtnPressed)
     {
         data->state = LV_INDEV_STATE_PRESSED;

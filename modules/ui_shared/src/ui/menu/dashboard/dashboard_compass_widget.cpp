@@ -12,7 +12,7 @@
 #include "platform/ui/orientation_runtime.h"
 #include "platform/ui/team_ui_store_runtime.h"
 #include "ui/localization.h"
-#include "ui/menu/dashboard/dashboard_state.h"
+#include "ui/menu/dashboard/dashboard_style.h"
 
 #if !defined(LV_FONT_MONTSERRAT_12) || !LV_FONT_MONTSERRAT_12
 #define lv_font_montserrat_12 lv_font_montserrat_14
@@ -22,6 +22,24 @@ namespace ui::menu::dashboard
 {
 namespace
 {
+
+struct CompassWidgetUi : WidgetLifetime
+{
+    DashboardCardChrome chrome{};
+    lv_obj_t* dial = nullptr;
+    lv_obj_t* dial_ring = nullptr;
+    lv_obj_t* dial_inner_ring = nullptr;
+    lv_obj_t* north_marker = nullptr;
+    lv_obj_t* needle = nullptr;
+    lv_point_precise_t needle_points[2]{};
+    float displayed_bearing = -1.0f;
+    lv_obj_t* center_dot = nullptr;
+    lv_obj_t* cardinal_labels[4]{};
+    lv_obj_t* target_name = nullptr;
+    lv_obj_t* distance_value = nullptr;
+    lv_obj_t* bearing_value = nullptr;
+    lv_obj_t* footer_label = nullptr;
+};
 
 void set_label_text_if_changed_raw(lv_obj_t* label, const char* text)
 {
@@ -65,6 +83,8 @@ std::string best_name_for(const chat::contacts::PeerDirectoryItem& info)
 
 void update_needle(CompassWidgetUi& compass, float bearing)
 {
+    if (compass.displayed_bearing == bearing) return;
+    compass.displayed_bearing = bearing;
     const float center = static_cast<float>(lv_obj_get_content_width(compass.dial)) / 2.0f;
     const float radius = std::max(1.0f, center - 12.0f);
     const float radians = bearing * 3.14159265358979323846f / 180.0f;
@@ -78,9 +98,13 @@ void update_needle(CompassWidgetUi& compass, float bearing)
 
 } // namespace
 
-void create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
+void refresh_compass_widget(void* context);
+
+WidgetHandle create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_h)
 {
-    auto& compass = dashboard_state().compass;
+    auto* memory = create_widget_state<CompassWidgetUi>();
+    if (!memory) return {};
+    auto& compass = *memory;
     compass.chrome = create_card_chrome(parent, ::ui::i18n::tr("Mini Compass"), card_w, card_h);
 
     const lv_coord_t body_w = lv_obj_get_content_width(compass.chrome.body);
@@ -163,11 +187,12 @@ void create_compass_widget(lv_obj_t* parent, lv_coord_t card_w, lv_coord_t card_
     style_footer_label(compass.footer_label);
     lv_obj_align(compass.footer_label, LV_ALIGN_LEFT_MID, 0, 0);
     ::ui::i18n::set_label_text(compass.footer_label, "compass wakes after GPS fix");
+    return own_widget(compass.chrome.card, memory, refresh_compass_widget);
 }
 
-void refresh_compass_widget()
+void refresh_compass_widget(void* context)
 {
-    auto& compass = dashboard_state().compass;
+    auto& compass = *static_cast<CompassWidgetUi*>(context);
     if (compass.chrome.card == nullptr)
     {
         return;
