@@ -1,6 +1,10 @@
 #include "ui/components/shortcut_help_modal.h"
 
 #include "ui/app_runtime.h"
+#if defined(ARDUINO_T_LORA_PAGER)
+#include "platform/ui/psram_ui_lease.h"
+#include "ui/components/dialog_frame.h"
+#endif
 
 #if defined(ARDUINO_T_DECK_PRO)
 #include "ui/assets/fonts/font_utils.h"
@@ -248,6 +252,9 @@ void focus(State& state)
 
 bool open(State& state, lv_obj_t* parent, const Config& config)
 {
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
     if (is_open(state))
     {
         focus(state);
@@ -278,6 +285,18 @@ bool open(State& state, lv_obj_t* parent, const Config& config)
         set_default_group(state.group);
     }
 
+#if defined(ARDUINO_T_LORA_PAGER)
+    // Use the same titled, closable frame as Preview and other app dialogs.
+    const auto frame = dialog_frame::create(host, {config.title ? config.title : "Help", panel_w, panel_h,
+                                                   [](lv_event_t* event)
+                                                   { close(*static_cast<State*>(lv_event_get_user_data(event))); },
+                                                   on_key, &state});
+    state.overlay = frame.overlay;
+    state.panel = frame.panel;
+    state.body = frame.body;
+    lv_obj_add_flag(state.panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(state.panel, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+#else
     state.overlay = lv_obj_create(host);
     lv_obj_set_size(state.overlay, LV_PCT(100), LV_PCT(100));
     lv_obj_align(state.overlay, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -371,6 +390,7 @@ bool open(State& state, lv_obj_t* parent, const Config& config)
     lv_obj_set_scroll_dir(state.body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(state.body, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_add_event_cb(state.body, on_key, LV_EVENT_KEY, &state);
+#endif
 
     for (std::size_t index = 0; index < config.row_count; ++index)
     {
@@ -381,6 +401,10 @@ bool open(State& state, lv_obj_t* parent, const Config& config)
     if (state.group)
     {
         lv_group_add_obj(state.group, state.panel);
+#if defined(ARDUINO_T_LORA_PAGER)
+        lv_group_add_obj(state.group, frame.close);
+        dialog_frame::bind_close_shortcuts(frame, state.group);
+#endif
         lv_group_focus_obj(state.panel);
         lv_group_set_editing(state.group, true);
     }

@@ -124,6 +124,32 @@ for(const k of ['h','w','s','v'])key(k);
 assert.equal(snapshot().find(item=>item.input)?.text,'hwsv');
 wheel(1);assert.notEqual(runtime._native_input_focus(),editor.id);
 assert.equal(runtime._native_ime_proxy_protected(),1,'active IME proxy keeps virtual focus and literal h');
+// Route Preview owns its detailed Help. Its dialog header must not register
+// another page help, otherwise the second H stacks a generic help on top.
+runtime._native_open_page(14);tick();key('m');
+const activate=text=>{const button=snapshot().find(item=>item.button&&item.text===text);assert.ok(button,`setup: ${text}`);runtime._native_activate(button.id);tick();};
+activate('Routes');activate('Actions');activate('Preview');
+assert.ok(has('Route Preview'));
+const previewFocus=runtime._native_input_focus();
+for(const closer of ['h','H',27,8,10,'x']){
+  key('h');assert.equal(snapshot().filter(item=>item.text==='Preview Help').length,1);
+  assert.ok(!has('Select control'),'Preview keeps its specific help');
+  assert.equal(snapshot().filter(item=>item.text==='H Help').length,1,'dialog headers do not advertise nested Help');
+  key(closer);
+  assert.ok(!has('Preview Help')&&!has('Select control'),`${closer}: close returns directly to Preview`);
+  assert.ok(has('Route Preview'));
+  assert.equal(runtime._native_input_focus(),previewFocus,'Preview control focus is restored');
+}
+key('h');await capture('tracker-preview-help');
+const close=snapshot().find(item=>item.button&&item.text==='\uf00d');assert.ok(close);
+runtime._native_focus(close.id);press();assert.ok(!has('Preview Help'),'encoder activates the header close');
+// Launcher and ordinary page Help share the same titled, closable dialog.
+for(const page of [10,0,19]){
+  runtime._native_open_page(page);tick();key('h');
+  assert.equal(snapshot().filter(item=>item.button&&item.text==='\uf00d').length,1,'Help has one header close button');
+  if(page===10)await capture('help-main-menu');
+  key('h');assert.ok(!snapshot().some(item=>item.button&&item.text==='\uf00d'),'one H closes Help');
+}
 // Destroy pages with Help still open: no stale restore group or orphan modal.
 for(let cycle=0;cycle<20;cycle++){
   runtime._native_open_page(0);tick();key('h');

@@ -21,6 +21,7 @@ struct TopBarConfig
     bool create_back = true;                  // Create new back button when no override
     bool power_indicator = true;              // Presenter owns right label as battery/status power slot
     lv_coord_t height = 0;                    // 0 = use current page profile height
+    bool page_help = true;                    // Pager page shortcut; dialogs own their input
 };
 
 struct TopBar

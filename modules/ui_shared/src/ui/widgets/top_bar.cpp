@@ -213,14 +213,17 @@ void top_bar_init(TopBar& bar, lv_obj_t* parent, const TopBarConfig& config)
         top_bar_power::bind(bar);
     }
 #if defined(ARDUINO_T_LORA_PAGER)
-    // A shared, visible hint applies to every page, including text editors
-    // where H stays text until another control is selected with the wheel.
-    auto* help_hint = lv_label_create(bar.container);
-    lv_label_set_text(help_hint, "H Help");
-    lv_obj_set_style_text_font(help_hint, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(help_hint, ui::theme::text(), 0);
-    lv_obj_move_to_index(help_hint, lv_obj_get_index(bar.right_label));
-    ui::input::pager::install_help(parent, bar.title_label);
+    if (config.page_help)
+    {
+        // Dialog headers own their shortcuts. Registering them as pages would
+        // make H open another Help instead of closing the current dialog.
+        auto* help_hint = lv_label_create(bar.container);
+        lv_label_set_text(help_hint, "H Help");
+        lv_obj_set_style_text_font(help_hint, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(help_hint, ui::theme::text(), 0);
+        lv_obj_move_to_index(help_hint, lv_obj_get_index(bar.right_label));
+        ui::input::pager::install_help(parent, bar.title_label);
+    }
 #endif
 }
 
@@ -294,6 +297,7 @@ lv_obj_t* top_bar_create_dialog_header(lv_obj_t* parent, const char* title,
     // Neither a back callback nor the power presenter retains this local view.
     config.create_back = false;
     config.power_indicator = false;
+    config.page_help = false;
     top_bar_init(bar, parent, config);
     lv_obj_del(bar.right_label);
     top_bar_set_title(bar, ::ui::i18n::tr(title));

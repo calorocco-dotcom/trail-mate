@@ -61,6 +61,12 @@ including when an input group was already destroyed. Map preserves the exact
 control that opened its help. Two-pane pages retain their selected control on
 background refresh and provide Menu/Back even with an empty list.
 
+All Pager Help dialogs, including launcher Help, use the shared dialog frame
+with a title bar and a close button. Dialog headers disable page-help
+registration: their own key handlers retain H, Back, Enter and X. In particular,
+the navigation Preview Help closes on the next H rather than opening a generic
+Help over itself. The close button also belongs to the encoder focus group.
+
 `tests/site/pager-input-native.test.mjs` uses real LVGL keypad and encoder
 input devices with press/release events. It covers launcher edge navigation,
 widget buttons/sliders, held encoder ownership, app focus and help restoration,

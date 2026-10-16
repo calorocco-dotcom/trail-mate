@@ -47,6 +47,7 @@ Frame create(lv_obj_t* parent, const Config& config)
     ::ui::widgets::TopBarConfig header_config{};
     header_config.create_back = false;
     header_config.power_indicator = false;
+    header_config.page_help = false;
     ::ui::widgets::top_bar_init(header, frame.panel, header_config);
     lv_obj_del(header.right_label);
     ::ui::widgets::top_bar_set_title(header, ::ui::i18n::tr(config.title));
