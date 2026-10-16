@@ -24,6 +24,8 @@ set(WIFI "${REPO}/platform/esp/common/include/platform/esp/common/wifi_runtime_i
 extract("${WIFI}" "constexpr int kWifiTxBufferTypeStatic" "constexpr std::size_t kWifiConnectMinInternalFreeBytes" wifi_limits.inc)
 extract("${WIFI}" "void apply_wifi_init_profile(" "void log_wifi_init_profile(" wifi_profile.inc)
 extract("${WIFI}" "bool scan(ScanResult*" "Status status()" wifi_scan.inc)
+extract("${REPO}/firmware/c6_companion/components/tm_wifi/tm_wifi.c"
+    "static esp_err_t emit_scan_results(void)" "esp_err_t tm_wifi_handle_control(" c6_wifi_scan.inc)
 extract("${REPO}/modules/ui_shared/src/ui/screens/settings/settings_page_components.cpp"
     "static bool prepare_setting_catalog()" "static bool should_show_item(const" settings_catalog.inc)
 add_executable(tls_memory test_tls_memory.cpp "${REPO}/platform/esp/arduino_common/src/tls_memory.cpp")

@@ -1948,8 +1948,15 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
     }
 
     uint16_t ap_count = 0;
-    if (esp_wifi_scan_get_ap_num(&ap_count) != ESP_OK || ap_count == 0)
+    if (esp_wifi_scan_get_ap_num(&ap_count) != ESP_OK)
     {
+        (void)esp_wifi_clear_ap_list();
+        set_status_message("Read scan results failed");
+        return false;
+    }
+    if (ap_count == 0)
+    {
+        (void)esp_wifi_clear_ap_list();
         set_status_message("No Wi-Fi networks found");
         return true;
     }
@@ -1957,6 +1964,9 @@ bool scan(ScanResult* out_results, std::size_t capacity, std::size_t& out_count)
     uint16_t record_count = std::min<uint16_t>(ap_count, kWifiAutoScanMaxRecords);
     if (esp_wifi_scan_get_ap_records(&record_count, records->data()) != ESP_OK)
     {
+        // SDK-owned BSS records survive a failed fetch (including NO_MEM).
+        // Releasing our PSRAM output array alone does not release that list.
+        (void)esp_wifi_clear_ap_list();
         set_status_message("Read scan results failed");
         return false;
     }

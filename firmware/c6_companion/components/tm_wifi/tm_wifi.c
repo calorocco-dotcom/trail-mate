@@ -437,10 +437,25 @@ static esp_err_t emit_scan_results(void)
     }
 
     uint16_t ap_count = 0;
-    ESP_RETURN_ON_ERROR(esp_wifi_scan_get_ap_num(&ap_count), TAG, "scan_get_ap_num");
+    err = esp_wifi_scan_get_ap_num(&ap_count);
+    if (err != ESP_OK)
+    {
+        (void)esp_wifi_clear_ap_list();
+        tm_services_record_error(TM_C6_ERROR_INTERNAL, "wifi_scan_count_failed");
+        emit_simple_event(TM_C6_WIFI_EVENT_ERROR, TM_C6_ERROR_INTERNAL, NULL, 0);
+    }
+    ESP_RETURN_ON_ERROR(err, TAG, "scan_get_ap_num");
     wifi_ap_record_t records[TM_C6_WIFI_SCAN_RESULT_COUNT] = {};
     uint16_t result_count = TM_C6_WIFI_SCAN_RESULT_COUNT;
-    ESP_RETURN_ON_ERROR(esp_wifi_scan_get_ap_records(&result_count, records), TAG, "scan_get_records");
+    err = esp_wifi_scan_get_ap_records(&result_count, records);
+    if (err != ESP_OK)
+    {
+        (void)esp_wifi_clear_ap_list();
+        const uint16_t code = err == ESP_ERR_NO_MEM ? TM_C6_ERROR_LOW_MEMORY : TM_C6_ERROR_INTERNAL;
+        tm_services_record_error(code, "wifi_scan_records_failed");
+        emit_simple_event(TM_C6_WIFI_EVENT_ERROR, code, NULL, 0);
+    }
+    ESP_RETURN_ON_ERROR(err, TAG, "scan_get_records");
 
     tm_c6_wifi_event_t event = {
         .event_kind = TM_C6_WIFI_EVENT_SCAN_DONE,

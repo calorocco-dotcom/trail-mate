@@ -97,6 +97,15 @@ releases it on every success/failure return. Scan failure does not consume the
 internal reserve. This applies to the Arduino S3 targets; P4 uses the separate
 C6 Wi-Fi projection and is not charged this saving.
 
+Both local and C6 scan error paths now explicitly clear the SDK-owned AP list
+if fetching the count/records fails. The pinned SDK documents this as required
+to avoid leaked BSS scan information, including a failed records fetch under
+memory pressure. The local runtime also reports a count-fetch error as failure
+instead of presenting it as an empty successful scan. Tests model the driver
+list separately from the caller's PSRAM output and fail before this correction.
+C6 also emits the Wi-Fi error event so P4 ends its pending scan instead of
+waiting for the asynchronous scan timeout after a result-fetch failure.
+
 The primary local Wi-Fi profile had four static RX buffers but inherited a
 16-entry AMPDU RX Block Ack window from the prebuilt SDK. It now explicitly
 bounds the window to four. The emergency profile still disables aggregation.
