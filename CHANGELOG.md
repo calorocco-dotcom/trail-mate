@@ -5,21 +5,25 @@ All notable changes to this project will be documented in this file.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Older releases used the pre-1.0 alpha version line. The first stable firmware
-release is being prepared as 1.0.0. Its entry remains Unreleased until feature
-acceptance and release publication are complete.
+Older releases used the pre-1.0 alpha version line. Version 1.0.0 is the first
+stable firmware release. Hardware support and validation remain target-specific.
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-10-17
 
-### 1.0.0 — first stable firmware release candidate
+### 1.0.0 — first stable firmware release
 
-Trail Mate 1.0.0 combines the outdoor terminal and its new browser tools as a
-decentralized Geocaching and trail-sharing platform. This candidate entry
-describes the intended stable release; the PR is still awaiting final acceptance
-and no final release has been published.
+Trail Mate 1.0.0 brings offline route planning, maps, messaging and everyday tools
+together on the handheld. Its browser tools add device configuration, Geocaching
+maintenance and signed trail sharing. Your device holds the author identity;
+independently operated Reticulum directories help others find what you choose
+to publish, without requiring a website account.
 
 ### Added
 
+- Offline foot-route planning and saved navigation: choose a current or searched origin and a destination on the device, calculate from installed TMAP 0.2.0 routing data, save an indexed `.tmroute` plan, preview it and follow it in Map without an Internet connection. Map provides progress, remaining distance, geometric turns, deviation, replanning and arrival; saved plans survive stopping or a failed replan.
+- A shared adaptive launcher and widget screen for Pager, T-Deck and Wio L2, with Mesh, GNSS, activity, Agenda, Music and Quick controls. Compass appears only on boards with a magnetometer. Touch swipes move between the launcher and widgets; Pager uses V, with contextual keyboard/encoder controls and Help. P4 presents paged widgets in its larger right-hand dashboard.
+- SD-card MP3 playback from `/Music`, including subfolders; song/artist/album/folder browsing, user playlists, album art, available ID3 fields, embedded/sidecar lyrics, repeat-all, repeat-one and shuffle. Active sessions reopen in Now Playing; the Music widget provides quick playback controls.
+- Quick controls for Wi-Fi, LoRa, GPS, volume and brightness, routed through the existing service and audio-focus coordinators. Voice and intercom pause music when taking the audio output.
 - USB browser configuration management: complete verified snapshots, classified settings and search, readable enumerations and units, validation, change review, save/readback, and configuration backup/restore.
 - Navigation diagnostics over framed HostLink USB logs, with a bounded capture helper and an external-only 384-byte formatting scratch owner.
 - Interactive route previews with map dragging, zoom buttons and Fit, equivalent keyboard controls, retained view across layer/image changes, and indexed SD detail for generated routes.
@@ -30,8 +34,6 @@ and no final release has been published.
 - Shared-trail browsing by map extent, queries after map movement, direct object-ID lookup, copyable IDs and version links, verified details and downloads. The public administrative catalog supports country/region and one administrative level globally, with 251 parents and 4,596 units; it adds no city/county hierarchy or firmware dataset.
 - Device-authored trail publishing, updates and archive states with stable object IDs, parent-version chains, signed directory receipts and bounded USB synchronization.
 - Eleven browser interface languages for configuration, identity and content maintenance.
-- On-device foot-route planning from the current position or a searched origin to a searched destination, using installed TMAP routing data on supported PSRAM-capable ESP targets. Tracker's Menu → Nav → New reuses POI search and saves self-contained `.tmroute` plans for preview and route following.
-- Native saved-route navigation while Map is open: bounded viewport reads and clipped drawing, progress/remaining distance, geometric left/right/U-turn hints, confirmed deviation, manual/automatic replanning with cancel/retry and validated candidate activation, and confirmed arrival with Stop/Finish controls. Saved plans remain available after stopping or failed replanning. External-memory refusal, stale GPS, missing SD and dense views have explicit states.
 - Navigation serial diagnostics identify UI validation, distinct task-admission failures, PSRAM/internal free and largest blocks, SD/USB ownership, selected map packages, search/export progress and terminal outcomes. Request IDs correlate backend events; bounded progress logging avoids per-expansion output and omits endpoint names, exact coordinates and configuration fields.
 
 ### Existing capabilities included in 1.0.0
@@ -56,8 +58,8 @@ and no final release has been published.
 - Product documentation introduces device-owned identity, decentralized Geocaching and trail sharing alongside navigation and communication.
 - Music content labels use the installed content font for CJK titles, artists, albums, lyrics and playlists. Compass widgets are filtered by magnetometer capability, without starting absent hardware or leaving empty pages.
 - L2 uses a verified 0 dB ES8311 DAC stage instead of the library's +17.5 dB boost. JPEG covers convert LVGL's BGR output correctly; register-I/O and color-bar regressions cover both fixes.
-- Active music avoids waiting on UI state locks, publishes cached progress at 10 Hz, and temporarily outranks rendering. L2 reuses its worker on core 0 alongside the core-1 UI. Contending-reader and UI-load regressions verify uninterrupted feeding, priority restoration and retained commands without adding an audio task or buffer.
-- Continuous Music playback reuses its PSRAM read-ahead window for batched SD reads and yields without an extra per-frame sleep. L2 music transitions silence the amplifier, validate I2S/ES8311 settings and report producer starvation diagnostics; physical listening verification remains pending.
+- Music avoids waiting on UI state locks and publishes cached progress at 10 Hz. A producer fills a bounded PSRAM PCM queue and an independent output worker drains it; L2 keeps audio work alongside its core-1 UI. Pause, seek, track changes and audio-focus preemption discard stale queued audio. SD reads are batched, transitions silence the amplifier, and starvation diagnostics support further device testing.
+- SD working configuration uses strict TMSET7, including supported Wi-Fi, Reticulum/LXMF, BLE and cellular settings. Earlier schemas are migration inputs; complete validated transactions replace the file atomically, while malformed documents remain available for repair.
 - Configuration controls show meanings, ranges and units instead of unexplained numbers. Brightness/audio use percentages and satellite masks have understandable choices.
 - Browser publication guides signing, network publication and device confirmation in one operation while preserving unconfirmed work.
 - Successive publications of a trail draft retain the same object ID and parent-version chain.
@@ -88,16 +90,12 @@ and no final release has been published.
 - Geocaching signature input processing also yields on transient SD open/size/seek/read contention and resumes from the last completely hashed slice. A native regression reproduces the original failure and verifies all four busy stages without adding a persistent input buffer.
 - Signature validity checks distinguish a busy identity lock from an actual identity change. A busy status/chunk read preserves the signed output for retry; identity changes, storage errors and expiry still invalidate the task. The regression reproduces loss of an already signed result before the correction.
 
-### Pending final release acceptance
+### Validation and device support
 
-- UI source `84a3ecf6` passed the complete Pages/native preview workflow, including all three native targets, six-page pointer/layout checks, current Map/Tracker dialogs and X/x dismissal. Source `72f43df6` passed full main CI `38720935133`, including all ten firmware targets, all 102 Geocaching native cases and the complete USB/browser suite. On October 16, the current primary working tree, including the user's TMAP 0.2.0/navigation changes and the identity-lock correction, was built and flashed to Wio L2 with device-side hash verification. The 4,913,648-byte application has SHA-256 `163bf3086e3dbf2623d4578de3006ec5d6a8251cc8476e4c9de82d93a79b7500` and uses 96,756 static RAM bytes. COM69 returned automatically; the original author/RF identities and all 309 configuration fields matched before and after publication acceptance. The combined working-tree image is a distinct candidate from the earlier ten-target CI revision.
-- Physical Geocaching update/archive acceptance now passes for the retained original object: exact version 1 preserved, version 2 updated and version 3 archived, with real device signatures, independent native verification of all three stored records and their parent chain, verified directory proof and device readback confirming revision 3 with no pending publication or local changes. The browser harness subsequently stopped on a locale-switch assertion requiring an unchanged total USB request count; an extra catalogue read occurred. The publication flow passed independent verification, but the complete browser harness is not recorded as green.
-- Public global-region selection, first-level boundary verification and regional queries have passed through the real WSS/Reticulum directory.
-- Physical trail publication, idempotent retry, exact attachments, map/region queries, same-ID update and archive, fresh readers, directory restarts and historical reads passed. The accepted trail record is revision 3, archived; its original revision-1 checkpoint is retained.
-- Physical Geocaching v1 publication and confirmation passed using the original signed record and directory proof. Its v2 edit now saves and the current image returned signature chunks, but retrieval subsequently failed. The exact input, operation correlation and durable version reservation are retained; v2 publication and v3 archive remain pending. USB disappearance during acceptance remains under investigation and is not attributed to the signature error without further evidence. Route calculation/following and the latest shared-dialog interaction also require physical acceptance. Passing software tests does not substitute for these checks.
-- The user has removed the original SD card. Three author-only physical USB reconnect cycles passed without re-enumeration; configuration/file maintenance waits for that card. Configuration editing/readback across 11 languages, Geocaching publication/update/archive through a native Reticulum directory, and KML workspace maintenance pass in actual-browser tests with a synthetic USB author.
-- README screenshots, the English Wiki and release packages have been prepared. Deployment of the new Device/Tracks website, the final release date, the stable-release announcement and publication of release assets follow successful physical acceptance.
-- Stable release status will not imply identical peripherals or completed hardware validation on every target. The device support table continues to describe those differences.
+- Wio L2 offline navigation, route following, the current menus and touch interaction were accepted on hardware. Native and browser checks cover the shared UI and publication flows separately; the detailed receipts are in the [release record](docs/releases/1.0.0.md).
+- The P4 TFT test unit has working display, touch, brightness and volume controls. Its external keyboard still reports no response from the accessory's I2C expander and remains under diagnosis. P4 AMOLED and other bring-up ports retain their own device-validation status.
+- Music, widgets, navigation, voice, Compass and network interfaces follow the board's actual capabilities. A stable version number does not give every target the same peripherals or feature set.
+- Real Geocaching and trail publish/update/archive flows were verified with the retained device identity and original objects. The acceptance record distinguishes those checks from simulated authors, native renders and the historical browser-run locale assertion.
 
 ## [0.1.53-alpha] - 2026-10-10
 
@@ -117,6 +115,8 @@ and no final release has been published.
 
 ### Fixed
 
+- Pager encoder focus and keyboard routing across app pages and widget controls, focus preservation during refresh and track changes, repeated Enter/click handling, nested Preview Help, and launcher Help consuming the advertised V shortcut. Help now uses one titled, closable style with visible switching hints.
+- Music output status handling on Pager, L2 codec gain and playback buffering, late widget metadata, CJK content fonts and RGB565 cover colours. A bounded 256 KiB PSRAM PCM queue and a separate output worker give playback more headroom during UI work; remaining physical playback testing is target-specific.
 - Keep Geocaching rows stable during unrelated operations and query progress, and skip completed tasks during publication recovery.
 - Allow removed local caches to be downloaded again while protecting modified GPX files and safely resuming history cleanup.
 - Preserve current Geocaching indexes during checkpoint rebuilds and upgrade legacy local indexes during idle maintenance after writable recovery.

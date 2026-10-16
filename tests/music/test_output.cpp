@@ -3,6 +3,7 @@
 #include "platform/audio/audio_focus.h"
 #include "platform/esp/common/music/music_output.h"
 #include <cassert>
+#include <cstdio>
 #include <map>
 #include <vector>
 #ifndef _WIN32

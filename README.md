@@ -13,9 +13,9 @@
 
 ![trail mate page](docs/images/ChatGPTImage.png)
 
-> An edge-first decentralized communication and situational-awareness system where identity, data, and connectivity choices remain with the user
+> Offline maps, routes you can carry, and networks you choose.
 
-**Trail Mate is a decentralized Geocaching and trail-sharing platform built around personally held devices. It combines phone-independent navigation, off-grid messaging, team awareness, device-authored publications, and browser tools for maintaining caches and KML trails.** Its shared architecture spans ESP32, nRF52, and Linux, with selectable Meshtastic, MeshCore, and Reticulum/LXMF networking paths.
+**Trail Mate puts offline navigation, maps and field messaging on a handheld you can use without a phone.** Plan a walking route from installed map data, follow it with GNSS, record your journey, and stay in touch over Meshtastic, MeshCore or Reticulum/LXMF. When you want to share a trail or a Geocache, the device signs it under your own identity. Browser tools make editing and publishing easier, without asking you to create a website account. Features depend on the board; the project includes ESP32, nRF52 and Linux implementations.
 
 [English](README.md) | [Documentation](https://github.com/vicliu624/trail-mate/wiki) | [Releases](https://github.com/vicliu624/trail-mate/releases) | [Join Discord](https://discord.gg/shkueG4zfc)
 
@@ -59,9 +59,9 @@ copies already received by others. Decentralization gives users choices and
 reduces dependence on one operator; it does not make published location data
 secret or prevent every form of behavioural analysis.
 
-The [1.0.0 delivery record](docs/releases/1.0.0.md) distinguishes the release
-candidate from the final verified release. Documentation on this feature branch
-includes the new browser tools; consult the Releases page for published builds.
+The [1.0.0 delivery record](docs/releases/1.0.0.md) keeps the build and acceptance
+evidence separate from device-support claims. Use [Releases](https://github.com/vicliu624/trail-mate/releases)
+for installable images and check the board table before choosing a target.
 
 ---
 
@@ -81,6 +81,69 @@ Capabilities vary with memory, peripherals, input hardware, and port maturity. T
 Engineering evidence: [CI and release workflow](.github/workflows/ci.yml) · [shared protocol tests](modules/core_chat/tests) · [repository architecture](docs/specification/REPOSITORY_LAYOUT_ARCHITECTURE_SPEC.md) · [version history](CHANGELOG.md).
 
 ## 🚀 Try Trail Mate
+
+### Plan and follow a route offline
+
+Prepare a region in Trail Mate Center, then put its TMAP files and resources on
+the SD card. Include the area's routing graph and POI search data as well as
+the map styles you want to see. OSM, terrain and satellite views, numeric terrain
+data and contour overlays each use the data included in those packages.
+
+On a supported PSRAM-capable device, open **Tracker → Menu → Nav → New**.
+Start from your current GNSS position or a place you find in the offline search,
+choose a destination, and calculate a walking route on the device. Save it as a
+`.tmroute` plan for another day, or open its preview and start following it in Map.
+Calculating and following the plan do not need an Internet connection.
+
+Map shows progress, remaining distance, geometric turn hints, deviation and
+arrival. Manual or automatic replanning can calculate a new path from your
+current position; cancellation or a failed attempt keeps the saved plan intact.
+Live guidance is presented while Map is open. The graph must cover the requested
+trip, and route calculation has an explicit memory/search budget. A raster-only
+map cannot supply a path by itself.
+
+You can also bring your own KML routes, record local tracks, inspect elevation
+profiles and route images, search for places, save waypoints, and see team
+members or radio contacts on the map. The [offline navigation guide](https://github.com/vicliu624/trail-mate/wiki/24.-Offline-Navigation-and-Map-Controls)
+explains installation and controls. Wio L2 navigation, presentation and touch
+interaction have been accepted on hardware; other targets retain their own
+validation status.
+
+### Widgets and music for everyday use
+
+Pager, T-Deck and Wio L2 share an adaptive app grid. The widget screen beside it
+shows one widget at a time: mesh status, GNSS, recent activity, Agenda, Music,
+Quick controls, and Compass when the device has a magnetometer. P4 keeps the
+same idea in a larger layout, with pages in its right-hand dashboard.
+
+On T-Deck and Wio L2, swipe right from the main menu to open the widget screen and
+left to return; swipe up/down to change widgets. **On Pager, press V to switch
+between the main menu and widgets.** W/A/S/D and the wheel select app icons;
+inside widgets, W/S or the wheel changes widgets, A/D selects a control and
+Enter or a wheel press activates it. H opens contextual Help. The footer keeps
+the V shortcut visible, and V also works with launcher Help open. P4's right-hand
+dashboard uses horizontal paging for additional widgets.
+
+Put MP3 files under **`/Music`** on the SD card; subfolders are scanned too.
+Music opens Now Playing when a session is active, or the library when idle.
+Browse songs, artists, albums and folders, create your own playlists, and use
+repeat-all, repeat-one or shuffle. Track information includes the available ID3
+fields, album art and embedded lyrics; matching `.lrc` files can sit beside a
+song. Chinese titles and lyrics use the same installed content font as Chat.
+
+The Music widget offers transport controls, and Quick controls provides Wi-Fi,
+LoRa, GPS, volume and brightness through the existing device services. Only the
+visible widget retains its view resources. Playback uses a bounded PSRAM PCM
+buffer and pauses when voice or intercom takes the audio output. Audio hardware
+and playback quality still depend on the target; the support table applies.
+
+![Music on Pager](docs/images/music/pager-now-playing.png)
+
+![Quick controls on Pager](docs/images/music/pager-quick-controls.png)
+
+*Actual native LVGL previews with sample metadata, artwork and simulated service
+state. The [Music and widgets guide](https://github.com/vicliu624/trail-mate/wiki/25.-Music,-Widgets-and-Daily-Controls)
+includes file placement and keyboard controls.*
 
 ### Browser device configuration
 
@@ -194,7 +257,7 @@ This capture uses no USB author and does not claim a completed publication test.
 *The same built Web page selects Austria and then Vorarlberg through the public
 directory, verifies the supplied boundary and queries that administrative area.
 The global catalog stops after two levels. This capture uses no USB author;
-the new Device and Tracks pages still await public website deployment.*
+the capture itself does not establish firmware or publication acceptance.*
 
 ![Trail elevation and timed-record maintenance](docs/images/release-1.0.0/web-track-elevation.png)
 
@@ -202,9 +265,8 @@ the new Device and Tracks pages still await public website deployment.*
 time replay. A simple example does not imply automatic terrain data or invented
 recording timestamps.*
 
-The Device and Tracks links describe the candidate pages in this PR. Their
-formal Pages deployment and final device acceptance are still pending; the
-[release record](docs/releases/1.0.0.md) tracks those limits.
+The [release record](docs/releases/1.0.0.md) records deployment and acceptance
+separately from these browser captures.
 
 Configure network access under **Settings > Reticulum** without changing the chat protocol. Manually configured TCP interfaces support IFAC through the SD configuration; RNode/LoRa and AutoInterface IFAC are still pending. See the [Reticulum settings guide](https://github.com/vicliu624/trail-mate/wiki/4.1.1-Reticulum-Settings) and [Geocaching developer guide](https://github.com/vicliu624/trail-mate/wiki/20.-Geocaching-Developer-Guide).
 
@@ -224,14 +286,14 @@ The table below records the **real build targets currently present in the reposi
 | --- | --- | --- | --- |
 | **LILYGO T-LoRa-Pager (SX1262)** | `tlora_pager_sx1262` | PlatformIO / Arduino | Current default environment and still the most complete day-to-day validation target |
 | **LILYGO T-Deck** | `tdeck` | PlatformIO / Arduino | Primary validation target; keyboard, chat, maps, and shared UI paths are actively used |
-| **Seeed Wio Tracker L2 Pro (touchscreen)** | `wio_tracker_l2` | PlatformIO / Arduino (ESP32-S3) | Integrated shared-product port with CI build and LVGL touch regression coverage; see the [target contract](docs/targets/wio_tracker_l2.md) for capabilities and separate on-device acceptance checks |
+| **Seeed Wio Tracker L2 Pro (touchscreen)** | `wio_tracker_l2` | PlatformIO / Arduino (ESP32-S3) | Offline navigation, current menus and touch interaction accepted on hardware; CI and native LVGL coverage. ES8311 audio is supported; see the [target contract](docs/targets/wio_tracker_l2.md). |
 | **GAT562 Mesh EVB Pro** | `gat562_mesh_evb_pro` | PlatformIO / Arduino (nRF52) | Simplified nRF52 firmware target with monochrome UI, Meshtastic / MeshCore LoRa paths, and persistent on-device radio settings |
 | **LILYGO T-Echo-Lite-KeyShield** | `t-echo-lite` | PlatformIO / Arduino (nRF52) | Simplified nRF52 firmware target with 192x176 e-paper UI, 4x5 physical keypad input, Meshtastic / MeshCore LoRa paths, and local device settings |
 | **LILYGO T-LoRa-Pager (LR1121)** | `tlora_pager_lr1121` | PlatformIO / Arduino | Supported Pager RF variant with LR1121 RF switch and TCXO bring-up |
 | **LILYGO T-Deck Pro** | `tdeck_pro_a7682e` / `tdeck_pro_pcm512a` | PlatformIO / Arduino | Separate environments exist, but this line is still in active bring-up / adaptation work |
 | **LILYGO T-Watch S3** | `lilygo_twatch_s3` | PlatformIO / Arduino | Experimental target used more for system and UI validation than for full feature coverage |
 | **M5Stack Tab5** | `TRAIL_MATE_IDF_TARGET=tab5` | ESP-IDF | Main large-screen IDF bring-up target; the shared shell runs and hardware-specific work is still being filled in |
-| **LILYGO T-Display P4 TFT** | `TRAIL_MATE_IDF_TARGET=t_display_p4_tft` | ESP-IDF | Explicit TFT / HI8561 bring-up target for the shared IDF shell |
+| **LILYGO T-Display P4 TFT** | `TRAIL_MATE_IDF_TARGET=t_display_p4_tft` | ESP-IDF | TFT / HI8561 port with shared UI and dashboard; display, touch and sliders verified on the test unit. External keyboard input remains under hardware diagnosis. |
 | **LILYGO T-Display P4 AMOLED** | `TRAIL_MATE_IDF_TARGET=t_display_p4_amoled` | ESP-IDF | Explicit AMOLED / RM69A10 + GT9895 bring-up target for the shared IDF shell |
 
 Linux development also includes the [Cardputer Zero device app](apps/linux_cardputer_zero/README.md) and [Linux simulator](apps/linux_sim_shell/README.md). These have their own build and validation paths; embedded CI coverage does not establish Linux hardware readiness.

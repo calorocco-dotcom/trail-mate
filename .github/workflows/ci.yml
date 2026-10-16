@@ -886,6 +886,8 @@ jobs:
       - geocaching
       - build
       - p4_contract
+      - p4_rendered_ui
+      - hostlink_management
       - build_c6
       - pages_contract
       - build_idf

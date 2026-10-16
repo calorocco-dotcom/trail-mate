@@ -43,6 +43,78 @@ bool current_fix_lat_lon(double& lat, double& lon)
     return fix_valid;
 }
 bool route_deviation_mode_active() { return route_active; }
+// Native archive polling is an injected adapter in this KML-matching contract.
+// The production dispatcher remains intact; native archive/session behavior has
+// its own tests in tests/navigation and tests/navigation_ui.
+namespace tmap
+{
+struct GeoPoint
+{
+    int32_t latitude = 0, longitude = 0;
+};
+} // namespace tmap
+namespace platform::ui::gps
+{
+struct Fix
+{
+    bool valid = true;
+    double lat = 0, lng = 0;
+    uint32_t age = 0;
+};
+Fix data;
+Fix get_data() { return data; }
+} // namespace platform::ui::gps
+namespace app
+{
+struct Config
+{
+    bool route_enabled = false;
+    std::string route_path;
+};
+struct Facade
+{
+    Config config;
+    const Config& readConfig() { return config; }
+} facade;
+Facade& configFacade() { return facade; }
+} // namespace app
+struct NativeRoute
+{
+    unsigned polls = 0;
+    bool lost = false;
+    void storageLost() { lost = true; }
+    bool poll(bool, tmap::GeoPoint, uint32_t, uint32_t, bool, uint32_t (*)())
+    {
+        ++polls;
+        return false;
+    }
+    bool ready() { return true; }
+    tmap::GeoPoint destination() { return {10000000, 20000000}; }
+};
+NativeRoute* s_native_route = nullptr;
+bool s_native_center_pending = false;
+int s_map_zoom = 0, s_map_pan_x = 0, s_map_pan_y = 0;
+constexpr int kDefaultTrackerZoom = 12;
+unsigned native_sessions = 0, refreshes = 0;
+void clear_native_session() { native_sessions = 0; }
+void sync_native_viewport() {}
+void request_refresh_view() { ++refreshes; }
+void advance_native_session(tmap::GeoPoint, bool, uint32_t, uint32_t, bool) { ++native_sessions; }
+struct Workspace
+{
+    struct Viewport
+    {
+        double center_lat = 0, center_lon = 0;
+        int zoom = 0;
+    } view;
+    Viewport viewport() { return view; }
+    bool setViewport(Viewport value)
+    {
+        view = value;
+        return true;
+    }
+} workspace;
+Workspace& map_workspace_model() { return workspace; }
 #include "image_ui_navigation_match_state_actual.inc"
 static std::string document(const std::string& body)
 {
@@ -74,6 +146,15 @@ static void complete(double lat, double lon)
 static uint32_t counted_clock() { return sys::time++; }
 int main()
 {
+    NativeRoute native;
+    s_native_route = &native;
+    advance_route_navigation();
+    assert(native.polls == 1 && native_sessions == 1);
+    platform::ui::device::ready = false;
+    advance_route_navigation();
+    assert(native.lost && native_sessions == 0 && native.polls == 1);
+    platform::ui::device::ready = true;
+    s_native_route = nullptr;
     using namespace track_sharing;
     RouteMatchAccumulator equator({.001, .005});
     assert(equator.point({0, 0}, true) && equator.point({0, .01}, false));

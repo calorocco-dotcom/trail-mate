@@ -13,8 +13,10 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <new>
 #include <set>
 #include <string>
+#include <type_traits>
 #if defined(_WIN32)
 extern "C" void mbedtls_platform_zeroize(void* pointer, size_t length)
 {
@@ -71,6 +73,64 @@ bool project_point(int, Position position, lv_point_t& output)
     return true;
 }
 } // namespace ui::widgets::map
+// This image-source contract exercises the production loader and real KML
+// parser. Native-route projection and the map widget are separate adapters;
+// their archive/viewport integration is covered by the navigation test suite.
+namespace tmap
+{
+enum class Result
+{
+    Ok,
+    Busy,
+    BudgetExceeded,
+    Invalid
+};
+}
+namespace native_preview_fake
+{
+tmap::Result result = tmap::Result::Invalid;
+bool fail_owner = false, map_ready = true;
+unsigned projections = 0, owners = 0;
+} // namespace native_preview_fake
+namespace ui::i18n
+{
+const char* tr(const char* text) { return text; }
+} // namespace ui::i18n
+namespace ui::support
+{
+struct TmRouteMap
+{
+    TmRouteMap() { ++native_preview_fake::owners; }
+    ~TmRouteMap() { --native_preview_fake::owners; }
+    bool begin(const char*) { return native_preview_fake::map_ready; }
+};
+struct RouteUiMemory
+{
+    template <class T>
+    static T* create() { return native_preview_fake::fail_owner ? nullptr : new (std::nothrow) T; }
+    template <class T>
+    static void destroy(T*& value)
+    {
+        delete value;
+        value = nullptr;
+    }
+};
+template <class Points>
+tmap::Result projectTmRoutePreview(const char*, Points& points, double& distance)
+{
+    ++native_preview_fake::projections;
+    if (native_preview_fake::result != tmap::Result::Ok) return native_preview_fake::result;
+    using Point = std::remove_reference_t<decltype(points[0])>;
+    Point first{}, last{};
+    first.lat = 30;
+    first.lon = 120;
+    last.lat = 30.001;
+    last.lon = 120.001;
+    if (!points.push_back(first) || !points.push_back(last)) return tmap::Result::BudgetExceeded;
+    distance = 100;
+    return tmap::Result::Ok;
+}
+} // namespace ui::support
 namespace navigation
 {
 #include "image_ui_navigation_struct_actual.inc"
@@ -113,6 +173,8 @@ ui::support::RouteImageVector<lv_point_precise_t, 192> s_preview_map_line_points
 constexpr size_t kPreviewMaxDrawPoints = 96;
 int s_preview_map_runtime = 0;
 std::string s_preview_route_name;
+std::string s_preview_status_text;
+ui::support::TmRouteMap* s_preview_native_route = nullptr;
 #include "image_ui_preview_asset_id_actual.inc"
 std::string route_path_for_name(const std::string& name)
 {
@@ -120,6 +182,7 @@ std::string route_path_for_name(const std::string& name)
 }
 void clear_preview_model()
 {
+    ui::support::RouteUiMemory::destroy(s_preview_native_route);
     s_preview_route_points.clear();
     s_preview_images.clear();
     s_preview_route_name.clear();
@@ -149,6 +212,27 @@ int main()
 {
     image_fake::psram = true;
     image_fake::allocation_fail = false;
+    // The dispatcher must not send native plans through the KML image reader.
+    assert(!preview::load_route_preview_model("busy.tmroute"));
+    native_preview_fake::result = tmap::Result::Busy;
+    assert(!preview::load_route_preview_model("busy.tmroute"));
+    assert(preview::s_preview_status_text == "SD busy; retry preview");
+    native_preview_fake::result = tmap::Result::Ok;
+    native_preview_fake::fail_owner = true;
+    assert(!preview::load_route_preview_model("owner.tmroute"));
+    assert(preview::s_preview_status_text == "Route preview budget exceeded");
+    assert(preview::s_preview_route_points.empty() && native_preview_fake::owners == 0);
+    native_preview_fake::fail_owner = false;
+    native_preview_fake::map_ready = false;
+    assert(!preview::load_route_preview_model("open.tmroute"));
+    assert(native_preview_fake::owners == 0);
+    native_preview_fake::map_ready = true;
+    assert(preview::load_route_preview_model("saved.tmroute"));
+    assert(preview::s_preview_images.empty() && preview::s_preview_route_points.size() == 2);
+    assert(native_preview_fake::owners == 1);
+    preview::clear_preview_model();
+    assert(native_preview_fake::owners == 0 && image_fake::live == 0);
+    preview::s_preview_asset_id = "test";
     const std::vector<std::string> urls = {"https://example.invalid/a", "https://example.invalid/b"};
     for (const auto& url : urls)
     {

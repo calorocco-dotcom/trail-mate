@@ -12,7 +12,6 @@
 #include <cstring>
 
 #include "ui/assets/fonts/font_utils.h"
-#include "ui/components/bottom_bar.h"
 #include "ui/input/pager_navigation.h"
 #include "ui/localization.h"
 #include "ui/page/page_profile.h"
@@ -292,6 +291,9 @@ void top_bar_set_back_callback(TopBar& bar, void (*cb)(void*), void* user_data)
 lv_obj_t* top_bar_create_dialog_header(lv_obj_t* parent, const char* title,
                                        lv_event_cb_t on_close, void* context, lv_obj_t** close_button)
 {
+#if defined(ARDUINO_T_LORA_PAGER)
+    platform::ui::PsramUiLease memory;
+#endif
     TopBar bar{};
     TopBarConfig config{};
     // Neither a back callback nor the power presenter retains this local view.
@@ -301,7 +303,22 @@ lv_obj_t* top_bar_create_dialog_header(lv_obj_t* parent, const char* title,
     top_bar_init(bar, parent, config);
     lv_obj_del(bar.right_label);
     top_bar_set_title(bar, ::ui::i18n::tr(title));
-    auto* close = ::ui::components::bottom_bar::add_button(bar.container, LV_SYMBOL_CLOSE, on_close, context);
+    // A header is a leaf widget. Keep its close control independent of the
+    // taskbar/menu implementation so standalone pages can link it directly.
+    auto* close = lv_button_create(bar.container);
+    lv_obj_set_style_bg_color(close, lv_color_hex(0xF8E6C3), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(close, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(close, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(close, lv_color_hex(0x8A6E43), LV_PART_MAIN);
+    lv_obj_set_style_radius(close, 4, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(close, 0, LV_PART_MAIN);
+    lv_obj_set_style_text_color(close, lv_color_hex(0x25170D), LV_PART_MAIN);
+    lv_obj_set_style_text_font(close, resolve_top_bar_font(resolve_top_bar_height(config)), LV_PART_MAIN);
+    lv_obj_clear_flag(close, LV_OBJ_FLAG_SCROLLABLE);
+    auto* caption = lv_label_create(close);
+    lv_label_set_text(caption, LV_SYMBOL_CLOSE);
+    lv_obj_center(caption);
+    if (on_close) lv_obj_add_event_cb(close, on_close, LV_EVENT_CLICKED, context);
     const auto size = std::max<lv_coord_t>(16, resolve_top_bar_height(config) - 4);
     lv_obj_set_size(close, size, size);
     lv_obj_set_style_pad_all(close, 0, LV_PART_MAIN);
