@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {scanNvsAccesses,scanNvsKeyAliases,runNvsAudit} from '../../scripts/audit_nvs_access.mjs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {scanNvsAccesses,scanNvsKeyAliases,collectNvsAccesses,runNvsAudit} from '../../scripts/audit_nvs_access.mjs';
 
 test('NVS audit retains namespace/key/handle expressions and excludes values and output buffers',()=>{
  const source=`nvs_open("settings", NVS_READWRITE, &handle);
@@ -48,4 +51,28 @@ test('current NVS inventory and alias map are reproducible without updating docu
  const source=await readFile(new URL('../../platform/esp/common/include/platform/esp/common/settings_store_impl.h',import.meta.url),'utf8');
  const aliases=scanNvsKeyAliases(source);assert.equal(result.aliases,aliases.entries.length);
  assert.equal(aliases.entries.find(row=>row.logical==='wifi_sta_password').stored,'wifi_sta_pwd');
+});
+
+test('committed inventory excludes initialized gitlinks and untracked local sources',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'trail-mate-nvs-audit-'));
+ try{
+  const git=(...args)=>execFileSync('git',args,{cwd:root,stdio:'pipe'});
+  git('init','--quiet');
+  await mkdir(path.join(root,'src','driver'),{recursive:true});
+  await writeFile(path.join(root,'src','main.cpp'),'nvs_close(handle);\n');
+  git('add','src/main.cpp');
+  git('update-index','--add','--cacheinfo','160000,'+'1'.repeat(40)+',src/driver');
+  const before=await collectNvsAccesses(root,['src'],{trackedOnly:true});
+  await writeFile(path.join(root,'src','driver','bus.cpp'),'nvs_close(driver);\n');
+  await writeFile(path.join(root,'src','local.cpp'),'nvs_close(local);\n');
+  const after=await collectNvsAccesses(root,['src'],{trackedOnly:true});
+  assert.deepEqual(after,before);
+  assert.deepEqual(after.files,['src/main.cpp']);
+  assert.equal(after.rows.length,1);
+  assert.equal((await collectNvsAccesses(root,['src'])).rows.length,3,'explicit dependency audits retain filesystem scanning');
+ }finally{
+  assert.equal(path.dirname(root),path.resolve(tmpdir()));
+  assert.ok(path.basename(root).startsWith('trail-mate-nvs-audit-'));
+  await rm(root,{recursive:true,force:true});
+ }
 });
