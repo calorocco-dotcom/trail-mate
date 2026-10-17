@@ -1,7 +1,7 @@
 # 1.0.1 Web illustrations
 
 These eight English illustrations use the production Web bundles from source
-`d35c4fd040a892231312cee5addb158a502e9af6`, including Animal Island UI 2.2.1,
+`f3e66efdf1bcc7800dac91f6488a4636f7fa36fb`, including Animal Island UI 2.2.1,
 naive-icons 1.6.0, shared navigation, readable language selection and the native
 control theme bridge. The machine-readable capture receipt records bundle and
 image SHA-256 values, viewports, URLs and data sources.
