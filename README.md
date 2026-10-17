@@ -13,21 +13,26 @@
 
 ![trail mate page](docs/images/ChatGPTImage.png)
 
-> Offline maps, routes you can carry, and networks you choose.
+> Your identity belongs to you. Keep private records local. Choose what to share.
 
-**Trail Mate puts offline navigation, maps and field messaging on a handheld you can use without a phone.** Plan a walking route from installed map data, follow it with GNSS, record your journey, and stay in touch over Meshtastic, MeshCore or Reticulum/LXMF. When you want to share a trail or a Geocache, the device signs it under your own identity. Browser tools make editing and publishing easier, without asking you to create a website account. Features depend on the board; the project includes ESP32, nRF52 and Linux implementations.
+**Trail Mate is a privacy-focused handheld for decentralized communication and offline navigation.** It reduces the personal information a platform needs to hold: no real-name, phone or email account is required for the Web tools, and device-held keys prove authorship. Contacts, conversations and unshared tracks remain on hardware and storage you control.
+
+Communicate over compatible Meshtastic, MeshCore or Reticulum/LXMF networks, carry offline maps and record your journey locally. Choose independent gateways and directories, and publish only the trails or Geocaches you select. A service can help you communicate without becoming the owner of your identity and complete private history. Features depend on the board; the project includes ESP32, nRF52 and Linux implementations.
 
 [English](README.md) | [Documentation](https://github.com/vicliu624/trail-mate/wiki) | [Releases](https://github.com/vicliu624/trail-mate/releases) | [Join Discord](https://discord.gg/shkueG4zfc)
 
-**1.0.0 is the first stable firmware release.** Get the board-specific files and
-[release notes](https://github.com/vicliu624/trail-mate/releases/tag/v1.0.0), or
+**1.0.1 fixes USB browser management for Pager and T-Deck.** Install the matching
+new firmware; a website update cannot add the missing USB service to 1.0.0.
+Get the board-specific files and
+[release notes](https://github.com/vicliu624/trail-mate/releases/tag/v1.0.1), or
 use the [browser installer](https://vicliu624.github.io/trail-mate/). Check the
 device support table below before choosing an image.
 
 ## The device is your account
 
 Connect a supported Trail Mate device over USB to prove your author identity in
-the browser. There is no website account or password to register. The device
+the browser. There is no website account or password to register. This avoids
+requiring a platform profile with your real name, phone number or email. The device
 holds its identity and signs publications; the browser provides convenient
 editing, maps, file handling, and access to Reticulum through the computer's
 network. These author operations do not require changing the device's selected
@@ -64,7 +69,7 @@ copies already received by others. Decentralization gives users choices and
 reduces dependence on one operator; it does not make published location data
 secret or prevent every form of behavioural analysis.
 
-The [1.0.0 delivery record](docs/releases/1.0.0.md) keeps the build and acceptance
+The [1.0.1 delivery record](docs/releases/1.0.1.md) keeps the build and acceptance
 evidence separate from device-support claims. Use [Releases](https://github.com/vicliu624/trail-mate/releases)
 for installable images and check the board table before choosing a target.
 

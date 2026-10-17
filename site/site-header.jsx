@@ -3,6 +3,7 @@ import {ManagementLanguage,useManagementLanguage} from './i18n/management-langua
 import {installNavigationDismissal,navigationHref,navigationText} from './navigation.js';
 import brand from '../docs/images/logo_big.png';
 import './site-header.css';
+import './island-controls.css';
 
 export function SiteHeader({page,children,...attributes}){
  const {locale}=useManagementLanguage(),text=navigationText(locale),root=new URL('../',location.href);

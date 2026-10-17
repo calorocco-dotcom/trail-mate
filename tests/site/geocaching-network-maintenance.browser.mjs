@@ -15,6 +15,8 @@ import {GeocachingHardwareExchange} from '../../tools/hostlink/geocaching_hardwa
 import {saveIPPublication} from '../../site/geocaching/src/ip-publication-journal.js';
 const args=process.argv.slice(2),option=name=>args[args.indexOf(name)+1],hardwarePort=args.includes('--hardware-port')?option('--hardware-port'):null;
 const releaseDocs=args.includes('--release-docs');
+const releaseOutput=process.env.TRAIL_MATE_DOCS_OUTPUT??'docs/images/release-1.0.0';
+await fs.mkdir(releaseOutput,{recursive:true});
 if(releaseDocs&&hardwarePort)throw Error('Documentation captures require the isolated synthetic author, never a physical device');
 if(hardwarePort&&(!/^COM\d+$/.test(hardwarePort)||!args.includes('--serial-python')||!args.includes('--expected-author')||!/^[a-f0-9]{64}$/.test(option('--expected-author'))))throw Error('Hardware mode requires --hardware-port COMxx --serial-python <pyserial Python> --expected-author <fingerprint>');
 const resumeDraftId=args.includes('--resume-draft')?option('--resume-draft'):null;
@@ -112,7 +114,7 @@ try{
  else if(releaseDocs){
   await page.locator('.management-language select').selectOption('en');
   await page.locator('.geo-publication-task').getByText(geocachingIpPublicationText('en').confirmed,{exact:true}).waitFor();
-  await page.locator('.geo-publication-task').screenshot({path:'docs/images/release-1.0.0/web-geocaching-maintenance.png'});
+  await page.locator('.geo-publication-task').screenshot({path:`${releaseOutput}/web-geocaching-maintenance.png`});
   await page.locator('.management-language select').selectOption('zh-Hans');
  }else await page.screenshot({path:'docs/locales/zh-Hans/web-outdoor-management/images/geocaching-real-network-archive.png',fullPage:true});
  await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});const expectedId=(await verifySigned(signedVersions[2])).cacheId;await page.getByRole('button',{name:'复制藏宝点 ID',exact:true}).click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),expectedId);

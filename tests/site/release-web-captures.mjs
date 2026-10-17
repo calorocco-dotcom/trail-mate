@@ -7,7 +7,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-const root=path.resolve('site'),output=path.resolve('docs/images/release-1.0.0');
+const root=path.resolve('site'),output=path.resolve(process.env.TRAIL_MATE_DOCS_OUTPUT??'docs/images/release-1.0.0');
+await fs.mkdir(output,{recursive:true});
 const server=http.createServer(async(req,res)=>{
  try{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);

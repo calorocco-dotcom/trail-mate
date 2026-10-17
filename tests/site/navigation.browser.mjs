@@ -35,6 +35,7 @@ async function inspect(current,locale){
  await page.waitForFunction(()=>document.querySelectorAll('.site-primary a').length===3);
  await page.waitForFunction(locale=>document.documentElement.lang===locale,locale);
  await page.waitForFunction(locale=>document.querySelector('.site-primary a')?.href.includes('lang='+locale),locale);
+ assert.ok(await page.locator('.site-header select').evaluateAll(selects=>selects.every(select=>parseFloat(getComputedStyle(select).fontSize)>=12&&select.selectedOptions[0]?.textContent.trim())),`${current}/${locale}: language choice must remain readable`);
  if(current==='geocaching')assert.ok(await page.locator('#geocaching-connection-controls button').isVisible(),'USB controls stay in the page action row');
  const links=page.locator('.site-primary a'),text=navigationText(locale);
  assert.equal(await links.count(),3);
