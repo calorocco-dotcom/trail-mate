@@ -95,7 +95,23 @@ try{
  let page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(String(error)));await page.goto(origin+'/trail-mate/geocaching/?lang=zh-Hans');await page.waitForFunction(()=>document.querySelector('#search')&&!document.querySelector('#search').disabled,{},{timeout:60000});await page.getByRole('button',{name:'草稿',exact:true}).click();await page.getByRole('button',{name:'连接设备',exact:true}).click();await page.getByText('USB 作者已验证',{exact:true}).waitFor();
  if(resumeDraftId){if(resumeConfirmed)await page.getByRole('button',{name:'我的藏宝点',exact:true}).click();await page.getByRole('button',{name:'刷新设备列表',exact:true}).click();await openTestDraft(resumeSignature?updatedName:testName);assert.ok(hardware.drafts.has(resumeDraftId));}
  else{await page.getByRole('button',{name:'新建草稿',exact:true}).click();await page.getByLabel('名称',{exact:true}).fill(testName);await page.getByLabel('正文',{exact:true}).fill('网页中文正文 <script>window.__geoNetworkInjection=true</script>\n'.repeat(25));await page.getByLabel('提示',{exact:true}).fill('&< >'.repeat(80));await page.getByLabel('纬度',{exact:true}).fill('31');await page.getByLabel('经度',{exact:true}).fill('121');await page.getByRole('button',{name:'保存草稿到设备',exact:true}).click();await page.getByText('草稿已保存到设备。刷新列表可更新发布状态。',{exact:true}).waitFor({timeout:45000});}
- async function publishAndSync(){await page.getByRole('button',{name:'刷新 IP 目录',exact:true}).click();await page.getByRole('button',{name:'检查并确认发布',exact:true}).click();assert.equal(await page.locator('dialog[open] script').count(),0);await page.locator('dialog[open]').getByRole('button',{name:'通过 IP 网络发布',exact:true}).click();await page.locator('.geo-publication-task').getByText('发布内容与目录签名证明已归档到设备。',{exact:true}).waitFor({timeout:60000});}
+ async function publishAndSync(){
+  try{
+   await page.getByRole('button',{name:'刷新 IP 目录',exact:true}).click();
+   await page.getByRole('button',{name:'检查并确认发布',exact:true}).click();
+   assert.equal(await page.locator('dialog[open] script').count(),0);
+   await page.locator('dialog[open]').getByRole('button',{name:'通过 IP 网络发布',exact:true}).click();
+   await page.locator('.geo-publication-task').getByText('发布内容与目录签名证明已归档到设备。',{exact:true}).waitFor({timeout:60000});
+  }catch(error){
+   console.error('Publication workflow diagnostic',JSON.stringify({
+    signatures:countSignatures(),confirmations:countConfirmations(),pageErrors:errors,
+    status:await page.locator('.geo-publication-panel > p[role=status]').allTextContents(),
+    task:await page.locator('.geo-publication-task > p[role=status]').allTextContents(),
+    openDialogs:await page.locator('dialog[open]').count(),
+   }));
+   throw error;
+  }
+ }
  async function openTestDraft(name){for(let index=0;index<128;index++){await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent==='刷新设备列表'&&!button.disabled),{},{timeout:45000});const row=page.locator('.geo-draft-row').filter({hasText:name});if(await row.count()){await row.click();await page.getByLabel('名称',{exact:true}).waitFor();return;}const more=page.getByRole('button',{name:'加载更多设备草稿',exact:true});if(!await more.count())throw Error('Isolated acceptance draft not present in current device catalogue');await more.click();}throw Error('Device catalogue acceptance search exceeded bounded page count');}
  if(resumeSignature){
   await page.locator('.geo-publication-task').getByRole('button',{name:geocachingIpPublicationText('zh-Hans').resume,exact:true}).click();
