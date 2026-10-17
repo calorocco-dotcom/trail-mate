@@ -6,7 +6,7 @@ review should refresh captures if the corresponding UI changes.
 
 All release-facing Web captures were refreshed in **English on October 17,
 2026**, from the rebuilt production sources on `main` at
-`9aea8b671406ba5bb84c552b979e16fa188f7e21`. They replace the earlier Chinese
+`e6b692fc5df25ca4ae25f625d0343708db958b1d`. They replace the earlier Chinese
 fixture captures and October 14 review build. The [capture receipt](web-capture-receipt.json)
 records the exact bundle/image SHA-256 digests, language, viewport and source
 revision. Firmware tag `v1.0.0` is unchanged. The receipt's source revision
