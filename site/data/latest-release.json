@@ -1,45 +1,90 @@
 {
   "available": true,
-  "tag_name": "v0.1.26-alpha",
-  "version": "0.1.26-alpha",
-  "release_url": "https://github.com/vicliu624/trail-mate/releases/tag/v0.1.26-alpha",
-  "published_at": "2026-05-19T08:28:56Z",
+  "tag_name": "v1.0.0",
+  "version": "1.0.0",
+  "release_url": "https://github.com/vicliu624/trail-mate/releases/tag/v1.0.0",
+  "published_at": "2026-10-16T17:48:00Z",
   "targets": {
+    "wio-tracker-l2": {
+      "available": true,
+      "manifest_path": "manifests/wio-tracker-l2.json",
+      "ota_available": true,
+      "ota_path": "assets/ota/trail-mate-wio_tracker_l2-v1.0.0.bin",
+      "ota_sha256": "ba489f2b7f79107d664dda489287b714b41824a79b7d3c018d0c5c4c05ea71a6",
+      "ota_size_bytes": 5041168,
+      "version": "1.0.0"
+    },
     "tlora-pager-sx1262": {
       "available": true,
       "manifest_path": "manifests/tlora-pager-sx1262.json",
       "ota_available": true,
-      "ota_path": "assets/ota/trail-mate-tlora_pager_sx1262-v0.1.26-alpha.bin",
-      "ota_sha256": "7abc8e83dd6d7a9ac99ae51515dcbf797cf614238999063ef6fe8d1efb109d03",
-      "ota_size_bytes": 3737680,
-      "version": "0.1.26-alpha"
+      "ota_path": "assets/ota/trail-mate-tlora_pager_sx1262-v1.0.0.bin",
+      "ota_sha256": "6534e5604ea7abd4776655ce2a315ab54e2b09a5dbabe14c24de494efe88e959",
+      "ota_size_bytes": 4898240,
+      "version": "1.0.0"
     },
     "tlora-pager-lr1121": {
-      "available": false,
+      "available": true,
       "manifest_path": "manifests/tlora-pager-lr1121.json",
-      "ota_available": false,
-      "ota_path": null,
-      "ota_sha256": null,
-      "ota_size_bytes": 0,
-      "version": "0.1.26-alpha"
+      "ota_available": true,
+      "ota_path": "assets/ota/trail-mate-tlora_pager_lr1121-v1.0.0.bin",
+      "ota_sha256": "a21845719cd4ecc329d83d56d5460256f80fbd9c1a8e8c91159b8d7cec0f0ff9",
+      "ota_size_bytes": 4900080,
+      "version": "1.0.0"
     },
     "tdeck": {
       "available": true,
       "manifest_path": "manifests/tdeck.json",
       "ota_available": true,
-      "ota_path": "assets/ota/trail-mate-tdeck-v0.1.26-alpha.bin",
-      "ota_sha256": "504ea8d2b7cc75d43d108b68aa17235b7ab92e9d5cb3883e25b0ebd71fac7461",
-      "ota_size_bytes": 3285344,
-      "version": "0.1.26-alpha"
+      "ota_path": "assets/ota/trail-mate-tdeck-v1.0.0.bin",
+      "ota_sha256": "639c5bccf2bc77b77348b8651dcaa3148fe09c9efddd0a8add9338339fd0e94c",
+      "ota_size_bytes": 4697552,
+      "version": "1.0.0"
+    },
+    "tdeck-pro-a7682e": {
+      "available": false,
+      "manifest_path": "manifests/tdeck-pro-a7682e.json",
+      "ota_available": false,
+      "ota_path": null,
+      "ota_sha256": null,
+      "ota_size_bytes": 0,
+      "version": "1.0.0"
+    },
+    "tdeck-pro-pcm512a": {
+      "available": false,
+      "manifest_path": "manifests/tdeck-pro-pcm512a.json",
+      "ota_available": false,
+      "ota_path": null,
+      "ota_sha256": null,
+      "ota_size_bytes": 0,
+      "version": "1.0.0"
     },
     "lilygo-twatch-s3": {
       "available": true,
       "manifest_path": "manifests/lilygo-twatch-s3.json",
       "ota_available": true,
-      "ota_path": "assets/ota/trail-mate-lilygo_twatch_s3-v0.1.26-alpha.bin",
-      "ota_sha256": "5ee05843e1be1f9a4d362f49fe0feb3484c09092ed130d7f648a26965d469ff3",
-      "ota_size_bytes": 3263264,
-      "version": "0.1.26-alpha"
+      "ota_path": "assets/ota/trail-mate-lilygo_twatch_s3-v1.0.0.bin",
+      "ota_sha256": "af1007cd36d7f209e4824a979438bfbcc7cfae34691749bd086221f8c910b557",
+      "ota_size_bytes": 4494528,
+      "version": "1.0.0"
+    },
+    "t-display-p4-tft": {
+      "available": true,
+      "manifest_path": "manifests/t-display-p4-tft.json",
+      "ota_available": true,
+      "ota_path": "assets/ota/trail-mate-t_display_p4_tft-v1.0.0.bin",
+      "ota_sha256": "71942cb2704cc53714da3211324d5d6a7fe1f8e9733a0b67c6ed35de193290ba",
+      "ota_size_bytes": 5276768,
+      "version": "1.0.0"
+    },
+    "t-display-p4-amoled": {
+      "available": true,
+      "manifest_path": "manifests/t-display-p4-amoled.json",
+      "ota_available": true,
+      "ota_path": "assets/ota/trail-mate-t_display_p4_amoled-v1.0.0.bin",
+      "ota_sha256": "9ee8eca3d564d5426e884f47e0fe114158fea40c4a3c4869fbd8fc1f59948fc2",
+      "ota_size_bytes": 4677056,
+      "version": "1.0.0"
     }
   }
 }

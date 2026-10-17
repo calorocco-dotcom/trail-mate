@@ -17,6 +17,7 @@
     <link rel="icon" type="image/png" href="./assets/showcase/brand-logo.png">
     <link rel="stylesheet" href="./components-dist/components.css">
     <link rel="stylesheet" href="./styles.css?v=language-picker-2">
+    <link rel="stylesheet" href="./site-header.css">
     <link rel="stylesheet" href="./explorer.css?v=reading-surfaces-5">
     <script
       type="module"
@@ -28,8 +29,9 @@
   </head>
   <body>
     <div class="page-shell">
-      <header class="topbar">
-        <a class="brand" href="./" data-i18n-aria="document.title" aria-label="Trail Mate">
+      <header class="topbar site-header">
+       <div class="site-header-main">
+        <a class="brand site-brand" href="./" data-site-link="home" aria-label="Trail Mate">
           <img
             class="brand-logo"
             src="./assets/showcase/brand-logo.png"
@@ -40,17 +42,17 @@
           <span class="brand-text">Trail Mate</span>
         </a>
 
-        <div class="top-actions">
-          <a class="top-link" href="./geocaching/">Geocaching</a>
-          <a class="top-link" href="https://github.com/vicliu624/trail-mate" data-i18n="top.github">
-            GitHub
-          </a>
-          <a class="top-link" href="https://github.com/vicliu624/trail-mate/wiki" data-i18n="top.wiki">
-            Wiki
-          </a>
-          <a class="top-link top-link-strong" href="#webflasher" data-i18n="top.flash">
-            Flash
-          </a>
+        <nav class="site-primary" aria-label="Web tools" data-site-nav>
+          <a href="./device/" data-site-link="device" data-site-text="device">Device management</a>
+          <a href="./tracks/" data-site-link="tracks" data-site-text="tracks">Tracks</a>
+          <a href="./geocaching/" data-site-link="geocaching" data-site-text="geocaching">Geocaching</a>
+        </nav>
+        <div class="site-utilities">
+          <a class="site-flash" href="#webflasher" data-site-link="flash" data-site-text="flash">Flash</a>
+          <details class="site-resources"><summary data-site-text="resources">Resources</summary><div>
+            <a href="https://github.com/vicliu624/trail-mate">GitHub</a>
+            <a href="https://github.com/vicliu624/trail-mate/wiki">Wiki</a>
+          </div></details>
           <div class="language-toggle" role="group" data-i18n-aria="common.language" aria-label="Language">
             <select id="site-language" data-i18n-aria="common.language" aria-label="Language">
               <option value="en">English</option>
@@ -67,6 +69,7 @@
             </select>
           </div>
         </div>
+       </div>
       </header>
 
       <div class="content-shell">
@@ -77,7 +80,7 @@
             <a href="#explorer" data-i18n="side.explorer">Interactive guide</a>
             <a href="#capabilities" data-i18n="side.capabilities">Capabilities</a>
             <a href="#features" data-i18n="side.features">Feature Walkthrough</a>
-            <a href="./geocaching/">Geocaching</a>
+            <a href="#web-tools" data-site-text="tools">Web tools</a>
             <a href="#languages" data-i18n="side.languages">Language Packs</a>
             <a href="#webflasher" data-i18n="side.flasher">Web Flasher</a>
             <a href="#docs" data-i18n="side.docs">Docs</a>
@@ -118,6 +121,16 @@
                 <p class="feature-kicker" data-i18n="hero.releaseKicker">Latest Release</p>
                 <p class="hero-note-value" data-release-version>Waiting for first tagged release</p>
               </div>
+            </div>
+          </section>
+
+          <section class="web-tools" id="web-tools">
+            <p class="eyebrow" data-site-text="open">Open in your browser</p>
+            <h2 data-site-text="tools">Web tools</h2>
+            <div class="web-tool-grid">
+              <a class="web-tool-card" href="./device/" data-site-link="device"><strong data-site-text="deviceHeading">Manage your device</strong><p data-site-text="deviceHelp">Connect over USB to review settings, manage files and back up your device identity.</p><span><span data-site-text="device">Device management</span> →</span></a>
+              <a class="web-tool-card" href="./tracks/" data-site-link="tracks"><strong data-site-text="tracksHeading">Prepare a route</strong><p data-site-text="tracksHelp">Import and edit routes, review elevation and timing, or browse shared tracks.</p><span><span data-site-text="tracks">Tracks</span> →</span></a>
+              <a class="web-tool-card" href="./geocaching/" data-site-link="geocaching"><strong data-site-text="geocachingHeading">Find geocaches</strong><p data-site-text="geocachingHelp">Explore geocaches by region and manage your own signed listings.</p><span><span data-site-text="geocaching">Geocaching</span> →</span></a>
             </div>
           </section>
 

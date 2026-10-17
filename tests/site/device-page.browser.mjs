@@ -136,11 +136,31 @@ await page.addInitScript(()=>{
 });
 try{
  normalFlow:{
- if(process.argv.includes('--normal-flow')){writeSupport=true;authorSupport=true;}
+ if(process.argv.includes('--normal-flow')||process.argv.includes('--release-docs')){writeSupport=true;authorSupport=true;}
  await page.goto(origin+'/site/device/?lang=zh-Hans');
  await page.getByRole('button',{name:'连接设备',exact:true}).click();
  await page.getByText(/已验证配置快照/).waitFor();
  await page.waitForFunction(()=>document.querySelector('.brand-logo')?.naturalWidth>0);
+ if(process.argv.includes('--release-docs')){
+  await page.locator('.management-language select').selectOption('en');
+  await page.waitForFunction(()=>document.documentElement.lang==='en'&&document.querySelector('.site-primary a').textContent==='Device management');
+  await page.locator('.device-nav button').nth(6).click();
+  await page.setViewportSize({width:1440,height:1000});
+  await page.evaluate(()=>scrollTo(0,0));
+  const section=page.locator('[id="field-ui.display.brightness"]').locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," device-section ")][1]');
+  await section.screenshot({path:'docs/images/release-1.0.0/web-config-percent.png'});
+  await page.evaluate(()=>scrollTo(0,0));
+  await page.screenshot({path:'docs/images/release-1.0.0/web-device-management.png'});
+  // Navigation must preserve edits when the user cancels the native leave prompt.
+  const brightness=page.locator('[id="field-ui.display.brightness"]');
+  await brightness.fill('35');
+  let prompts=0;
+  page.on('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');prompts++;await dialog.dismiss();});
+  await page.locator('.site-primary a').nth(1).click({noWaitAfter:true});
+  await page.waitForFunction(()=>document.querySelector('[id="field-ui.display.brightness"]')?.value==='34.9');
+  assert.equal(prompts,1);assert.ok(page.url().includes('/device/'));assert.equal(await brightness.inputValue(),'34.9');
+  break normalFlow;
+ }
  if(process.argv.includes('--normal-flow')){
   await page.locator('[id="field-device.node_name"]').fill('Trail group');
   await page.getByRole('button',{name:'无线与协议',exact:true}).click();await page.locator('[id="module-mqtt"]').click();
@@ -820,5 +840,5 @@ try{
  }
  }
  assert.deepEqual(errors,[]);
- console.log(process.argv.includes('--normal-flow')?'Device config normal flow passed: connect, edit, readable review, save, reconnect/readback; percent controls, satellite choices and 11 locales. Simulated serial, no hardware.':process.argv.includes('--presentation-only')?'Device config presentation: 11 locales, no companion BLE configuration, exact duration units, character bytes, custom motion IDs and presets passed.':'Device page verified config recovery and actual author proof verification, rejection, disconnect revocation and narrow-screen layout.');
+ console.log(process.argv.includes('--release-docs')?'Current English device captures and cancelled navigation preserving unsaved settings passed; synthetic USB only.':process.argv.includes('--normal-flow')?'Device config normal flow passed: connect, edit, readable review, save, reconnect/readback; percent controls, satellite choices and 11 locales. Simulated serial, no hardware.':process.argv.includes('--presentation-only')?'Device config presentation: 11 locales, no companion BLE configuration, exact duration units, character bytes, custom motion IDs and presets passed.':'Device page verified config recovery and actual author proof verification, rejection, disconnect revocation and narrow-screen layout.');
 }finally{await browser.close();server.close();}
