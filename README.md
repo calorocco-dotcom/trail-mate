@@ -164,7 +164,7 @@ your selected interface language; **Flash** opens firmware installation.
 GitHub and Wiki are in **Resources**. The same tool links remain visible on
 narrow screens, with task cards on the homepage.
 
-![English website navigation and browser tools](docs/images/release-1.0.0/web-home-tools.png)
+![English website navigation and browser tools](docs/images/release-1.0.1/web-home-tools.png)
 
 *Current homepage and tool navigation, captured in English from the rebuilt
 Web sources. Device connection and publication still require the appropriate
@@ -185,9 +185,9 @@ Keep the device's SD card installed for configuration exchange and stored-conten
 maintenance. Device author proof itself is independent of the card; a successful
 identity check does not imply that its file storage is available.
 
-![Web configuration percentage control](docs/images/release-1.0.0/web-config-percent.png)
+![Web configuration percentage control](docs/images/release-1.0.1/web-config-percent.png)
 
-![English device management workspace](docs/images/release-1.0.0/web-device-management.png)
+![English device management workspace](docs/images/release-1.0.1/web-device-management.png)
 
 *Current English browser configuration controls with simulated-device data. The screenshot
 illustrates readable percentage input, not a physical-device acceptance result.*
@@ -203,7 +203,7 @@ receipt and confirms the result on the device. Updates keep the cache identity;
 archive operations publish a new state. Pending confirmation remains visible
 and can be continued instead of silently starting a second publication.
 
-![Web Geocaching maintenance](docs/images/release-1.0.0/web-geocaching-maintenance.png)
+![Web Geocaching maintenance](docs/images/release-1.0.1/web-geocaching-maintenance.png)
 
 *Actual Web maintenance page from a native Reticulum directory check with a
 simulated USB author. Sample cache data is shown; this is not a real-Wio result.*
@@ -271,22 +271,22 @@ browser, and use the connected device as the publication author.
   a connected device. Hardware storage and the supported package capabilities
   determine which resources can be used on that device.
 
-![Shared-trail country search through the public Reticulum directory](docs/images/release-1.0.0/web-track-country-search.png)
+![Shared-trail country search through the public Reticulum directory](docs/images/release-1.0.1/web-track-country-search.png)
 
 *Current English Web page querying the public WSS/Reticulum track directory.
 The selected Austria boundary is verified; this query returned no shared trails.
 This capture uses no USB author and does not claim a completed publication test.*
 
-![Shared-trail first-level administrative search](docs/images/release-1.0.0/web-track-administrative-search.png)
+![Shared-trail first-level administrative search](docs/images/release-1.0.1/web-track-administrative-search.png)
 
 *The same built Web page selects Austria and then Vorarlberg through the public
 directory, verifies the supplied boundary and queries that administrative area.
 The global catalog stops after two levels. This capture uses no USB author;
 the capture itself does not establish firmware or publication acceptance.*
 
-![Trail elevation and timed-record maintenance](docs/images/release-1.0.0/web-track-elevation.png)
+![Trail elevation and timed-record maintenance](docs/images/release-1.0.1/web-track-elevation.png)
 
-![English track workspace with a sample recorded route](docs/images/release-1.0.0/web-track-workspace.png)
+![English track workspace with a sample recorded route](docs/images/release-1.0.1/web-track-workspace.png)
 
 *Current English browser workspace with sample KML data, showing elevation
 inspection and the time filter for recorded points. The example supplies its

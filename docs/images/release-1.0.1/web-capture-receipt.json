@@ -1,0 +1,90 @@
+{
+  "capturedAt": "2026-10-17T01:43:30.470Z",
+  "sourceRevision": "d35c4fd040a892231312cee5addb158a502e9af6",
+  "sourceBranch": "main",
+  "bundleSha256": {
+    "site/components-dist/components.js": "168c21e0158e77203ce6e8e09fee361c8b5cd411f9e5582f40056fa7c80c153a",
+    "site/components-dist/components.css": "98933ea8e5fe16ab5d2f4918c298b3e3f18d7ba2c014716286bfd6b7c575181f",
+    "site/device/dist/device.js": "b72d839b5ed4cc1e3c160b050882b17ae9c54ec9a07ba75f8ff02469798b9c05",
+    "site/device/dist/device.css": "c60c2568ddd0a59ac41208e94bece9fef10eefd0cfde3c8ef4f426b156812a14",
+    "site/tracks/dist/tracks.js": "357ddf411022c348401aceb0cbf4f16ff6a212dab2f24d137a12046b1a675d13",
+    "site/tracks/dist/tracks.css": "03ac4dc3f67997ef4f58b41bd77deeb02324a858aa0d814f8b92c6b03a846752",
+    "site/geocaching/dist/page.js": "a53699fb1bc1880a001362c3dec8da0c0b003b185f7f953a35d643e4ed4f466e",
+    "site/geocaching/dist/page.css": "e23ca3cd6d5d014ed90d2416a9e79e5b25ef13b4cd977aad3b56d7b891ff7db9",
+    "site/geocaching/dist/reticulum-worker.js": "57d830247aa825c771e11dafef8175dbb9b8f4f4162261cc1bf23c8b6c273ef7"
+  },
+  "captures": [
+    {
+      "file": "web-home-tools.png",
+      "url": "http://127.0.0.1:39267/trail-mate/?lang=en&feature=home&demo-device=pager",
+      "locale": "en",
+      "viewport": {
+        "width": 1440,
+        "height": 1080
+      },
+      "sha256": "b2dc9fba645bd0ef45d04f2af4deeea3e609d28559d7a2c6eb25f670f979d7fa"
+    },
+    {
+      "file": "web-track-workspace.png",
+      "url": "http://127.0.0.1:39267/trail-mate/tracks/?lang=en",
+      "locale": "en",
+      "viewport": {
+        "width": 1440,
+        "height": 1080
+      },
+      "sha256": "edc4fc7377b6e542831626c9cbefa23014edaaead9707980afb5e0f2c452ff55"
+    },
+    {
+      "file": "web-track-elevation.png",
+      "url": "http://127.0.0.1:39267/trail-mate/tracks/?lang=en",
+      "locale": "en",
+      "viewport": {
+        "width": 1440,
+        "height": 1080
+      },
+      "sha256": "63b8dc477be979e72f92751f78db4bd07deeb3d167c1db1785a25173da13e72c"
+    },
+    {
+      "file": "web-track-country-search.png",
+      "url": "https://vicliu624.github.io/trail-mate/tracks/?lang=en",
+      "locale": "en",
+      "publicReadOnly": true,
+      "assets": "local production build served under site origin for gateway Origin policy",
+      "sha256": "6745c89a2f4d1f3c45790fc4cf15ccc31b6df573a90ecce81071bb13a45a5a19"
+    },
+    {
+      "file": "web-track-administrative-search.png",
+      "url": "https://vicliu624.github.io/trail-mate/tracks/?lang=en",
+      "locale": "en",
+      "publicReadOnly": true,
+      "assets": "local production build served under site origin for gateway Origin policy",
+      "sha256": "fe86d680ab306fa36e194be3d050a73869e96ce8d6b408983d6ad13df202d52c"
+    },
+    {
+      "file": "web-config-percent.png",
+      "locale": "en",
+      "command": "node tests/site/device-page.browser.mjs --release-docs",
+      "kind": "production controls; synthetic USB fixture",
+      "sha256": "8cb9527b30d9af959e503664c900fca3db9b4555ebb808dcd6aaa0277e52f273"
+    },
+    {
+      "file": "web-device-management.png",
+      "locale": "en",
+      "command": "node tests/site/device-page.browser.mjs --release-docs",
+      "kind": "production UI; synthetic USB author/configuration",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "sha256": "fa0f68467b64c9a424516d9c730bc2324957e12bbcf19a59eb3962cf421f6d89"
+    },
+    {
+      "file": "web-geocaching-maintenance.png",
+      "locale": "en",
+      "command": "node tests/site/geocaching-network-maintenance.browser.mjs --release-docs",
+      "kind": "production UI/Worker/native loopback directory; synthetic USB author with real signatures",
+      "sha256": "3c6dfc6c5cc6b6ca3b0e7872142398da98cacda645b8daf22910fc88c9fc6896"
+    }
+  ],
+  "pageErrors": []
+}

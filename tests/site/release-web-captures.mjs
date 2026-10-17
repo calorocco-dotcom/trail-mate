@@ -40,7 +40,8 @@ const route=`<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.go
 try{
  await page.goto(origin+'/trail-mate/?lang=en',{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>document.querySelector('.brand-logo')?.naturalWidth>0&&document.querySelector('.site-primary a')?.href.includes('lang=en'));
- await page.getByText('v1.0.0 ready for install',{exact:true}).waitFor();
+ const release=JSON.parse(await fs.readFile(path.join(root,'data/latest-release.json'),'utf8'));
+ await page.getByText(`v${release.version} ready for install`,{exact:true}).waitFor();
  await capture('web-home-tools.png');
  await page.locator('.site-primary a').nth(1).click();
  await page.locator('.sidebar > input[type=file]').setInputFiles({name:'alpine-ridge.kml',mimeType:'application/vnd.google-earth.kml+xml',buffer:Buffer.from(route)});
