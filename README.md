@@ -152,6 +152,19 @@ includes file placement and keyboard controls.*
 
 ### Browser device configuration
 
+The [website](https://vicliu624.github.io/trail-mate/?lang=en) provides direct
+**Device management**, **Tracks** and **Geocaching** links on every page. The
+highlighted link identifies the current tool. Tool links and the home logo keep
+your selected interface language; **Flash** opens firmware installation.
+GitHub and Wiki are in **Resources**. The same tool links remain visible on
+narrow screens, with task cards on the homepage.
+
+![English website navigation and browser tools](docs/images/release-1.0.0/web-home-tools.png)
+
+*Current homepage and tool navigation, captured in English from the rebuilt
+Web sources. Device connection and publication still require the appropriate
+hardware, permissions and reachable directory.*
+
 Open the [Device page](https://vicliu624.github.io/trail-mate/device/), connect
 the device and choose its USB port. The page verifies the author and configuration
 snapshot before allowing edits. Settings are grouped by purpose and searchable;
@@ -169,7 +182,9 @@ identity check does not imply that its file storage is available.
 
 ![Web configuration percentage control](docs/images/release-1.0.0/web-config-percent.png)
 
-*Actual browser configuration control with simulated-device data. The screenshot
+![English device management workspace](docs/images/release-1.0.0/web-device-management.png)
+
+*Current English browser configuration controls with simulated-device data. The screenshot
 illustrates readable percentage input, not a physical-device acceptance result.*
 
 ### Decentralized Geocaching
@@ -253,7 +268,7 @@ browser, and use the connected device as the publication author.
 
 ![Shared-trail country search through the public Reticulum directory](docs/images/release-1.0.0/web-track-country-search.png)
 
-*Actual candidate Web page querying the public WSS/Reticulum track directory.
+*Current English Web page querying the public WSS/Reticulum track directory.
 The selected Austria boundary is verified; this query returned no shared trails.
 This capture uses no USB author and does not claim a completed publication test.*
 
@@ -266,9 +281,11 @@ the capture itself does not establish firmware or publication acceptance.*
 
 ![Trail elevation and timed-record maintenance](docs/images/release-1.0.0/web-track-elevation.png)
 
-*Actual browser workspace with sample KML data, showing elevation inspection and
-time replay. A simple example does not imply automatic terrain data or invented
-recording timestamps.*
+![English track workspace with a sample recorded route](docs/images/release-1.0.0/web-track-workspace.png)
+
+*Current English browser workspace with sample KML data, showing elevation
+inspection and the time filter for recorded points. The example supplies its
+own elevations and timestamps; it does not imply automatic terrain data.*
 
 The [release record](docs/releases/1.0.0.md) records deployment and acceptance
 separately from these browser captures.

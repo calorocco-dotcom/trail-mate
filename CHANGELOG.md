@@ -8,6 +8,19 @@ and uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Older releases used the pre-1.0 alpha version line. Version 1.0.0 is the first
 stable firmware release. Hardware support and validation remain target-specific.
 
+## [Unreleased]
+
+### Fixed
+
+- The website now exposes Device management, Tracks and Geocaching from every
+  page, with shared navigation, current-page highlighting, language-preserving
+  links, responsive layouts and a keyboard-accessible Resources menu. The home
+  page includes task-oriented tool cards. Tool connection controls remain in a
+  separate action row, and existing unsaved-edit protections remain active.
+- Release-facing Web illustrations are recaptured in English from the current
+  production bundles. Their provenance identifies simulated USB/sample data
+  separately from read-only directory queries and physical-device acceptance.
+
 ## [1.0.0] - 2026-10-17
 
 ### 1.0.0 — first stable firmware release

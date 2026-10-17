@@ -23,8 +23,11 @@ const origin=`http://127.0.0.1:${server.address().port}`,base=origin+prefix;
 const browser=await chromium.launch({channel:process.env.TRAIL_MATE_TEST_BROWSER_CHANNEL,headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1080}}),errors=[],checks=[];
 page.on('pageerror',error=>errors.push(String(error)));
-// External font/install modules are not required to navigate. Keep the native
-// guide and all production app bundles live; no replacement application HTML.
+// This job builds the Web tools, while Pages separately builds and verifies
+// the firmware/WASM guide. Do not start that optional preview without its
+// manifest here. Navigation, homepage cards and all tool bundles remain real.
+await page.route('**/native-explorer.js',route=>route.fulfill({contentType:'text/javascript',body:''}));
+// External font/install modules are not required to navigate.
 await page.route(/https:\/\/(fonts\.(googleapis|gstatic)\.com|unpkg\.com)\//,route=>route.fulfill({contentType:'text/javascript',body:''}));
 const output='.codex-build/web-navigation';
 await fs.mkdir(output,{recursive:true});
