@@ -37,6 +37,14 @@ Long headings must wrap without losing the Title ribbon. Test narrow layouts
 and RTL with actual translated copy. Unpublished drafts, dirty configuration,
 keyboard focus and map state must survive language changes.
 
+Disposable track maps use `createTrackMap`, with Leaflet's public
+`zoomAnimation: false` option. Leaflet 1.9.4 retains a zoom completion timer
+after `remove()`, which can access a destroyed map when a view is closed during
+zoom. The shared-package browser regression triggers that sequence and lets the
+250-ms callback window expire. Dragging, pan animation, zoom controls and fitting
+still work. Re-evaluate this option after adopting a stable Leaflet release with
+the [upstream lifecycle fix](https://github.com/Leaflet/Leaflet/issues/9575).
+
 ## Verification
 
 Build all four site entry points after a dependency change. Run the locale and

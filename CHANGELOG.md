@@ -32,6 +32,9 @@ updating the website alone cannot change an installed 1.0.0 image.
 - Release-facing Web illustrations are recaptured in English from the current
   production bundles. Their provenance identifies simulated USB/sample data
   separately from read-only directory queries and physical-device acceptance.
+- Closing a shared-track map during zoom no longer leaves Leaflet's completion
+  callback accessing a destroyed view. Track maps share a public-option
+  workaround, with a browser regression that reproduces the former failure.
 
 ### Changed
 

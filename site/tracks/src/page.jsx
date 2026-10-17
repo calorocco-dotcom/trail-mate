@@ -2,6 +2,7 @@ import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Background,Button,Card,Title} from 'animal-island-ui';
 import L from 'leaflet';
+import {createTrackMap} from './leaflet-map.js';
 import 'animal-island-ui/style';
 import 'leaflet/dist/leaflet.css';
 import '../../styles.css';
@@ -77,7 +78,7 @@ function Preview({model,draft,selected,onSelect,onPoint,picking,coordinateBounds
  const operationDrawing=useRef();
  point.current=onPoint;pick.current=picking;select.current=onSelect;
  useEffect(()=>{
-  const view=L.map(host.current,{preferCanvas:true}).setView([25,110],3);map.current=view;
+  const view=createTrackMap(host.current);map.current=view;
   view.createPane('land');view.getPane('land').style.zIndex=200;
   const land=L.geoJSON(null,{pane:'land',renderer:L.canvas({pane:'land'}),interactive:false,style:{color:'#c5d4cb',weight:1,fillColor:'#f4efd8',fillOpacity:.85}}).addTo(view);
   drawing.current=L.featureGroup().addTo(view);operationDrawing.current=L.featureGroup().addTo(view);let countries,cancelled=false;
