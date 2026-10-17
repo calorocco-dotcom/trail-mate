@@ -55,6 +55,16 @@ async function inspect(current,locale){
     const r=element.getBoundingClientRect();return r.left>=box.left&&r.right<=box.right&&r.width>0;
    });
   }),`${current}/${locale}: header must fit at ${width}px`);
+  if(current==='home')assert.ok(await page.locator('.side-nav').evaluate(nav=>{
+   const links=[...nav.querySelectorAll('a')];
+   return links.every((link,index)=>{
+    const box=link.getBoundingClientRect(),range=document.createRange();range.selectNodeContents(link);
+    const text=range.getBoundingClientRect();
+    return text.left>=box.left&&text.right<=box.right&&links.slice(index+1).every(other=>{
+     const b=other.getBoundingClientRect();return box.right<=b.left||b.right<=box.left||box.bottom<=b.top||b.bottom<=box.top;
+    });
+   });
+  }),`homepage outline text/links must not overlap: ${locale}/${width}`);
  }
  await page.setViewportSize({width:1440,height:1080});
  checks.push({page:current,locale,widths:[1440,1024,768,390,320]});
