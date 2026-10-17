@@ -16,13 +16,18 @@
   "captures": [
     {
       "file": "web-home-tools.png",
-      "url": "http://127.0.0.1:24496/trail-mate/?lang=en&feature=home&demo-device=pager",
+      "url": "https://vicliu624.github.io/trail-mate/?lang=en&feature=home&demo-device=pager",
       "locale": "en",
       "viewport": {
         "width": 1440,
         "height": 1080
       },
-      "sha256": "b2dc9fba645bd0ef45d04f2af4deeea3e609d28559d7a2c6eb25f670f979d7fa"
+      "sha256": "02e6221c3dfc0dbe504c906b8cee921323b3a2d8f62396a46670e36132cea14c",
+      "capturedAt": "2026-10-17T02:29:53.618Z",
+      "sourceRevision": "c63ea60d33439a0d1862f524504f01d3f661b884",
+      "sourcePagesRun": "https://github.com/vicliu624/trail-mate/actions/runs/38994670042",
+      "kind": "public production site after v1.0.1 metadata deployment",
+      "release": "v1.0.1"
     },
     {
       "file": "web-track-workspace.png",
@@ -86,5 +91,6 @@
       "sha256": "4c16c64c8c86c9c96f49b8a5ad6a4362310c5da0a67617f2d72c833ac14d859e"
     }
   ],
-  "pageErrors": []
+  "pageErrors": [],
+  "publicSiteVerification": "public-site-verification.json"
 }

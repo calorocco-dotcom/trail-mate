@@ -1,10 +1,17 @@
 # 1.0.1 Web illustrations
 
-These eight English illustrations use the production Web bundles from source
+The seven English tool illustrations use production Web bundles from source
 `f3e66efdf1bcc7800dac91f6488a4636f7fa36fb`, including Animal Island UI 2.2.1,
 naive-icons 1.6.0, shared navigation, readable language selection and the native
-control theme bridge. The machine-readable capture receipt records bundle and
-image SHA-256 values, viewports, URLs and data sources.
+control theme bridge. The homepage was recaptured from the public site after
+the stable `v1.0.1` release and its
+[Pages deployment](https://github.com/vicliu624/trail-mate/actions/runs/38994670042),
+whose UI source is `c63ea60d33439a0d1862f524504f01d3f661b884`.
+The [capture receipt](web-capture-receipt.json) records bundle and image SHA-256,
+viewports, URLs and data sources, including the homepage's separate revision and
+capture time. The [public-site readback](public-site-verification.json) records
+verified scripts/styles and navigation checks. Generated SVG filenames can differ
+with source line endings; their normalized contents were also verified.
 
 ## Capture scope
 
