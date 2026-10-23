@@ -981,10 +981,10 @@ uint8_t TDeckBoard::getPoint(int16_t* x, int16_t* y, uint8_t get_point)
         // No rotation: direct mapping.
         break;
     case 1:
-        // Rotated 90 degrees (T-Deck default: landscape with USB on the right).
-        // Raw touch uses panel's native axes; map to LVGL's rotated axes.
-        lx = ty;
-        ly = static_cast<int16_t>(w - 1 - tx);
+        // Rotato di 90 gradi (default del T-Deck). setSwapXY(true)/setMirrorXY(false, true)
+        // in initTouch() gia' convertono le coordinate grezze del pannello nell'orientamento
+        // landscape corretto: un secondo rimappaggio qui le ribaltava di nuovo (il tocco
+        // risultava registrato sul lato opposto a quello toccato). Passthrough diretto.
         break;
     case 2:
         // Rotated 180 degrees.
