@@ -12,6 +12,9 @@
 #include <ctime>
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <esp_system.h>
 #include <limits>
 #include <new>
 #include <sys/time.h>
@@ -1283,6 +1286,24 @@ int TDeckBoard::configureLoraRadio(float freq_mhz, float bw_khz, uint8_t sf, uin
     return configured ? first_error : RADIOLIB_ERR_SPI_WRITE_FAILED;
 }
 
+// Torna al T-Deck-Launcher (pressione lunga del click della trackball), se questo .bin e'
+// stato avviato da li': il launcher scrive i programmi letti dalla SD nella partizione
+// "ota_0" e tiene sempre "factory" libera per se stesso (vedi T-Deck-Launcher/partitions_
+// launcher.csv e src/launcher_api.h). Se il firmware e' stato flashato standalone (senza
+// quella tabella di partizioni) "factory" non esiste con questo nome ed esp_partition_
+// find_first ritorna nullptr: la funzione non fa nulla, innocua in entrambi i casi.
+static void returnToLauncherIfRequested()
+{
+    const esp_partition_t* factory = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, "factory");
+    if (!factory)
+    {
+        return;
+    }
+    esp_ota_set_boot_partition(factory);
+    esp_restart();
+}
+
 RotaryMsg_t TDeckBoard::getRotary()
 {
     // T-Deck trackball is modeled as directional keypad input so the menu can
@@ -1392,17 +1413,32 @@ int TDeckBoard::getNavKey(uint32_t* key)
     }
 
 #if defined(TRACKBALL_CLICK)
+    const uint32_t kLauncherHoldMs = 1500;   // Pressione lunga: torna al T-Deck-Launcher
+    static bool launcher_return_armed = false;
     const bool click_pressed = digitalRead(TRACKBALL_CLICK) == LOW;
     if (click_pressed != click_state)
     {
         click_state = click_pressed;
         click_change_ms = now;
+        if (click_pressed)
+        {
+            launcher_return_armed = true;   // Nuova pressione: riarma il controllo della durata
+        }
     }
 
     // Re-arm click detection after a stable release, so every press can emit one event.
     if (!click_state && (now - click_change_ms) >= debounce_ms)
     {
         click_consumed = false;
+    }
+
+    // Tenuto premuto abbastanza a lungo (indipendentemente dal normale click->ENTER, gia'
+    // emesso subito dopo il debounce): esce dall'app e torna al launcher. Non ha effetto se
+    // il firmware non e' stato flashato con le partizioni del launcher (vedi funzione sopra).
+    if (click_state && launcher_return_armed && (now - click_change_ms) >= kLauncherHoldMs)
+    {
+        launcher_return_armed = false;
+        returnToLauncherIfRequested();
     }
 
     if (click_state && (now - click_change_ms) >= debounce_ms &&
