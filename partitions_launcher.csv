@@ -1,0 +1,18 @@
+# Name,    Type, SubType, Offset,   Size,     Flags
+# Tabella di partizioni custom per il launcher T-Deck (flash 16MB).
+# "factory" ospita sempre il launcher stesso: non viene mai sovrascritta da un
+# programma caricato da SD, cosi' si puo' sempre tornare al menu con un reset
+# "pulito" (vedi launcher_return() in launcher_api.h).
+# "ota_0" e' l'unico slot dove vengono scritti i programmi presi dalla SD: deve
+# essere grande abbastanza da contenere il piu' grande dei .bin che si vogliono
+# lanciare (qui 8 MB, ridimensionabile).
+# "ffat"/"coredump" sono spazio condiviso oltre ota_0, per i programmi lanciati
+# che hanno bisogno di storage flash interno con questi nomi standard (es.
+# trail-mate: FFat per l'agenda, coredump per i crash dump su SD). Chi non li
+# usa li ignora semplicemente.
+nvs,        data, nvs,     0x9000,   0x5000,
+otadata,    data, ota,     0xe000,   0x2000,
+factory,    app,  factory, 0x10000,  0x180000,
+ota_0,      app,  ota_0,   0x190000, 0x800000,
+ffat,       data, fat,     0x990000, 0x3e0000,
+coredump,   data, coredump,0xd70000, 0x10000,
